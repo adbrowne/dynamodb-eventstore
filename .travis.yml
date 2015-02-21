@@ -1,8 +1,15 @@
 language: haskell
 ghc:
-  - 7.8
-
+- 7.8
 install:
-  # Happy needs to be updated for haskell-src: https://github.com/haskell-suite/haskell-src-exts/issues/64
-  - cabal install happy
-  - cabal install --only-dependencies --enable-tests
+- cabal install happy
+- cabal install --only-dependencies --enable-tests
+deploy:
+  provider: releases
+  user: adbrowne
+  api-key:
+    secure: Uhjc0cPR4NMqmVOyzk1Gpc6ZIX/w92Td0PhA2je2GRepNTWow1xvJ2pll25pYZzffCWj5fWUL3KEEw0RnkVZTDzgXV47QXo/y4kzbkBJrDYFTN2DHjPVLyl7mobKeVAhYk2ndId9Dnb4ea+uZwOkVFvB2K1l/LbdnN3t6RegfnE=
+  file: dist/build/web/web 
+  skip_cleanup: true
+  on:
+    tags: true
