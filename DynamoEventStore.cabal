@@ -41,7 +41,6 @@ Test-Suite tests
   type:                exitcode-stdio-1.0
   build-depends:       base >=4.7 && <4.8,
                        hspec-wai >= 0.6,
-                       hspec-wai-json >= 0.6,
                        hspec >= 2.0,
                        wai >= 3.0,
                        aeson >= 0.8,
