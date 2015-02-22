@@ -49,6 +49,7 @@ Test-Suite tests
                        text >= 1.2,
                        wai-extra >= 3.0,
                        http-types >= 0.8,
+                       QuickCheck >= 2.7,
                        DynamoEventStore
   main-is:             Main.hs
   hs-source-dirs:      tests

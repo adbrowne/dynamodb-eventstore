@@ -1,4 +1,5 @@
-{-# LANGUAGE OverloadedStrings, QuasiQuotes #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE QuasiQuotes #-}
 module WebserverSpec (spec) where
 
 import           Test.Hspec
@@ -15,20 +16,16 @@ import qualified Data.Text.Lazy.Encoding as TL
 import qualified Data.Text.Encoding as T
 import qualified Network.HTTP.Types as H
 
-printResponse :: WaiSession SResponse -> WaiExpectation
-printResponse action = do
-  r <- action
-  error $ show r
-      
-addEventPost headers = 
-    request methodPost "/streams/streamId" headers BL.empty 
+addEventPost headers =
+  request methodPost "/streams/streamId" headers BL.empty
+                
 spec :: Spec
 spec = with (S.scottyApp W.app) $ do
-  let requestWithExpectedVersion = addEventPost [("ES-ExpectedVersion", "1")] 
+  let requestWithExpectedVersion = addEventPost [("ES-ExpectedVersion", "1")]
   let requestWithoutExpectedVersion = addEventPost []
   let requestWithoutBadExpectedVersion = addEventPost [("ES-ExepectedVersion", "NotAnInt")]
-      
-  describe "POST /streams/streamId" $ do
+
+  describe "Parse Int64 header" $ do
     it "responds with 200" $ do
       requestWithExpectedVersion `shouldRespondWith` 200
 

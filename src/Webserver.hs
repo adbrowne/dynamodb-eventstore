@@ -17,11 +17,12 @@ import Network.HTTP.Types (Status, mkStatus)
 import Data.Either.Utils (maybeToEither, fromEither)
 import Data.Attoparsec.Text.Lazy
 import Control.Arrow (left)
+import Data.Int
 
 data ExpectedVersion = ExpectedVersion Int
   deriving (Show)
 
-addEvent :: Text -> Int -> a -> ActionM ()
+addEvent :: Text -> Int64 -> a -> ActionM ()
 addEvent streamId expectedVersion eventData = do
     html $ mconcat ["StreamId:", streamId, " expectedVersion:", (pack . show) expectedVersion]
 
@@ -35,7 +36,7 @@ toByteString = T.encodeUtf8 . TL.toStrict
 error400 :: Text -> ActionM ()
 error400 err = status $ mkStatus 400 (toByteString err)
 
-runParser :: Parser a -> Text -> Text -> Either Text a
+runParser :: Parser a -> e -> Text -> Either e a
 runParser p e = (left (const e)) . eitherResult . (parse p)
 
 headerError :: Text -> Text -> Text
@@ -52,9 +53,21 @@ parseMandatoryHeader headerName parser = do
     missingErrorText = headerError headerName "is missing"
     parseFailErrorText = headerError headerName "in wrong format"
 
-positiveIntegerParser :: Parser Int
+maxInt64 :: Integer
+maxInt64 = toInteger (maxBound :: Int64)
+
+positiveIntegerParser :: Parser Integer
 positiveIntegerParser =
   fmap read $ many1 (satisfy isDigit) <* endOfInput
+
+positiveInt64Parser :: Parser Int64
+positiveInt64Parser =
+  filterInt64 =<< positiveIntegerParser
+  where
+    filterInt64 :: Integer -> Parser Int64
+    filterInt64 a
+     | a <= maxInt64 = do return (fromInteger a)
+     | otherwise = do fail "too large"
   
 toResult :: Either Text (ActionM ()) -> ActionM ()
 toResult = fromEither . (left error400) 
@@ -62,7 +75,7 @@ toResult = fromEither . (left error400)
 app = do
   post "/streams/:streamId" $ do
     streamId <- param "streamId"
-    expectedVersion <- parseMandatoryHeader "ES-ExpectedVersion" positiveIntegerParser
+    expectedVersion <- parseMandatoryHeader "ES-ExpectedVersion" positiveInt64Parser
     eventData <- body
     toResult $ 
           addEvent
