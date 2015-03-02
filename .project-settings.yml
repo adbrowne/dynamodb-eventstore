@@ -1,0 +1,24 @@
+binary-ghc-args:
+- -O
+- -threaded
+module-template: ! 'module MODULE_NAME where
+
+'
+extensions: {}
+environment: ghc-7.8-unstable
+auto-hidden: []
+cabal-file: project.cabal
+version: 1
+extra-packages: ! 'hackage: hspec-core 2.1.4
+
+  hackage: hspec-discover 2.1.4
+
+  hackage: hspec 2.1.4
+
+  hackage: tasty-hspec 1.1
+
+'
+ghc-args:
+- -Wall
+excluded-modules:
+- Setup.hs
