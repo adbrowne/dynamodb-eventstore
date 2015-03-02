@@ -2,7 +2,7 @@
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE FlexibleContexts #-}
 
-module DynamoCommands where
+module EventStoreCommands where
 
 import Control.Monad.Free
 import Control.Monad.Free.TH
@@ -16,10 +16,10 @@ newtype EventKey = EventKey (StreamId, Int64) deriving (Ord, Eq, Show)
 type EventType = String
 data EventWriteResult = WriteSuccess | EventExists | WriteError
 
-data DynamoCmd next =
+data EventStoreCmd next =
   GetEvent' EventKey (Maybe (EventType, BS.ByteString) -> next) |
   WriteEvent' EventKey EventType BS.ByteString (EventWriteResult -> next) deriving (Functor)
 
-type DynamoCmdM = Free DynamoCmd
+type EventStoreCmdM = Free EventStoreCmd
 
-makeFree ''DynamoCmd
+makeFree ''EventStoreCmd

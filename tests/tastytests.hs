@@ -4,7 +4,7 @@ module Main where
 
 import Test.Tasty
 import Test.Tasty.HUnit
-import DynamoCommands
+import EventStoreCommands
 import Data.Map (Map)
 import qualified Data.Map as M
 import Control.Monad.State
@@ -13,7 +13,7 @@ import qualified Data.ByteString as BS
 
 type FakeDB = Map EventKey (EventType, BS.ByteString)
 
-runTest :: MonadState FakeDB m => DynamoCmdM a -> m a
+runTest :: MonadState FakeDB m => EventStoreCmdM a -> m a
 runTest = iterM run
   where
     run (GetEvent' k f) = f =<< gets (M.lookup k)
@@ -24,7 +24,7 @@ runTest = iterM run
 testKey :: EventKey
 testKey = EventKey ((StreamId "Browne"), 0)
 
-sampleWrite :: DynamoCmdM EventWriteResult
+sampleWrite :: EventStoreCmdM EventWriteResult
 sampleWrite = do
   writeEvent' testKey "FooCreatedEvent" BS.empty
 

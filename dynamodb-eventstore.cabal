@@ -18,7 +18,7 @@ cabal-version:       >=1.10
 
 library
   exposed-modules:     Webserver,
-                       DynamoCommands
+                       EventStoreCommands
   -- other-extensions:    
   build-depends:       base >=4.7 && <4.8,
                        scotty >= 0.9,
