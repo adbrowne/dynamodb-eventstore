@@ -18,6 +18,7 @@ extra-packages: ! 'hackage: hspec-core 2.1.4
   hackage: tasty-hspec 1.1
 
 '
-ghc-args: []
+ghc-args:
+- -Wall
 excluded-modules:
 - Setup.hs

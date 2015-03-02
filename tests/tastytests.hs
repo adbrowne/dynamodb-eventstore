@@ -8,16 +8,10 @@ import qualified Data.ByteString     as BS
 import           Data.Map            (Map)
 import qualified Data.Map            as M
 import           EventStoreCommands
-import           Network.HTTP.Types  (methodPost)
-import qualified Network.HTTP.Types as H
-import           Network.Wai
-import           Network.Wai.Test
+
 import           Test.Tasty
 import           Test.Tasty.HUnit
 import           Test.Tasty.Hspec
-import qualified Data.ByteString.Lazy as BL
-import qualified Webserver as W
-import qualified Web.Scotty as S
 import           WebserverSpec
 import qualified WebserverInternalSpec
 type FakeDB = Map EventKey (EventType, BS.ByteString)

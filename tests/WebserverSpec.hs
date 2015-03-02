@@ -8,7 +8,6 @@ import           Network.HTTP.Types (methodPost)
 import           Network.Wai
 import qualified Webserver as W
 import qualified Web.Scotty as S
-import qualified Data.ByteString.Lazy as BL
 import qualified Network.HTTP.Types as H
 import           Control.Applicative (pure)
 
@@ -46,7 +45,7 @@ postEventSpec = do
       requestWithoutBadExpectedVersion `waiCase` (assertStatus 400)
   where
     app = S.scottyApp W.app
-    waiCase request assertion = do
+    waiCase r assertion = do
       app' <- app
-      flip runSession app' $ assertion =<< request
+      flip runSession app' $ assertion =<< r
 
