@@ -25,7 +25,6 @@ library
                        safe >= 0.3,
                        text >= 1.0,
                        http-types >= 0.8,
-                       MissingH >= 1.2,
                        attoparsec >= 0.12,
                        free >= 4.10,
                        bytestring >= 0.10
