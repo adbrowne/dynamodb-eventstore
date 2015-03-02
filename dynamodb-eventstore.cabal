@@ -38,41 +38,24 @@ executable web
   default-language:    Haskell2010
   main-is:             Main.hs
 
-Test-Suite tests
-  type:                exitcode-stdio-1.0
-  build-depends:       base >=4.7 && <4.8,
-                       hspec-wai >= 0.6,
-                       hspec >= 2.0,
-                       wai >= 3.0,
-                       aeson >= 0.8,
-                       scotty >= 0.9,
-                       bytestring >= 0.10,
-                       text >= 1.2,
-                       wai-extra >= 3.0,
-                       http-types >= 0.8,
-                       QuickCheck >= 2.7,
-                       dynamodb-eventstore
-  main-is:             Main.hs
-  hs-source-dirs:      tests
-  build-depends:       base
-  default-language:    Haskell2010
-
 Test-Suite tasty
-  type:       exitcode-stdio-1.0
-  main-is:    tastytests.hs
+  type:                exitcode-stdio-1.0
+  main-is:             tastytests.hs
   hs-source-dirs:      tests
   build-depends:       base  >=4.7 && <4.8,
                        tasty >= 0.10,
                        tasty-hspec >= 1.0,
+                       tasty-hunit >= 0.9,
+                       tasty-quickcheck >= 0.8,
                        containers >= 0.5,
                        http-types >= 0.8,
                        mtl >= 2.1,
-                       tasty-hunit >= 0.9,
                        wai >= 3.0,
                        wai-extra >= 3.0,
                        scotty >= 0.9,
                        free >= 4.10,
                        bytestring >= 0.10,
+                       text >= 1.2,
                        dynamodb-eventstore
 
   default-language:    Haskell2010

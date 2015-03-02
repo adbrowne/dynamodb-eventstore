@@ -19,6 +19,7 @@ import qualified Data.ByteString.Lazy as BL
 import qualified Webserver as W
 import qualified Web.Scotty as S
 import           WebserverSpec
+import qualified WebserverInternalSpec
 type FakeDB = Map EventKey (EventType, BS.ByteString)
 
 runTest :: MonadState FakeDB m => EventStoreCmdM a -> m a
@@ -39,6 +40,7 @@ sampleWrite = do
 main :: IO ()
 main = do
   postEventSpec' <- testSpec "Post Event tests" postEventSpec
+  webserverInternalTests' <- testSpec "Webserver Internal Tests" WebserverInternalSpec.spec
   defaultMain $
     testGroup "Tests"
       [ testGroup "Unit Tests"
@@ -49,5 +51,6 @@ main = do
             in
               assertEqual "Event is in the map" expected s
           ],
-        postEventSpec'
+        postEventSpec',
+        webserverInternalTests'
       ]
