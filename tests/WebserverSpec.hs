@@ -1,45 +1,52 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
-module WebserverSpec (spec) where
+module WebserverSpec (postEventSpec) where
 
-import           Test.Hspec
-import           Test.Hspec.Wai
-import           Network.Wai.Test (SResponse)
+import           Test.Tasty.Hspec
+import           Network.Wai.Test
 import           Network.HTTP.Types (methodPost)
-import           Network.Wai (Application)
-import           Data.Aeson (Value(..), object, (.=))
+import           Network.Wai
 import qualified Webserver as W
 import qualified Web.Scotty as S
 import qualified Data.ByteString.Lazy as BL
-import qualified Data.Text.Lazy as TL
-import qualified Data.Text.Lazy.Encoding as TL
-import qualified Data.Text.Encoding as T
 import qualified Network.HTTP.Types as H
+import           Control.Applicative (pure)
 
+addEventPost :: [H.Header] -> Session SResponse
 addEventPost headers =
-  request methodPost "/streams/streamId" headers BL.empty
-                
-spec :: Spec
-spec = with (S.scottyApp W.app) $ do
+  request $ defaultRequest {
+               pathInfo = ["streams","streamId"],
+               requestMethod = methodPost,
+               requestHeaders = headers,
+               requestBody = pure "" }
+
+postEventSpec :: Spec
+postEventSpec = do
   let requestWithExpectedVersion = addEventPost [("ES-ExpectedVersion", "1")]
   let requestWithoutExpectedVersion = addEventPost []
   let requestWithoutBadExpectedVersion = addEventPost [("ES-ExepectedVersion", "NotAnInt")]
 
   describe "Parse Int64 header" $ do
-    it "responds with 200" $ do
-      requestWithExpectedVersion `shouldRespondWith` 200
+    it "responds with 200" $
+      waiCase requestWithExpectedVersion $ assertStatus 200
 
-    it "responds with body" $ do
-      requestWithExpectedVersion `shouldRespondWith` "StreamId:streamId expectedVersion:1"
+    it "responds with body" $
+      waiCase requestWithExpectedVersion $ assertBody "StreamId:streamId expectedVersion:1"
 
   describe "POST /streams/streamId without ExepectedVersion" $ do
-    it "responds with 400" $ do
-      requestWithoutExpectedVersion `shouldRespondWith` 400
+    it "responds with 400" $
+      waiCase requestWithoutExpectedVersion $ assertStatus 400
 
   describe "POST /streams/streamId without ExepectedVersion greater than Int64.max" $ do
-    it "responds with 400" $ do
-       addEventPost [("ES-ExpectedVersion", "9223372036854775808")] `shouldRespondWith` 400
+    it "responds with 400" $
+       (addEventPost [("ES-ExpectedVersion", "9223372036854775808")]) `waiCase` (assertStatus 400)
 
   describe "POST /streams/streamId with non-integer ExpectedVersion" $ do
-    it "responds with 400" $ do
-      requestWithoutBadExpectedVersion `shouldRespondWith` 400
+    it "responds with 400" $
+      requestWithoutBadExpectedVersion `waiCase` (assertStatus 400)
+  where
+    app = S.scottyApp W.app
+    waiCase request assertion = do
+      app' <- app
+      flip runSession app' $ assertion =<< request
+
