@@ -79,6 +79,7 @@ fromEither (Right a) = a
 toResult :: Either Text (ActionM ()) -> ActionM ()
 toResult = fromEither . (left error400)
 
+app :: ScottyM ()
 app = do
   post "/streams/:streamId" $ do
     streamId <- param "streamId"
