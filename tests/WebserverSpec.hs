@@ -16,9 +16,10 @@ import qualified Data.Text.Lazy.Encoding as TL
 import qualified Data.Text.Encoding as T
 import qualified Network.HTTP.Types as H
 
+addEventPost :: [H.Header] -> WaiSession SResponse
 addEventPost headers =
   request methodPost "/streams/streamId" headers BL.empty
-                
+
 spec :: Spec
 spec = with (S.scottyApp W.app) $ do
   let requestWithExpectedVersion = addEventPost [("ES-ExpectedVersion", "1")]

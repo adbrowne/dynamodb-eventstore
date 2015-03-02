@@ -63,9 +63,14 @@ Test-Suite tasty
   hs-source-dirs:      tests
   build-depends:       base  >=4.7 && <4.8,
                        tasty >= 0.10,
+                       tasty-hspec >= 1.0,
                        containers >= 0.5,
+                       http-types >= 0.8,
                        mtl >= 2.1,
                        tasty-hunit >= 0.9,
+                       wai >= 3.0,
+                       wai-extra >= 3.0,
+                       scotty >= 0.9,
                        free >= 4.10,
                        bytestring >= 0.10,
                        dynamodb-eventstore
