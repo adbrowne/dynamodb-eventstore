@@ -3,15 +3,15 @@
 module WebserverInternalSpec (spec) where
 
 
-import           Test.Hspec
-import           Test.QuickCheck
+import           Test.Tasty.Hspec
+import           Test.Tasty.QuickCheck
 import           Data.Int
 import qualified Webserver as W
 import qualified Data.Text.Lazy as TL
 import           Text.Read (readMaybe)
 
 showText :: Show a => a -> TL.Text
-showText = TL.pack . show 
+showText = TL.pack . show
 
 spec :: Spec
 spec = do
