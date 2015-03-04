@@ -2,20 +2,21 @@
 
 module Webserver where
 
-import Control.Applicative
-import Web.Scotty
+import           Control.Applicative
+import           Web.Scotty
 
-import Data.Monoid (mconcat)
+import           Data.Monoid               (mconcat)
 
-import Data.Char (isDigit)
-import qualified Data.Text.Encoding as T
-import qualified Data.Text.Lazy as TL
-import Data.Text.Lazy (Text, pack)
-import Data.ByteString (ByteString)
-import Network.HTTP.Types (mkStatus)
-import Data.Attoparsec.Text.Lazy
-import Control.Arrow (left)
-import Data.Int
+import           Control.Arrow             (left)
+import           Data.Attoparsec.Text.Lazy
+import           Data.ByteString           (ByteString)
+import qualified Data.ByteString.Lazy      as BL
+import           Data.Char                 (isDigit)
+import           Data.Int
+import qualified Data.Text.Encoding        as T
+import           Data.Text.Lazy            (Text, pack)
+import qualified Data.Text.Lazy            as TL
+import           Network.HTTP.Types        (mkStatus)
 
 data ExpectedVersion = ExpectedVersion Int
   deriving (Show)
@@ -78,14 +79,27 @@ fromEither (Right a) = a
 toResult :: Either Text (ActionM ()) -> ActionM ()
 toResult = fromEither . left error400
 
-app :: ScottyM ()
-app = do
+data PostEventRequest = PostEventRequest {
+   streamId        :: Text,
+   expectedVersion :: Int64,
+   eventData       :: BL.ByteString
+} deriving (Show)
+
+data EventStoreWebRequest =
+  PostEvent PostEventRequest
+  deriving (Show)
+
+showEventResponse :: Show a => a -> ActionM ()
+showEventResponse a = (html . pack . show) a
+
+app :: (EventStoreWebRequest -> ActionM ()) -> ScottyM ()
+app process = do
   post "/streams/:streamId" $ do
     streamId <- param "streamId"
     expectedVersion <- parseMandatoryHeader "ES-ExpectedVersion" positiveInt64Parser
     eventData <- body
-    toResult $
-          addEvent
+    toResult . (fmap (process . PostEvent)) $
+          PostEventRequest
           <$> pure streamId
           <*> expectedVersion
           <*> pure eventData

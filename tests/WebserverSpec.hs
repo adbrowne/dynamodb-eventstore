@@ -30,7 +30,7 @@ postEventSpec = do
       waiCase requestWithExpectedVersion $ assertStatus 200
 
     it "responds with body" $
-      waiCase requestWithExpectedVersion $ assertBody "StreamId:streamId expectedVersion:1"
+      waiCase requestWithExpectedVersion $ assertBody "PostEvent (PostEventRequest {streamId = \"streamId\", expectedVersion = 1, eventData = \"\"})"
 
   describe "POST /streams/streamId without ExepectedVersion" $ do
     it "responds with 400" $
@@ -44,7 +44,7 @@ postEventSpec = do
     it "responds with 400" $
       requestWithoutBadExpectedVersion `waiCase` (assertStatus 400)
   where
-    app = S.scottyApp W.app
+    app = S.scottyApp (W.app W.showEventResponse)
     waiCase r assertion = do
       app' <- app
       flip runSession app' $ assertion =<< r

@@ -1,6 +1,10 @@
 module Main where
 
-import Web.Scotty
-import Webserver (app)
+import           Data.Text.Lazy (Text, pack)
+import           Web.Scotty
+import           Webserver      (app)
 
-main = scotty 3000 app
+showEvent :: Show a => a -> ActionM ()
+showEvent a = (html . pack . show) a
+
+main = scotty 3000 (app showEvent)
