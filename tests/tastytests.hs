@@ -12,6 +12,7 @@ import           EventStoreCommands
 import           Test.Tasty
 import           Test.Tasty.HUnit
 import           Test.Tasty.Hspec
+import           Test.Tasty.QuickCheck
 import           WebserverSpec
 import qualified WebserverInternalSpec
 
@@ -33,6 +34,9 @@ sampleWrite :: EventStoreCmdM EventWriteResult
 sampleWrite = do
   writeEvent' testKey "FooCreatedEvent" BS.empty
 
+prop_List :: [Int] -> Property
+prop_List xs = (reverse . reverse) xs === xs
+
 main :: IO ()
 main = do
   postEventSpec' <- testSpec "Post Event tests" postEventSpec
@@ -48,5 +52,6 @@ main = do
               assertEqual "Event is in the map" expected s
           ],
         postEventSpec',
-        webserverInternalTests'
+        webserverInternalTests',
+        testProperty "Test QuickCheck Property" prop_List
       ]
