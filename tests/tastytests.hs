@@ -14,14 +14,16 @@ import           Test.Tasty.HUnit
 import           Test.Tasty.Hspec
 import           WebserverSpec
 import qualified WebserverInternalSpec
-type FakeDB = Map EventKey (EventType, BS.ByteString)
 
-runTest :: MonadState FakeDB m => EventStoreCmdM a -> m a
+type FakeEventTable = Map EventKey (EventType, BS.ByteString, Maybe PageKey)
+type FakePageTable = Map PageKey (PageStatus, [EventKey])
+
+runTest :: MonadState FakeEventTable m => EventStoreCmdM a -> m a
 runTest = iterM run
   where
     run (GetEvent' k f) = f =<< gets (M.lookup k)
     run (WriteEvent' k t v n) = do
-      modify $ M.insert k (t,v)
+      modify $ M.insert k (t,v, Nothing)
       n WriteSuccess
 
 testKey :: EventKey
@@ -41,7 +43,7 @@ main = do
           [ testCase "Can write event" $
             let
               (_,s) = runState (runTest sampleWrite) M.empty
-              expected = M.singleton testKey ("FooCreatedEvent", BS.empty)
+              expected = M.singleton testKey ("FooCreatedEvent", BS.empty, Nothing)
             in
               assertEqual "Event is in the map" expected s
           ],
