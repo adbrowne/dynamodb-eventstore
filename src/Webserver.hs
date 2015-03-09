@@ -17,6 +17,7 @@ import qualified Data.Text.Encoding        as T
 import           Data.Text.Lazy            (Text, pack)
 import qualified Data.Text.Lazy            as TL
 import           Network.HTTP.Types        (mkStatus)
+import           EventStoreActions
 
 data ExpectedVersion = ExpectedVersion Int
   deriving (Show)
@@ -79,20 +80,10 @@ fromEither (Right a) = a
 toResult :: Either Text (ActionM ()) -> ActionM ()
 toResult = fromEither . left error400
 
-data PostEventRequest = PostEventRequest {
-   streamId        :: Text,
-   expectedVersion :: Int64,
-   eventData       :: BL.ByteString
-} deriving (Show)
-
-data EventStoreWebRequest =
-  PostEvent PostEventRequest
-  deriving (Show)
-
 showEventResponse :: Show a => a -> ActionM ()
 showEventResponse a = (html . pack . show) a
 
-app :: (EventStoreWebRequest -> ActionM ()) -> ScottyM ()
+app :: (EventStoreAction -> ActionM ()) -> ScottyM ()
 app process = do
   post "/streams/:streamId" $ do
     streamId <- param "streamId"

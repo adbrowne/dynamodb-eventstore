@@ -25,6 +25,8 @@ data PageWriteRequest = PageWriteRequest {
       , newEntries   :: [EventKey]
 }
 
+-- Low level event store commands
+-- should map almost one to one with dynamodb operations
 data EventStoreCmd next =
   EnsurePartitionCount' Int (Maybe Int -> next) |
   GetEvent' EventKey (Maybe (EventType, BS.ByteString, Maybe PageKey) -> next) |
