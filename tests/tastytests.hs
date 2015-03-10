@@ -6,6 +6,7 @@ import           Control.Monad.Free
 import           Control.Monad.State
 import qualified Data.ByteString         as BS
 import qualified Data.ByteString.Lazy    as BL
+import qualified Data.List               as L
 import           Data.Map                (Map)
 import qualified Data.Map                as M
 import qualified Data.Set                as S
@@ -15,11 +16,11 @@ import           EventStoreActions
 import           EventStoreCommands
 
 import           Test.Tasty
-import           Test.Tasty.HUnit
 import           Test.Tasty.Hspec
+import           Test.Tasty.HUnit
 import           Test.Tasty.QuickCheck
-import           WebserverSpec
 import qualified WebserverInternalSpec
+import           WebserverSpec
 
 type FakeEventTable = Map EventKey (EventType, BS.ByteString, Maybe PageKey)
 type FakePageTable = Map PageKey (PageStatus, [EventKey])
@@ -48,12 +49,12 @@ instance Arbitrary PostEventRequest where
   arbitrary = liftM3 PostEventRequest (fmap TL.pack arbitrary) arbitrary (fmap BL.pack arbitrary)
 
 instance Arbitrary SingleStreamValidActions where
-  arbitrary = fmap SingleStreamValidActions (listOf $ arbitrary)
-{--  arbitraray = rev $ sized actionList
+  arbitrary = do
+    eventList <- listOf arbitrary
+    let (_, numberedEventList) = L.mapAccumL numberEvent 0 eventList
+    return $ SingleStreamValidActions numberedEventList
     where
-      actionList 0 = []
-      actionList n =
-        liftM PostEventRequest  --}
+      numberEvent i e = (i+1,e { expectedVersion = i })
 
 toRecordedEvent (PostEventRequest sId v d) = RecordedEvent {
   recordedEventStreamId = sId,

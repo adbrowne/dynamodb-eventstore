@@ -28,11 +28,12 @@ data PageWriteRequest = PageWriteRequest {
 -- Low level event store commands
 -- should map almost one to one with dynamodb operations
 data EventStoreCmd next =
-  EnsurePartitionCount' Int (Maybe Int -> next) |
   GetEvent' EventKey (Maybe (EventType, BS.ByteString, Maybe PageKey) -> next) |
   WriteEvent' EventKey EventType BS.ByteString (EventWriteResult -> next) |
+  Wait' (() -> next) |
   SetEventPage' EventKey PageKey (SetEventPageResult -> next) |
   GetPageEntry' PageKey (Maybe (PageStatus, [EventKey]) -> next) |
+  ScanUnpagedEvents' ([EventKey] -> next) | -- todo support paging
   WritePageEntry' PageKey PageWriteRequest (Maybe PageStatus -> next) deriving (Functor)
 
 type EventStoreCmdM = Free EventStoreCmd
