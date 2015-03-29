@@ -60,9 +60,28 @@ toRecordedEvent (PostEventRequest sId v d) = RecordedEvent {
   recordedEventNumber = v,
   recordedEventData = d }
 
--- todo: this doesn't actually run a simulation yet
+runItem :: FakeEventTable -> PostEventRequest -> FakeEventTable
+runItem state (PostEventRequest sId v d) =
+  let
+   (_, s) = runState (runTest writeItem) state
+  in s
+  where
+      writeItem = do
+        writeEvent' (EventKey (StreamId (TL.toStrict sId),v)) "SomeEventType" (BL.toStrict d)
+
 runActions :: [PostEventRequest] -> Gen [RecordedEvent]
-runActions a = elements $ [fmap toRecordedEvent a]
+runActions a =
+  let
+    s = L.foldl' runItem M.empty a
+    events = M.assocs s
+  in
+    elements $ [fmap toRecEvent events]
+  where
+    toRecEvent :: (EventKey, (EventType, BS.ByteString, Maybe PageKey)) -> RecordedEvent
+    toRecEvent (EventKey (StreamId sId, version),(eventType, body, _)) = RecordedEvent {
+          recordedEventStreamId = TL.fromStrict sId,
+          recordedEventNumber = version,
+          recordedEventData = BL.fromStrict body }
 
 prop_AllEventsAppearInSubscription (SingleStreamValidActions actions) =
   forAll (runActions actions) $ \r ->
