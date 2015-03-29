@@ -42,9 +42,6 @@ sampleWrite :: EventStoreCmdM EventWriteResult
 sampleWrite = do
   writeEvent' testKey "FooCreatedEvent" BS.empty
 
-prop_List :: [Int] -> Property
-prop_List xs = (reverse . reverse) xs === xs
-
 newtype SingleStreamValidActions = SingleStreamValidActions [PostEventRequest] deriving (Show)
 
 instance Arbitrary PostEventRequest where
@@ -57,8 +54,6 @@ instance Arbitrary SingleStreamValidActions where
     return $ SingleStreamValidActions numberedEventList
     where
       numberEvent i e = (i+1,e { expectedVersion = i })
-
-type StubDatastore = Map (T.Text, Int64) BL.ByteString
 
 toRecordedEvent (PostEventRequest sId v d) = RecordedEvent {
   recordedEventStreamId = sId,
@@ -89,6 +84,5 @@ main = do
           ],
         postEventSpec',
         webserverInternalTests',
-        testProperty "Test QuickCheck Property" prop_List,
         testProperty "All Events Appear in Subscription" prop_AllEventsAppearInSubscription
       ]
