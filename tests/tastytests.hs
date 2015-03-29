@@ -10,6 +10,8 @@ import qualified Data.List               as L
 import           Data.Map                (Map)
 import qualified Data.Map                as M
 import qualified Data.Set                as S
+import           Data.Int
+import qualified Data.Text               as T
 import qualified Data.Text.Lazy          as TL
 import qualified Data.Text.Lazy.Encoding as TL
 import           EventStoreActions
@@ -56,6 +58,8 @@ instance Arbitrary SingleStreamValidActions where
     where
       numberEvent i e = (i+1,e { expectedVersion = i })
 
+type StubDatastore = Map (T.Text, Int64) BL.ByteString
+
 toRecordedEvent (PostEventRequest sId v d) = RecordedEvent {
   recordedEventStreamId = sId,
   recordedEventNumber = v,
@@ -63,7 +67,7 @@ toRecordedEvent (PostEventRequest sId v d) = RecordedEvent {
 
 -- todo: this doesn't actually run a simulation yet
 runActions :: [PostEventRequest] -> Gen [RecordedEvent]
-runActions a = elements $  [fmap toRecordedEvent a]
+runActions a = elements $ [fmap toRecordedEvent a]
 
 prop_AllEventsAppearInSubscription (SingleStreamValidActions actions) =
   forAll (runActions actions) $ \r ->
