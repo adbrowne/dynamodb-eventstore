@@ -16,6 +16,7 @@ newtype EventKey = EventKey (StreamId, Int64) deriving (Ord, Eq, Show)
 type EventType = String
 type PageKey = (Int, Int) -- (Partition, PageNumber)
 data EventWriteResult = WriteSuccess | EventExists | WriteError
+type EventReadResult = Maybe (EventType, BS.ByteString, Maybe PageKey)
 data SetEventPageResult = SetEventPageSuccess | SetEventPageError
 data PageStatus = Version Int | Full | Verified
 
@@ -28,7 +29,7 @@ data PageWriteRequest = PageWriteRequest {
 -- Low level event store commands
 -- should map almost one to one with dynamodb operations
 data EventStoreCmd next =
-  GetEvent' EventKey (Maybe (EventType, BS.ByteString, Maybe PageKey) -> next) |
+  GetEvent' EventKey (EventReadResult -> next) |
   WriteEvent' EventKey EventType BS.ByteString (EventWriteResult -> next) |
   Wait' (() -> next) |
   SetEventPage' EventKey PageKey (SetEventPageResult -> next) |
