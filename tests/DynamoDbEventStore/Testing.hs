@@ -25,3 +25,7 @@ runTest = iterM run
       let f (et, eb, _) = Just (et, eb, Just pk)
       modify $ M.update f k
       n SetEventPageSuccess
+
+evalProgram program = evalState (runTest program) M.empty
+
+execProgram program = execState (runTest program) M.empty

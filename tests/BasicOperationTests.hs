@@ -22,18 +22,18 @@ sampleRead = getEvent' testKey
 test_writeEvent =
   testCase "Can write event" $
       let
-        s = execState (runTest sampleWrite) M.empty
+        state = execProgram sampleWrite
         expected = M.singleton testKey ("FooCreatedEvent", BS.empty, Nothing)
       in
-        assertEqual "Event is in the map" expected s
+        assertEqual "Event is in the map" expected state
 
 test_readEvent =
   testCase "Can read event" $
     let
       actions = do
-        runTest sampleWrite
-        runTest sampleRead
-      evt = evalState actions M.empty
+        sampleWrite
+        sampleRead
+      evt = evalProgram actions
       expected = Just ("FooCreatedEvent", BS.empty, Nothing)
     in
       assertEqual "Event is read" expected evt
@@ -42,10 +42,10 @@ test_setEventPage =
   testCase "Set event page" $
     let
       actions = do
-        runTest sampleWrite
-        runTest $ setEventPage' testKey (0,0)
-        runTest sampleRead
-      evt = evalState actions M.empty
+        sampleWrite
+        r <- setEventPage' testKey (0,0)
+        sampleRead
+      evt = evalProgram actions
       expected = Just ("FooCreatedEvent", BS.empty, Just (0,0))
     in
       assertEqual "Page is set" expected evt
