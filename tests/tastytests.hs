@@ -16,6 +16,8 @@ import qualified Data.Text.Lazy          as TL
 import qualified Data.Text.Lazy.Encoding as TL
 import           EventStoreActions
 import           EventStoreCommands
+import qualified BasicOperationTests     as BasicOps
+import           DynamoDbEventStore.Testing
 
 import           Test.Tasty
 import           Test.Tasty.Hspec
@@ -23,24 +25,6 @@ import           Test.Tasty.HUnit
 import           Test.Tasty.QuickCheck
 import qualified WebserverInternalSpec
 import           WebserverSpec
-
-type FakeEventTable = Map EventKey (EventType, BS.ByteString, Maybe PageKey)
-type FakePageTable = Map PageKey (PageStatus, [EventKey])
-
-runTest :: MonadState FakeEventTable m => EventStoreCmdM a -> m a
-runTest = iterM run
-  where
-    run (GetEvent' k f) = f =<< gets (M.lookup k)
-    run (WriteEvent' k t v n) = do
-      modify $ M.insert k (t,v, Nothing)
-      n WriteSuccess
-
-testKey :: EventKey
-testKey = EventKey ((StreamId "Browne"), 0)
-
-sampleWrite :: EventStoreCmdM EventWriteResult
-sampleWrite = do
-  writeEvent' testKey "FooCreatedEvent" BS.empty
 
 newtype SingleStreamValidActions = SingleStreamValidActions [PostEventRequest] deriving (Show)
 
@@ -59,15 +43,6 @@ toRecordedEvent (PostEventRequest sId v d) = RecordedEvent {
   recordedEventStreamId = sId,
   recordedEventNumber = v,
   recordedEventData = d }
-
-runItem :: FakeEventTable -> PostEventRequest -> FakeEventTable
-runItem state (PostEventRequest sId v d) =
-  let
-   (_, s) = runState (runTest writeItem) state
-  in s
-  where
-      writeItem = do
-        writeEvent' (EventKey (StreamId (TL.toStrict sId),v)) "SomeEventType" (BL.toStrict d)
 
 runActions :: [PostEventRequest] -> Gen [RecordedEvent]
 runActions a =
@@ -94,13 +69,7 @@ main = do
   defaultMain $
     testGroup "Tests"
       [ testGroup "Unit Tests"
-          [ testCase "Can write event" $
-            let
-              (_,s) = runState (runTest sampleWrite) M.empty
-              expected = M.singleton testKey ("FooCreatedEvent", BS.empty, Nothing)
-            in
-              assertEqual "Event is in the map" expected s
-          ],
+        BasicOps.tests,
         postEventSpec',
         webserverInternalTests',
         testProperty "All Events Appear in Subscription" prop_AllEventsAppearInSubscription
