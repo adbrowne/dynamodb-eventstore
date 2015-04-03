@@ -22,7 +22,7 @@ sampleRead = getEvent' testKey
 test_writeEvent =
   testCase "Can write event" $
       let
-        (_,s) = runState (runTest sampleWrite) M.empty
+        s = execState (runTest sampleWrite) M.empty
         expected = M.singleton testKey ("FooCreatedEvent", BS.empty, Nothing)
       in
         assertEqual "Event is in the map" expected s
@@ -30,8 +30,10 @@ test_writeEvent =
 test_readEvent =
   testCase "Can read event" $
     let
-      (_,s) = runState (runTest sampleWrite) M.empty
-      (evt,_) = runState (runTest sampleRead) s
+      actions = do
+        runTest sampleWrite
+        runTest sampleRead
+      evt = evalState actions M.empty
       expected = Just ("FooCreatedEvent", BS.empty, Nothing)
     in
       assertEqual "Event is read" expected evt
