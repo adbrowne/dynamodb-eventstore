@@ -21,3 +21,7 @@ runTest = iterM run
     run (WriteEvent' k t v n) = do
       modify $ M.insert k (t,v, Nothing)
       n WriteSuccess
+    run (SetEventPage' k pk n) = do
+      let f (et, eb, _) = Just (et, eb, Just pk)
+      modify $ M.update f k
+      n SetEventPageSuccess
