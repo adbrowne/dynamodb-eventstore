@@ -21,13 +21,3 @@ runTest = iterM run
     run (WriteEvent' k t v n) = do
       modify $ M.insert k (t,v, Nothing)
       n WriteSuccess
-
-runItem :: FakeEventTable -> PostEventRequest -> FakeEventTable
-runItem state (PostEventRequest sId v d) =
-  let
-   (_, s) = runState (runTest writeItem) state
-  in s
-  where
-      writeItem = do
-        writeEvent' (EventKey (StreamId (TL.toStrict sId),v)) "SomeEventType" (BL.toStrict d)
-

@@ -6,8 +6,6 @@ import           Control.Monad.State
 import           Data.Map                   (Map)
 import qualified Data.Map                as M
 import qualified Data.ByteString         as BS
-import qualified Data.ByteString.Lazy    as BL
-import qualified Data.Text.Lazy          as TL
 import           DynamoDbEventStore.Testing
 import           EventStoreCommands
 import           Test.Tasty.HUnit
