@@ -26,6 +26,7 @@ runTest = iterM run
       let f (et, eb, _) = Just (et, eb, Just pk)
       modify $ M.update f k
       n SetEventPageSuccess
+    run (ScanUnpagedEvents' n) = n []
     writeEvent Nothing k t v = do
       modify $ M.insert k (t,v, Nothing)
       return WriteSuccess

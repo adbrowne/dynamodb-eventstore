@@ -54,4 +54,11 @@ tests =
         expected = Just ("FooCreatedEvent", BS.empty, Just (0,0))
       in
         assertEqual "Page is set" expected evt
+    , testCase "Scan unpaged events returns nothing for empty event store" $
+      let
+        actions = do
+          scanUnpagedEvents'
+        evtList = evalProgram actions
+      in
+        assertEqual "No items" [] evtList
   ]
