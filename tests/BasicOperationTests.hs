@@ -21,7 +21,12 @@ sampleRead = getEvent' testKey
 
 tests =
   [
-    testCase "Can write event" $
+    testCase "Wait has no effect" $
+        let
+          state = execProgram wait'
+        in
+          assertEqual "Empty map" state M.empty
+    , testCase "Can write event" $
         let
           state = execProgram sampleWrite
           expected = M.singleton testKey ("FooCreatedEvent", BS.empty, Nothing)

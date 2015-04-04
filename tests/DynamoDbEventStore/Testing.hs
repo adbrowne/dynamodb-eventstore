@@ -17,6 +17,7 @@ type FakePageTable = Map PageKey (PageStatus, [EventKey])
 runTest :: MonadState FakeEventTable m => EventStoreCmdM a -> m a
 runTest = iterM run
   where
+    run (Wait' n) = n ()
     run (GetEvent' k f) = f =<< gets (M.lookup k)
     run (WriteEvent' k t v n) = do
       exists <- gets (M.lookup k)
