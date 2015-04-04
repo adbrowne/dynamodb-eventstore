@@ -61,4 +61,21 @@ tests =
         evtList = evalProgram actions
       in
         assertEqual "No items" [] evtList
+    , testCase "Scan unpaged events returns written event" $
+      let
+        actions = do
+          sampleWrite
+          scanUnpagedEvents'
+        evtList = evalProgram actions
+      in
+        assertEqual "Should should have single item" [testKey] evtList
+    , testCase "Scan unpaged events does not returned paged event" $
+      let
+        actions = do
+          sampleWrite
+          setEventPage' testKey (0,0)
+          scanUnpagedEvents'
+        evtList = evalProgram actions
+      in
+        assertEqual "Should have no items" [] evtList
   ]
