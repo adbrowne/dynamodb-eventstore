@@ -25,13 +25,13 @@ tests =
         let
           state = execProgram wait'
         in
-          assertEqual "Empty map" state M.empty
+          assertEqual "Empty map" state emptyTestState
     , testCase "Can write event" $
         let
           state = execProgram sampleWrite
           expected = M.singleton testKey ("FooCreatedEvent", BS.empty, Nothing)
         in
-          assertEqual "Event is in the map" expected state
+          assertEqual "Event is in the map" (expected, M.empty) state
     , testCase "Write event returns WriteExists when event already exists" $
         let
           actions = do

@@ -16,7 +16,7 @@ import           EventStoreCommands
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 
-runItem :: FakeEventTable -> PostEventRequest -> FakeEventTable
+runItem :: FakeState -> PostEventRequest -> FakeState
 runItem state (PostEventRequest sId v d) =
   let
    (_, s) = runState (runTest writeItem) state
@@ -46,8 +46,8 @@ toRecordedEvent (PostEventRequest sId v d) = RecordedEvent {
 runActions :: [PostEventRequest] -> Gen [RecordedEvent]
 runActions a =
   let
-    s = L.foldl' runItem M.empty a
-    events = M.assocs s
+    s = L.foldl' runItem emptyTestState a
+    events = (M.assocs . fst) s
   in
     elements $ [fmap toRecEvent events]
   where

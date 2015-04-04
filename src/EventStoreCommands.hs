@@ -18,7 +18,7 @@ type PageKey = (Int, Int) -- (Partition, PageNumber)
 data EventWriteResult = WriteSuccess | EventExists | WriteError deriving (Eq, Show)
 type EventReadResult = Maybe (EventType, BS.ByteString, Maybe PageKey)
 data SetEventPageResult = SetEventPageSuccess | SetEventPageError
-data PageStatus = Version Int | Full | Verified
+data PageStatus = Version Int | Full | Verified deriving (Eq, Show)
 
 data PageWriteRequest = PageWriteRequest {
       expectedStatus :: PageStatus
