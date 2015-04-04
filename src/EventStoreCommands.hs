@@ -15,7 +15,7 @@ newtype StreamId = StreamId T.Text deriving (Ord, Eq, Show)
 newtype EventKey = EventKey (StreamId, Int64) deriving (Ord, Eq, Show)
 type EventType = String
 type PageKey = (Int, Int) -- (Partition, PageNumber)
-data EventWriteResult = WriteSuccess | EventExists | WriteError
+data EventWriteResult = WriteSuccess | EventExists | WriteError deriving (Eq, Show)
 type EventReadResult = Maybe (EventType, BS.ByteString, Maybe PageKey)
 data SetEventPageResult = SetEventPageSuccess | SetEventPageError
 data PageStatus = Version Int | Full | Verified
@@ -33,9 +33,9 @@ data EventStoreCmd next =
   WriteEvent' EventKey EventType BS.ByteString (EventWriteResult -> next) |
   Wait' (() -> next) |
   SetEventPage' EventKey PageKey (SetEventPageResult -> next) |
+  WritePageEntry' PageKey PageWriteRequest (Maybe PageStatus -> next) |
   GetPageEntry' PageKey (Maybe (PageStatus, [EventKey]) -> next) |
-  ScanUnpagedEvents' ([EventKey] -> next) | -- todo support paging
-  WritePageEntry' PageKey PageWriteRequest (Maybe PageStatus -> next) deriving (Functor)
+  ScanUnpagedEvents' ([EventKey] -> next) deriving (Functor) -- todo support paging
 
 type EventStoreCmdM = Free EventStoreCmd
 

@@ -19,12 +19,18 @@ runTest = iterM run
   where
     run (GetEvent' k f) = f =<< gets (M.lookup k)
     run (WriteEvent' k t v n) = do
-      modify $ M.insert k (t,v, Nothing)
-      n WriteSuccess
+      exists <- gets (M.lookup k)
+      result <- writeEvent exists k t v
+      n result
     run (SetEventPage' k pk n) = do
       let f (et, eb, _) = Just (et, eb, Just pk)
       modify $ M.update f k
       n SetEventPageSuccess
+    writeEvent Nothing k t v = do
+      modify $ M.insert k (t,v, Nothing)
+      return WriteSuccess
+    writeEvent (Just _) _ _ _ = do
+      return EventExists
 
 evalProgram program = evalState (runTest program) M.empty
 
