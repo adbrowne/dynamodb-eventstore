@@ -21,7 +21,7 @@ data SetEventPageResult = SetEventPageSuccess | SetEventPageError
 data PageStatus = Version Int | Full | Verified deriving (Eq, Show)
 
 data PageWriteRequest = PageWriteRequest {
-      expectedStatus :: PageStatus
+      expectedStatus :: Maybe PageStatus
       , newStatus    :: PageStatus
       , newEntries   :: [EventKey]
 }

@@ -19,9 +19,11 @@ type FakeState = (FakeEventTable, FakePageTable)
 emptyTestState :: FakeState
 emptyTestState = (M.empty, M.empty)
 
---writeEventToState :: EventKey -> (EventType, BS.ByteString, Maybe PageKey) -> FakeState -> FakeState
 writeEventToState f (eT, pT) =
    (f eT, pT)
+
+writePageToState f (eT, pT) =
+   (eT, f pT)
 
 runCmd :: MonadState FakeState m => EventStoreCmd (m a) -> m a
 runCmd (Wait' n) = n ()
@@ -46,6 +48,21 @@ runCmd (ScanUnpagedEvents' n) = do
   where
     unpagedEntry (_, _, (Just _)) = False
     unpagedEntry (_, _, Nothing) = True
+runCmd (GetPageEntry' k n) =
+  n =<< gets (M.lookup k . snd)
+runCmd (WritePageEntry' k PageWriteRequest { expectedStatus = expectedStatus, newStatus = newStatus, newEntries = newEntries } n) = do
+  modify $ writePageToState modifyPage
+  v <- gets (M.lookup k . snd)
+  n $ fmap fst v
+    where
+      writePage Nothing Nothing =
+        M.insert k (newStatus, newEntries)
+      modifyPage :: FakePageTable -> FakePageTable
+      modifyPage pT =
+        let
+          current = M.lookup k pT
+        in
+          writePage current expectedStatus pT
 
 runTest :: MonadState FakeState m => EventStoreCmdM a -> m a
 runTest = iterM runCmd

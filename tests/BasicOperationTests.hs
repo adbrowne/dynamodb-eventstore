@@ -83,4 +83,18 @@ tests =
         evtList = evalProgram actions
       in
         assertEqual "Should have no items" [] evtList
+    , testCase "Written page entry should be returned by get" $
+      let
+        pageKey = (0,0)
+        actions = do
+          writeResult <- writePageEntry' pageKey
+                          (PageWriteRequest {
+                               expectedStatus = Nothing,
+                               newStatus = Version 0,
+                               newEntries = []})
+          readResult <- getPageEntry' pageKey
+          return (writeResult, readResult)
+        r = evalProgram actions
+      in
+        assertEqual "Read and write should return Version 0" (Just $ Version 0, Just (Version 0, [])) r
   ]
