@@ -83,6 +83,23 @@ tests =
         evtList = evalProgram actions
       in
         assertEqual "Should have no items" [] evtList
+    , testCase "Writing page entry with wrong version should return error" $
+      let
+        pageKey = (0,0)
+        actions = do
+          writePageEntry' pageKey
+                          (PageWriteRequest {
+                               expectedStatus = Nothing,
+                               newStatus = Version 0,
+                               newEntries = []})
+          writePageEntry' pageKey
+                          (PageWriteRequest {
+                               expectedStatus = Nothing,
+                               newStatus = Version 0,
+                               newEntries = []})
+        r = evalProgram actions
+      in
+        assertEqual "Result should be nothing" Nothing r
     , testCase "Written page entry should be returned by get" $
       let
         pageKey = (0,0)
