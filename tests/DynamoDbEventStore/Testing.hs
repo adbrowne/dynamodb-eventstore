@@ -51,18 +51,22 @@ runCmd (ScanUnpagedEvents' n) = do
 runCmd (GetPageEntry' k n) =
   n =<< gets (M.lookup k . snd)
 runCmd (WritePageEntry' k PageWriteRequest { expectedStatus = expectedStatus, newStatus = newStatus, newEntries = newEntries } n) = do
-  modify $ writePageToState modifyPage
-  v <- gets (M.lookup k . snd)
-  n $ fmap fst v
+  table <- gets snd
+  let entryStatus = fmap fst $ M.lookup k table
+  let writeResult = writePage expectedStatus entryStatus table
+  modify $ writePageToState (modifyPage writeResult)
+  n $ fmap fst writeResult
     where
-      writePage Nothing Nothing =
-        M.insert k (newStatus, newEntries)
-      modifyPage :: FakePageTable -> FakePageTable
-      modifyPage pT =
-        let
-          current = M.lookup k pT
-        in
-          writePage current expectedStatus pT
+      doInsert = M.insert k (newStatus, newEntries)
+      writePage :: Maybe PageStatus -> Maybe PageStatus -> FakePageTable -> Maybe (PageStatus, FakePageTable)
+      writePage Nothing Nothing table = Just (newStatus,  doInsert table)
+      writePage (Just (c)) (Just (e)) table
+        | c == e =  Just (newStatus, doInsert table)
+        | otherwise = Nothing
+      writePage _ _ _ = Nothing
+      modifyPage :: Maybe (PageStatus, FakePageTable) -> FakePageTable -> FakePageTable
+      modifyPage (Just (_, pT)) _ = pT
+      modifyPage Nothing state = state
 
 runTest :: MonadState FakeState m => EventStoreCmdM a -> m a
 runTest = iterM runCmd
