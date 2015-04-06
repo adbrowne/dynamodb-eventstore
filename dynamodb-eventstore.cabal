@@ -36,7 +36,8 @@ executable web
   build-depends:       base,
                        scotty >= 0.9,
                        text >= 1.2,
-                       dynamodb-eventstore
+                       dynamodb-eventstore,
+                       transformers >= 0.4
   default-language:    Haskell2010
   main-is:             Main.hs
 
