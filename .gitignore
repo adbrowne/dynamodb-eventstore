@@ -16,3 +16,4 @@ cabal.config
 *.aux
 *.hp
 *~
+scripts/dynamodb_local_latest/

@@ -1,9 +1,11 @@
 language: haskell
 ghc:
-- 7.8
+  - 7.8
 install:
-- cabal install happy
-- cabal install --only-dependencies --enable-tests
+  - cabal install happy
+  - cabal install --only-dependencies --enable-tests
+before_script:
+  - ./scripts/run-dynamodb-local.sh
 deploy:
   provider: releases
   user: adbrowne
