@@ -71,6 +71,5 @@ runCmd (WritePageEntry' k PageWriteRequest { expectedStatus = expectedStatus, ne
 runTest :: MonadState FakeState m => EventStoreCmdM a -> m a
 runTest = iterM runCmd
 
-evalProgram program = evalState (runTest program) (M.empty, M.empty)
-
-execProgram program = execState (runTest program) (M.empty, M.empty)
+evalProgram :: EventStoreCmdM a -> IO a
+evalProgram program = return $ evalState (runTest program) (M.empty, M.empty)

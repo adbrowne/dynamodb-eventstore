@@ -31,7 +31,7 @@ main = do
   webserverInternalTests' <- testSpec "Webserver Internal Tests" WebserverInternalSpec.spec
   defaultMain $
     testGroup "Tests"
-      [ testGroup "Command Tests" CommandTests.tests,
+      [ testGroup "Command Tests" (CommandTests.tests evalProgram),
         testGroup "Action Tests" ActionTests.tests,
         postEventSpec',
         webserverInternalTests'
