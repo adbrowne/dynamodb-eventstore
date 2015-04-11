@@ -19,12 +19,14 @@ cabal-version:       >=1.10
 library
   exposed-modules:     Webserver,
                        EventStoreCommands,
-                       EventStoreActions
+                       EventStoreActions,
+                       DynamoDbEventStore.DynamoInterpreter
   -- other-extensions:    
   build-depends:       base >=4.7 && <4.8,
                        scotty >= 0.9,
                        safe >= 0.3,
                        text >= 1.0,
+                       containers >= 0.5,
                        http-types >= 0.8,
                        attoparsec >= 0.12,
                        free >= 4.10,

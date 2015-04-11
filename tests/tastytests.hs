@@ -17,6 +17,7 @@ import           EventStoreCommands
 import qualified BasicOperationTests     as CommandTests
 import           DynamoDbEventStore.Testing
 import           DynamoDbEventStore.EventStoreActionTests as ActionTests
+import qualified DynamoDbEventStore.DynamoInterpreter as Di
 
 import           Test.Tasty
 import           Test.Tasty.Hspec
@@ -31,7 +32,8 @@ main = do
   webserverInternalTests' <- testSpec "Webserver Internal Tests" WebserverInternalSpec.spec
   defaultMain $
     testGroup "Tests"
-      [ testGroup "Command Tests" (CommandTests.tests evalProgram),
+      [ testGroup "Command Unit Tests" (CommandTests.tests evalProgram),
+        testGroup "Command Tests against Dynamo" (CommandTests.tests Di.evalProgram),
         testGroup "Action Tests" ActionTests.tests,
         postEventSpec',
         webserverInternalTests'
