@@ -12,6 +12,7 @@ import qualified Data.Text.Lazy          as TL
 import           EventStoreActions
 import           EventStoreCommands
 import           Aws
+import           Aws.Core
 import           Aws.DynamoDb.Commands
 import           Aws.DynamoDb.Core
 --import           Control.Concurrent
@@ -46,4 +47,5 @@ evalProgram program = do
 
 runCommand r = do
     cfg <- Aws.baseConfiguration
-    Aws.simpleAws cfg debugServiceConfig r
+    let cfg' = DdbConfiguration ddbLocal HTTP (Just 8000)
+    Aws.simpleAws cfg cfg' r
