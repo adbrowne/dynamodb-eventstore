@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module DynamoDbEventStore.DynamoInterpreter where
 
@@ -9,6 +10,8 @@ import qualified Data.Map                as M
 import qualified Data.ByteString         as BS
 import qualified Data.ByteString.Lazy    as BL
 import qualified Data.Text.Lazy          as TL
+import qualified Data.Text               as T
+import           System.Random
 import           EventStoreActions
 import           EventStoreCommands
 import           Aws
@@ -38,7 +41,9 @@ runTest = do
 
 evalProgram :: EventStoreCmdM a -> IO a
 evalProgram program = do
-  let req0 = createTable "devel-1"
+  tableNameId :: Int <- getStdRandom (randomR (1,9999999999))
+  let tableName = T.pack $ "testtable-" ++ (show tableNameId)
+  let req0 = createTable tableName
         [AttributeDefinition "name" AttrString]
         (HashOnly "name")
         (ProvisionedThroughput 1 1)
