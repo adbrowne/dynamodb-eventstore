@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE QuasiQuotes #-}
 module WebserverSpec (postEventSpec) where
 
 import           Test.Tasty.Hspec
@@ -32,17 +31,17 @@ postEventSpec = do
     it "responds with body" $
       waiCase requestWithExpectedVersion $ assertBody "PostEvent (PostEventRequest {streamId = \"streamId\", expectedVersion = 1, eventData = \"\"})"
 
-  describe "POST /streams/streamId without ExepectedVersion" $ do
+  describe "POST /streams/streamId without ExepectedVersion" $
     it "responds with 400" $
       waiCase requestWithoutExpectedVersion $ assertStatus 400
 
-  describe "POST /streams/streamId without ExepectedVersion greater than Int64.max" $ do
+  describe "POST /streams/streamId without ExepectedVersion greater than Int64.max" $
     it "responds with 400" $
-       (addEventPost [("ES-ExpectedVersion", "9223372036854775808")]) `waiCase` (assertStatus 400)
+       addEventPost [("ES-ExpectedVersion", "9223372036854775808")] `waiCase` assertStatus 400
 
-  describe "POST /streams/streamId with non-integer ExpectedVersion" $ do
+  describe "POST /streams/streamId with non-integer ExpectedVersion" $
     it "responds with 400" $
-      requestWithoutBadExpectedVersion `waiCase` (assertStatus 400)
+      requestWithoutBadExpectedVersion `waiCase` assertStatus 400
   where
     app = S.scottyApp (W.app W.showEventResponse)
     waiCase r assertion = do

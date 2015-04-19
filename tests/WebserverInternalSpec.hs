@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE QuasiQuotes #-}
 module WebserverInternalSpec (spec) where
 
 
@@ -14,9 +13,9 @@ showText :: Show a => a -> TL.Text
 showText = TL.pack . show
 
 spec :: Spec
-spec = do
+spec =
   describe "parseInt64" $ do
-    let run str = W.runParser W.positiveInt64Parser () str
+    let run = W.runParser W.positiveInt64Parser ()
 
     it "can parse any positive int64" $ property $
       \x -> x >= 0 ==> run (showText (x :: Int64)) === Right x
@@ -28,5 +27,5 @@ spec = do
       \x ->  (Text.Read.readMaybe x :: Maybe Int64) == Nothing ==> run (showText x) === Left ()
 
     it "will not parse numbers that are too large" $ do
-      let tooLarge = (toInteger $ (maxBound :: Int64)) + 1
+      let tooLarge = toInteger (maxBound :: Int64) + 1
       run (showText tooLarge) == Left ()

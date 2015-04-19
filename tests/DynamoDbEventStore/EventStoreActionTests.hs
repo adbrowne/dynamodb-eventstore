@@ -22,8 +22,10 @@ runItem state (PostEventRequest sId v d) =
    (_, s) = runState (runTest writeItem) state
   in s
   where
-      writeItem = do
-        writeEvent' (EventKey (StreamId (TL.toStrict sId),v)) "SomeEventType" (BL.toStrict d)
+      writeItem =
+        writeEvent' (EventKey (StreamId (TL.toStrict sId),v))
+          "SomeEventType"
+          (BL.toStrict d)
 
 newtype SingleStreamValidActions = SingleStreamValidActions [PostEventRequest] deriving (Show)
 
@@ -49,7 +51,7 @@ runActions a =
     s = L.foldl' runItem emptyTestState a
     events = (M.assocs . fst) s
   in
-    elements $ [fmap toRecEvent events]
+    elements [fmap toRecEvent events]
   where
     toRecEvent :: (EventKey, (EventType, BS.ByteString, Maybe PageKey)) -> RecordedEvent
     toRecEvent (EventKey (StreamId sId, version),(eventType, body, _)) = RecordedEvent {
@@ -58,7 +60,7 @@ runActions a =
           recordedEventData = BL.fromStrict body }
 prop_AllEventsAppearInSubscription (SingleStreamValidActions actions) =
   forAll (runActions actions) $ \r ->
-    (S.fromList r) === S.fromList (map toRecordedEvent actions)
+    S.fromList r === S.fromList (map toRecordedEvent actions)
 
 tests :: [TestTree]
 tests = [

@@ -14,7 +14,7 @@ import           Test.Tasty.HUnit
 import           Test.Tasty
 
 testKey :: EventKey
-testKey = EventKey ((StreamId "Browne"), 0)
+testKey = EventKey (StreamId "Browne", 0)
 
 sampleWrite :: EventStoreCmdM EventWriteResult
 sampleWrite = writeEvent' testKey "FooCreatedEvent" BS.empty
@@ -58,9 +58,7 @@ tests evalProgram =
         assertEqual "Page is set" expected r
     , testCase "Scan unpaged events returns nothing for empty event store" $
       let
-        actions = do
-          scanUnpagedEvents'
-        evtList = evalProgram actions
+        evtList = evalProgram scanUnpagedEvents'
       in do
         r <- evtList
         assertEqual "No items" [] r
@@ -88,15 +86,15 @@ tests evalProgram =
         pageKey = (0,0)
         actions = do
           writePageEntry' pageKey
-                          (PageWriteRequest {
+                          PageWriteRequest {
                                expectedStatus = Nothing,
                                newStatus = Version 0,
-                               newEntries = []})
+                               newEntries = []}
           writePageEntry' pageKey
-                          (PageWriteRequest {
+                          PageWriteRequest {
                                expectedStatus = Nothing,
                                newStatus = Version 0,
-                               newEntries = []})
+                               newEntries = []}
         r = evalProgram actions
       in do
         r' <- r
@@ -106,10 +104,10 @@ tests evalProgram =
         pageKey = (0,0)
         actions = do
           writeResult <- writePageEntry' pageKey
-                          (PageWriteRequest {
+                          PageWriteRequest {
                                expectedStatus = Nothing,
                                newStatus = Version 0,
-                               newEntries = []})
+                               newEntries = []}
           readResult <- getPageEntry' pageKey
           return (writeResult, readResult)
         r = evalProgram actions

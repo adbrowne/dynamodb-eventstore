@@ -23,8 +23,11 @@ data ExpectedVersion = ExpectedVersion Int
   deriving (Show)
 
 addEvent :: Text -> Int64 -> a -> ActionM ()
-addEvent streamId expectedVersion _ = do
-    html $ mconcat ["StreamId:", streamId, " expectedVersion:", (pack . show) expectedVersion]
+addEvent streamId expectedVersion _ =
+    html $
+      mconcat
+        ["StreamId:", streamId, " expectedVersion:",
+         (pack . show) expectedVersion]
 
 returnEither :: Either a a -> a
 returnEither (Left a) = a
@@ -81,15 +84,15 @@ toResult :: Either Text (ActionM ()) -> ActionM ()
 toResult = fromEither . left error400
 
 showEventResponse :: Show a => a -> ActionM ()
-showEventResponse a = (html . pack . show) a
+showEventResponse = html . pack . show
 
 app :: (EventStoreAction -> ActionM ()) -> ScottyM ()
-app process = do
+app process =
   post "/streams/:streamId" $ do
     streamId <- param "streamId"
     expectedVersion <- parseMandatoryHeader "ES-ExpectedVersion" positiveInt64Parser
     eventData <- body
-    toResult . (fmap (process . PostEvent)) $
+    toResult . fmap (process . PostEvent) $
           PostEventRequest
           <$> pure streamId
           <*> expectedVersion

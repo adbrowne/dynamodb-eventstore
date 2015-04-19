@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 module DynamoDbEventStore.Testing where
 
+import           Control.Applicative
 import           Control.Monad.Free
 import           Control.Monad.State
 import           Data.Map                (Map)
@@ -27,7 +28,7 @@ writePageToState f (eT, pT) =
 
 runCmd :: MonadState FakeState m => EventStoreCmd (m a) -> m a
 runCmd (Wait' n) = n ()
-runCmd (GetEvent' k f) = f . (M.lookup k) =<< gets fst
+runCmd (GetEvent' k f) = f . M.lookup k =<< gets fst
 runCmd (WriteEvent' k t v n) = do
   exists <- gets (M.lookup k . fst)
   result <- writeEvent exists k t v
@@ -36,7 +37,7 @@ runCmd (WriteEvent' k t v n) = do
       writeEvent Nothing k t v = do
         modify $ writeEventToState $ M.insert k  (t, v, Nothing)
         return WriteSuccess
-      writeEvent (Just _) _ _ _ = do
+      writeEvent (Just _) _ _ _ =
         return EventExists
 runCmd (SetEventPage' k pk n) = do
   let f (et, eb, _) = Just (et, eb, Just pk)
@@ -46,13 +47,13 @@ runCmd (ScanUnpagedEvents' n) = do
   unpaged <- gets (M.filter unpagedEntry . fst)
   n $ M.keys unpaged
   where
-    unpagedEntry (_, _, (Just _)) = False
+    unpagedEntry (_, _, Just _) = False
     unpagedEntry (_, _, Nothing) = True
 runCmd (GetPageEntry' k n) =
   n =<< gets (M.lookup k . snd)
 runCmd (WritePageEntry' k PageWriteRequest { expectedStatus = expectedStatus, newStatus = newStatus, newEntries = newEntries } n) = do
   table <- gets snd
-  let entryStatus = fmap fst $ M.lookup k table
+  let entryStatus = fst <$> M.lookup k table
   let writeResult = writePage expectedStatus entryStatus table
   modify $ writePageToState (modifyPage writeResult)
   n $ fmap fst writeResult
@@ -60,7 +61,7 @@ runCmd (WritePageEntry' k PageWriteRequest { expectedStatus = expectedStatus, ne
       doInsert = M.insert k (newStatus, newEntries)
       writePage :: Maybe PageStatus -> Maybe PageStatus -> FakePageTable -> Maybe (PageStatus, FakePageTable)
       writePage Nothing Nothing table = Just (newStatus,  doInsert table)
-      writePage (Just (c)) (Just (e)) table
+      writePage (Just c) (Just e) table
         | c == e =  Just (newStatus, doInsert table)
         | otherwise = Nothing
       writePage _ _ _ = Nothing

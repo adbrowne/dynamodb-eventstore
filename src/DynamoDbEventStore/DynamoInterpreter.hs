@@ -36,13 +36,12 @@ runCmd (GetPageEntry' k n) = error "todo"
 runCmd (WritePageEntry' k PageWriteRequest { expectedStatus = expectedStatus, newStatus = newStatus, newEntries = newEntries } n) = error "todo"
 
 runTest :: EventStoreCmdM a -> IO a
-runTest = do
-  iterM runCmd
+runTest = iterM runCmd
 
 evalProgram :: EventStoreCmdM a -> IO a
 evalProgram program = do
   tableNameId :: Int <- getStdRandom (randomR (1,9999999999))
-  let tableName = T.pack $ "testtable-" ++ (show tableNameId)
+  let tableName = T.pack $ "testtable-" ++ show tableNameId
   let req0 = createTable tableName
         [AttributeDefinition "name" AttrString]
         (HashOnly "name")

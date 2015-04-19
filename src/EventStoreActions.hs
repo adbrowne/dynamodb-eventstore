@@ -1,5 +1,3 @@
-{-# LANGUAGE TemplateHaskell #-}
-
 module EventStoreActions where
 
 import qualified Data.ByteString.Lazy as BL
@@ -39,7 +37,7 @@ postEventRequestProgram :: PostEventRequest -> EventStoreCmdM EventWriteResult
 postEventRequestProgram (PostEventRequest sId ev ed) = do
   let eventKey = EventKey (StreamId (TL.toStrict sId),ev)
   let strictED = BL.toStrict ed
-  writeEvent' eventKey ("EventType") strictED
+  writeEvent' eventKey "EventType" strictED
 
 writeEventToPage :: EventKey -> EventStoreCmdM ()
 writeEventToPage key = do
@@ -50,6 +48,6 @@ writeEventToPage key = do
 writePagesProgram :: EventStoreCmdM ()
 writePagesProgram = do
   unpagedEvents <- scanUnpagedEvents'
-  mapM writeEventToPage unpagedEvents
+  mapM_ writeEventToPage unpagedEvents
   wait'
   writePagesProgram
