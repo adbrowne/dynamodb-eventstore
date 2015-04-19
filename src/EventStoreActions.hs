@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings   #-}
 module EventStoreActions where
 
 import qualified Data.ByteString.Lazy as BL

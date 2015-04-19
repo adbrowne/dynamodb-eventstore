@@ -16,8 +16,9 @@ import           Test.Tasty
 testKey :: EventKey
 testKey = EventKey (StreamId "Browne", 0)
 
+sampleBody = (BS.singleton $ fromIntegral 1)
 sampleWrite :: EventStoreCmdM EventWriteResult
-sampleWrite = writeEvent' testKey "FooCreatedEvent" BS.empty
+sampleWrite = writeEvent' testKey "FooCreatedEvent" sampleBody
 
 sampleRead :: EventStoreCmdM EventReadResult
 sampleRead = getEvent' testKey
@@ -41,7 +42,7 @@ tests evalProgram =
             sampleRead
           evt = evalProgram actions
           expected :: Maybe (EventType, BS.ByteString, Maybe a)
-          expected = Just ("FooCreatedEvent", BS.empty, Nothing)
+          expected = Just ("FooCreatedEvent", sampleBody, Nothing)
         in do
           r <- evt
           assertEqual "Event is read" expected r
@@ -52,7 +53,7 @@ tests evalProgram =
           r <- setEventPage' testKey (0,0)
           sampleRead
         evt = evalProgram actions
-        expected = Just ("FooCreatedEvent", BS.empty, Just (0,0))
+        expected = Just ("FooCreatedEvent", sampleBody, Just (0,0))
       in do
         r <- evt
         assertEqual "Page is set" expected r

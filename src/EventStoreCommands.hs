@@ -13,7 +13,7 @@ import qualified Data.ByteString as BS
 
 newtype StreamId = StreamId T.Text deriving (Ord, Eq, Show)
 newtype EventKey = EventKey (StreamId, Int64) deriving (Ord, Eq, Show)
-type EventType = String
+type EventType = T.Text
 type PageKey = (Int, Int) -- (Partition, PageNumber)
 data EventWriteResult = WriteSuccess | EventExists | WriteError deriving (Eq, Show)
 type EventReadResult = Maybe (EventType, BS.ByteString, Maybe PageKey)
