@@ -16,7 +16,7 @@ import           Test.Tasty
 testKey :: EventKey
 testKey = EventKey (StreamId "Browne", 0)
 
-sampleBody = (BS.singleton $ fromIntegral 1)
+sampleBody = BS.singleton 1
 sampleWrite :: EventStoreCmdM EventWriteResult
 sampleWrite = writeEvent' testKey "FooCreatedEvent" sampleBody
 
