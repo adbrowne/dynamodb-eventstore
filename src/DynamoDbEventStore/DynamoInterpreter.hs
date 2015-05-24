@@ -82,13 +82,13 @@ runCmd tn (SetEventPage' eventKey pk n) =
       -- todo: this function is not complete
       exnHandler (DdbError _ _ _ ) = n SetEventPageError
       setEventPage = do
-        -- let conditions = Conditions CondAnd [ Condition fieldPageKey IsNull ]
+        let conditions = Conditions CondAnd [ Condition fieldPageKey IsNull ]
         let key = getDynamoKeyForEvent eventKey
         let pageKeyAttribute = attrAs text fieldPageKey (T.pack $ show pk)
         let updatePageKey = au pageKeyAttribute
         let req0 = updateItem tn key [updatePageKey]
-        -- let req1 = req0 { piExpect = conditions }
-        runCommand req0
+        let req1 = req0 { uiExpect = conditions }
+        runCommand req1
         n SetEventPageSuccess
 runCmd _ (ScanUnpagedEvents' n) = error "todo"
 runCmd _ (GetPageEntry' k n) = error "todo"
