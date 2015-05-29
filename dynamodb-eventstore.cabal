@@ -31,6 +31,7 @@ library
                        attoparsec >= 0.12,
                        free >= 4.10,
                        bytestring >= 0.10,
+                       vector >= 0.10,
                        random >= 1.1,
                        aws >= 0.11.3
   hs-source-dirs:      src

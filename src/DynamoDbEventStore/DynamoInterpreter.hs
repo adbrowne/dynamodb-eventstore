@@ -7,11 +7,13 @@ module DynamoDbEventStore.DynamoInterpreter where
 import           Control.Exception
 import           Control.Monad.Free
 import           Data.Map                (Map)
+import           Data.Maybe              (fromJust)
 import qualified Data.Map                as M
 import qualified Data.ByteString         as BS
 import qualified Data.ByteString.Lazy    as BL
 import qualified Data.Text.Lazy          as TL
 import qualified Data.Text               as T
+import qualified Data.Vector             as V
 import           System.Random
 import           EventStoreActions
 import           EventStoreCommands
@@ -32,6 +34,8 @@ fieldEventNumber = "eventNumber"
 fieldEventType = "eventType"
 fieldBody = "body"
 fieldPageKey = "pageKey"
+fieldPagingRequired = "pagingRequired"
+unpagedIndexName :: T.Text = "unpagedIndex"
 
 getDynamoKeyForEvent :: EventKey -> PrimaryKey
 getDynamoKeyForEvent (EventKey (StreamId streamId, evtNumber)) =
@@ -90,7 +94,23 @@ runCmd tn (SetEventPage' eventKey pk n) =
         let req1 = req0 { uiExpect = conditions }
         runCommand req1
         n SetEventPageSuccess
-runCmd _ (ScanUnpagedEvents' n) = error "todo"
+runCmd tn (ScanUnpagedEvents' n) =
+  catch scanUnpaged exnHandler
+    where
+      toEntry :: Item -> EventKey
+      toEntry i = fromJust $ do
+        streamIdDValue <- M.lookup fieldStreamId i
+        streamId <- fromValue streamIdDValue
+        eventNumberDValue <- M.lookup fieldEventNumber i
+        eventNumber <- fromValue eventNumberDValue
+        return (EventKey (StreamId streamId, eventNumber))
+      -- todo: this function is not complete
+      exnHandler (DdbError _ _ _ ) = n []
+      scanUnpaged = do
+        let req0 = scan tn
+        let req1 = req0 { sIndex = Just unpagedIndexName }
+        res0 <- runCommand req1
+        n $ (V.toList . (fmap toEntry)) (srItems res0)
 runCmd _ (GetPageEntry' k n) = error "todo"
 runCmd _ (WritePageEntry' k
            PageWriteRequest
@@ -108,12 +128,19 @@ evalProgram :: EventStoreCmdM a -> IO a
 evalProgram program = do
   tableNameId :: Int <- getStdRandom (randomR (1,9999999999))
   let tableName = T.pack $ "testtable-" ++ show tableNameId
+  let unpagedGlobalSecondary = GlobalSecondaryIndex {
+    globalIndexName = unpagedIndexName,
+    globalKeySchema = HashOnly fieldPagingRequired,
+    globalProjection = ProjectKeysOnly,
+    globalProvisionedThroughput = (ProvisionedThroughput 1 1)
+  }
   let req0 = createTable tableName
         [AttributeDefinition fieldStreamId AttrString
-         , AttributeDefinition fieldEventNumber AttrNumber]
+         , AttributeDefinition fieldEventNumber AttrNumber
+         , AttributeDefinition fieldPagingRequired AttrString]
         (HashAndRange fieldStreamId fieldEventNumber)
         (ProvisionedThroughput 1 1)
-  resp0 <- runCommand req0
+  resp0 <- runCommand req0 { createGlobalSecondaryIndexes = [unpagedGlobalSecondary] }
   runTest tableName program
 
 runCommand r = do
