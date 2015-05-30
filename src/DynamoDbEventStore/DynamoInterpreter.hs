@@ -51,7 +51,11 @@ getPagePartitionStreamId partition page =
 
 getDynamoKeyForPage :: PageKey -> PrimaryKey
 getDynamoKeyForPage (partition, pageNumber) =
-  hrk fieldStreamId (toValue (getPagePartitionStreamId partition pageNumber)) fieldEventNumber (toValue (toInteger 1))
+  let
+    streamId = toValue (getPagePartitionStreamId partition pageNumber)
+    eventNumber = toValue (toInteger 1)
+  in
+    hrk fieldStreamId streamId fieldEventNumber eventNumber
 
 getItemField :: (DynVal b, Ord k) => k -> Map k DValue -> Maybe b
 getItemField fieldName item =
@@ -161,7 +165,7 @@ runCmd tn (WritePageEntry' (partition, page)
         Conditions CondAnd [ Condition fieldPageStatus (DEq $ DBinary (encodeStrictJson expectedStatus)) ]
       writePageEntry = do
         let i = item [
-                  attrAs text fieldStreamId (getPagePartitionStreamId partition (page))
+                  attrAs text fieldStreamId (getPagePartitionStreamId partition page)
                   , attrAs int fieldEventNumber 1
                   , attrJson fieldPageStatus newStatus
                   , attrJson fieldEventKeys entries
