@@ -7,6 +7,7 @@ module DynamoDbEventStore.DynamoInterpreter where
 import           Data.Time.Clock
 import           Control.Exception
 import           Control.Concurrent
+import           Control.Applicative
 import           Control.Monad.Free
 import           Data.Map                (Map)
 import           Data.Maybe              (fromJust)
@@ -23,13 +24,6 @@ import           Aws
 import           Aws.Core
 import           Aws.DynamoDb.Commands
 import           Aws.DynamoDb.Core
---import           Control.Concurrent
---import           Control.Monad
---import           Control.Monad.Catch
---import           Data.Conduit
---import qualified Data.Conduit.List     as C
---import qualified Data.Text             as T
---import           Network.HTTP.Conduit  (withManager)
 
 fieldStreamId = "streamId"
 fieldEventNumber = "eventNumber"
@@ -46,7 +40,7 @@ getDynamoKeyForEvent (EventKey (StreamId streamId, evtNumber)) =
 
 getPagePartitionStreamId :: Int -> T.Text
 getPagePartitionStreamId partition =
-  T.pack $ concat ["$Page", show partition]
+  T.pack $ "$Page" ++ show partition
 
 getDynamoKeyForPage :: PageKey -> PrimaryKey
 getDynamoKeyForPage (partition, pageNumber) =
@@ -71,7 +65,7 @@ runCmd tn (GetEvent' eventKey n) = do
       bodyDValue <- M.lookup fieldBody i
       b <- fromValue bodyDValue
       let pageKeyDValue = M.lookup fieldPageKey i >>= fromValue
-      let pageKey = fmap readText $ pageKeyDValue
+      let pageKey = readText <$> pageKeyDValue
       return (et, b, pageKey)
 
 runCmd tn (WriteEvent' (EventKey (StreamId streamId, evtNumber)) t d n) =
@@ -97,8 +91,7 @@ runCmd tn (SetEventPage' eventKey pk n) =
   catch setEventPage exnHandler
     where
       -- todo: this function is not complete
-      exnHandler (DdbError statusCode errCode errMsg ) = do
-        n SetEventPageError
+      exnHandler (DdbError{}) = n SetEventPageError
       setEventPage = do
         let conditions = Conditions CondAnd [ Condition fieldPageKey IsNull ]
         let key = getDynamoKeyForEvent eventKey
@@ -121,12 +114,12 @@ runCmd tn (ScanUnpagedEvents' n) =
         eventNumber <- fromValue eventNumberDValue
         return (EventKey (StreamId streamId, eventNumber))
       -- todo: this function is not complete
-      exnHandler (DdbError _ _ _ ) = n []
+      exnHandler (DdbError{}) = n []
       scanUnpaged = do
         let req0 = scan tn
         let req1 = req0 { sIndex = Just unpagedIndexName }
         res0 <- runCommand req1
-        n $ (V.toList . (fmap toEntry)) (srItems res0)
+        n $ (V.toList . fmap toEntry) (srItems res0)
 runCmd tn (GetPageEntry' pageKey n) = do
   let key = getDynamoKeyForPage pageKey
   let req0 = getItem tn key
@@ -137,8 +130,7 @@ runCmd tn (GetPageEntry' pageKey n) = do
     getResult r = do
       i <- girItem r
       let pageStatusDValue = M.lookup fieldPageStatus i >>= fromValue
-      let pageStatusM :: Maybe PageStatus = fmap readText $ pageStatusDValue
-      pageStatus <- pageStatusM
+      pageStatus <- readText <$> pageStatusDValue
       return (pageStatus, [])
 runCmd tn (WritePageEntry' (partition, page)
            PageWriteRequest
@@ -176,8 +168,7 @@ evalProgram program = do
     globalIndexName = unpagedIndexName,
     globalKeySchema = HashOnly fieldPagingRequired,
     globalProjection = ProjectKeysOnly,
-    globalProvisionedThroughput = (ProvisionedThroughput 1 1)
-  }
+    globalProvisionedThroughput = ProvisionedThroughput 1 1 }
   let req0 = createTable tableName
         [AttributeDefinition fieldStreamId AttrString
          , AttributeDefinition fieldEventNumber AttrNumber
