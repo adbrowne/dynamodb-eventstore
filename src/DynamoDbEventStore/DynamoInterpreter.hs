@@ -34,6 +34,7 @@ import           Aws.DynamoDb.Core
 fieldStreamId = "streamId"
 fieldEventNumber = "eventNumber"
 fieldEventType = "eventType"
+fieldPageStatus = "pageStatus"
 fieldBody = "body"
 fieldPageKey = "pageKey"
 fieldPagingRequired = "pagingRequired"
@@ -42,6 +43,14 @@ unpagedIndexName :: T.Text = "unpagedIndex"
 getDynamoKeyForEvent :: EventKey -> PrimaryKey
 getDynamoKeyForEvent (EventKey (StreamId streamId, evtNumber)) =
   hrk fieldStreamId (toValue streamId) fieldEventNumber (toValue evtNumber)
+
+getPagePartitionStreamId :: Int -> T.Text
+getPagePartitionStreamId partition =
+  T.pack $ concat ["$Page", show partition]
+
+getDynamoKeyForPage :: PageKey -> PrimaryKey
+getDynamoKeyForPage (partition, pageNumber) =
+  hrk fieldStreamId (toValue (getPagePartitionStreamId partition)) fieldEventNumber (toValue pageNumber)
 
 readText :: Read a => T.Text -> a
 readText  = read . T.unpack
@@ -119,15 +128,43 @@ runCmd tn (ScanUnpagedEvents' n) =
         let req1 = req0 { sIndex = Just unpagedIndexName }
         res0 <- runCommand req1
         n $ (V.toList . (fmap toEntry)) (srItems res0)
-runCmd _ (GetPageEntry' k n) = error "todo"
-runCmd _ (WritePageEntry' k
+runCmd tn (GetPageEntry' pageKey n) = do
+  let key = getDynamoKeyForPage pageKey
+  let req0 = getItem tn key
+  resp0 <- runCommand req0
+  n $ getResult resp0
+  where
+    getResult :: GetItemResponse -> Maybe (PageStatus, [EventKey])
+    getResult r = do
+      i <- girItem r
+      let pageStatusDValue = M.lookup fieldPageStatus i >>= fromValue
+      let pageStatusM :: Maybe PageStatus = fmap readText $ pageStatusDValue
+      pageStatus <- pageStatusM
+      return (pageStatus, [])
+runCmd tn (WritePageEntry' (partition, page)
            PageWriteRequest
            {
               expectedStatus = expectedStatus,
               newStatus = newStatus,
               newEntries = newEntries
            } n) =
-  error "todo"
+  catch writePageEntry exnHandler
+    where
+      -- todo: this function is not complete
+      exnHandler (DdbError { ddbErrCode = ConditionalCheckFailedException }) = n Nothing
+      writePageEntry = do
+        let i = item [
+                  attrAs text fieldStreamId (getPagePartitionStreamId partition)
+                  , attrAs int fieldEventNumber (toInteger page)
+                  , attrAs text fieldPageStatus (T.pack $ show newStatus)
+                  --, attrAs text fieldPagingRequired (T.pack $ show time)
+                  --, attr fieldBody d
+                ]
+        let conditions = Conditions CondAnd [ Condition fieldEventNumber IsNull ]
+        let req0 = putItem tn i
+        let req1 = req0 { piExpect = conditions }
+        res0 <- runCommand req1
+        n $ Just newStatus
 
 runTest :: T.Text -> EventStoreCmdM a -> IO a
 runTest tableName = iterM $ runCmd tableName
