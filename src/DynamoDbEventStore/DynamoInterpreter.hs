@@ -48,18 +48,16 @@ getDynamoKeyForPage :: PageKey -> PrimaryKey
 getDynamoKeyForPage (partition, pageNumber) =
   hrk fieldStreamId (toValue (getPagePartitionStreamId partition)) fieldEventNumber (toValue pageNumber)
 
-readText :: Read a => T.Text -> a
-readText  = read . T.unpack
-
-readItemValue :: Ord k => Read b => k -> Map k DValue -> Maybe b
-readItemValue fieldName item = do
-  let t = M.lookup fieldName item >>= fromValue
-  readText <$> t
+getItemField :: (DynVal b, Ord k) => k -> Map k DValue -> Maybe b
+getItemField fieldName item =
+  M.lookup fieldName item >>= fromValue
 
 readItemJson :: Ord k => FromJSON b => k -> Map k DValue -> Maybe b
 readItemJson fieldName item = do
-  let t = M.lookup fieldName item >>= fromValue
-  t >>= decodeStrict
+  getItemField fieldName item >>= decodeStrict
+
+attrJson name value =
+  attr name (BL.toStrict . encode $ value)
 
 runCmd :: T.Text -> EventStoreCmd (IO a) -> IO a
 runCmd _ (Wait' n) = n ()
@@ -72,12 +70,9 @@ runCmd tn (GetEvent' eventKey n) = do
     getResult :: GetItemResponse -> EventReadResult
     getResult r = do
       i <- girItem r
-      eventTypeDvalue <- M.lookup fieldEventType i
-      et <- fromValue eventTypeDvalue
-      bodyDValue <- M.lookup fieldBody i
-      b <- fromValue bodyDValue
-      let pageKeyDValue = M.lookup fieldPageKey i >>= fromValue
-      let pageKey = readText <$> pageKeyDValue
+      et <- getItemField fieldEventType i
+      b <- getItemField fieldBody i
+      let pageKey = readItemJson fieldPageKey i
       return (et, b, pageKey)
 
 runCmd tn (WriteEvent' (EventKey (StreamId streamId, evtNumber)) t d n) =
@@ -107,7 +102,7 @@ runCmd tn (SetEventPage' eventKey pk n) =
       setEventPage = do
         let conditions = Conditions CondAnd [ Condition fieldPageKey IsNull ]
         let key = getDynamoKeyForEvent eventKey
-        let pageKeyAttribute = attrAs text fieldPageKey (T.pack $ show pk)
+        let pageKeyAttribute = attrJson fieldPageKey pk
         let updatePageKey = au pageKeyAttribute
         let pagingReqAttr = attrAs text fieldPagingRequired "unused"
         let updatePagingRequired = AttributeUpdate { auAttr= pagingReqAttr, auAction = UDelete }
@@ -141,7 +136,7 @@ runCmd tn (GetPageEntry' pageKey n) = do
     getResult :: GetItemResponse -> Maybe (PageStatus, [EventKey])
     getResult r = do
       i <- girItem r
-      pageStatus <- readItemValue fieldPageStatus i
+      pageStatus <- readItemJson fieldPageStatus i
       eventKeys <- readItemJson fieldEventKeys i
       return (pageStatus, eventKeys)
 runCmd tn (WritePageEntry' (partition, page)
@@ -159,10 +154,8 @@ runCmd tn (WritePageEntry' (partition, page)
         let i = item [
                   attrAs text fieldStreamId (getPagePartitionStreamId partition)
                   , attrAs int fieldEventNumber (toInteger page)
-                  , attrAs text fieldPageStatus (T.pack $ show newStatus)
-                  , attr fieldEventKeys (BL.toStrict . encode $ entries)
-                  --, attrAs text fieldPagingRequired (T.pack $ show time)
-                  --, attr fieldBody d
+                  , attrJson fieldPageStatus newStatus
+                  , attrJson fieldEventKeys entries
                 ]
         let conditions = Conditions CondAnd [ Condition fieldEventNumber IsNull ]
         let req0 = putItem tn i

@@ -2,6 +2,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE DeriveGeneric #-}
 
 module EventStoreCommands where
 
@@ -10,6 +11,7 @@ import Control.Monad
 import Control.Monad.Free
 import Control.Monad.Free.TH
 
+import GHC.Generics
 import Data.Aeson
 import Data.Int
 import qualified Data.Text as T
@@ -22,7 +24,10 @@ type PageKey = (Int, Int) -- (Partition, PageNumber)
 data EventWriteResult = WriteSuccess | EventExists | WriteError deriving (Eq, Show)
 type EventReadResult = Maybe (EventType, BS.ByteString, Maybe PageKey)
 data SetEventPageResult = SetEventPageSuccess | SetEventPageError
-data PageStatus = Version Int | Full | Verified deriving (Eq, Show, Read)
+data PageStatus = Version Int | Full | Verified deriving (Eq, Show, Generic)
+
+instance FromJSON PageStatus
+instance ToJSON PageStatus
 
 instance FromJSON StreamId where
   parseJSON (String v) =
