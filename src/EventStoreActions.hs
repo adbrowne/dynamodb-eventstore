@@ -42,7 +42,7 @@ postEventRequestProgram (PostEventRequest sId ev ed) = do
 
 writeEventToPage :: EventKey -> EventStoreCmdM ()
 writeEventToPage key = do
-  let writeRequest = PageWriteRequest { expectedStatus = Just $ Version 0, newStatus = Version 1, newEntries = [key] }
+  let writeRequest = PageWriteRequest { expectedStatus = Just $ Version 0, newStatus = Version 1, entries = [key] }
   ignored <- writePageEntry' (0,0) writeRequest
   return ()
 

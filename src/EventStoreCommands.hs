@@ -11,8 +11,8 @@ import Data.Int
 import qualified Data.Text as T
 import qualified Data.ByteString as BS
 
-newtype StreamId = StreamId T.Text deriving (Ord, Eq, Show)
-newtype EventKey = EventKey (StreamId, Int64) deriving (Ord, Eq, Show)
+newtype StreamId = StreamId T.Text deriving (Ord, Eq, Show, Read)
+newtype EventKey = EventKey (StreamId, Int64) deriving (Ord, Eq, Show, Read)
 type EventType = T.Text
 type PageKey = (Int, Int) -- (Partition, PageNumber)
 data EventWriteResult = WriteSuccess | EventExists | WriteError deriving (Eq, Show)
@@ -23,7 +23,7 @@ data PageStatus = Version Int | Full | Verified deriving (Eq, Show, Read)
 data PageWriteRequest = PageWriteRequest {
       expectedStatus :: Maybe PageStatus
       , newStatus    :: PageStatus
-      , newEntries   :: [EventKey]
+      , entries   :: [EventKey]
 }
 
 -- Low level event store commands

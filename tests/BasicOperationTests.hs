@@ -90,12 +90,12 @@ tests evalProgram =
                           PageWriteRequest {
                                expectedStatus = Nothing,
                                newStatus = Version 0,
-                               newEntries = []}
+                               entries = []}
           writePageEntry' pageKey
                           PageWriteRequest {
                                expectedStatus = Nothing,
                                newStatus = Version 0,
-                               newEntries = []}
+                               entries = []}
         r = evalProgram actions
       in do
         r' <- r
@@ -108,11 +108,11 @@ tests evalProgram =
                           PageWriteRequest {
                                expectedStatus = Nothing,
                                newStatus = Version 0,
-                               newEntries = []}
+                               entries = [testKey]}
           readResult <- getPageEntry' pageKey
           return (writeResult, readResult)
         r = evalProgram actions
       in do
         r' <- r
-        assertEqual "Read and write should return Version 0" (Just $ Version 0, Just (Version 0, [])) r'
+        assertEqual "Read and write should return Version 0" (Just $ Version 0, Just (Version 0, [testKey])) r'
   ]

@@ -51,14 +51,14 @@ runCmd (ScanUnpagedEvents' n) = do
     unpagedEntry (_, _, Nothing) = True
 runCmd (GetPageEntry' k n) =
   n =<< gets (M.lookup k . snd)
-runCmd (WritePageEntry' k PageWriteRequest { expectedStatus = expectedStatus, newStatus = newStatus, newEntries = newEntries } n) = do
+runCmd (WritePageEntry' k PageWriteRequest { expectedStatus = expectedStatus, newStatus = newStatus, entries = entries } n) = do
   table <- gets snd
   let entryStatus = fst <$> M.lookup k table
   let writeResult = writePage expectedStatus entryStatus table
   modify $ writePageToState (modifyPage writeResult)
   n $ fmap fst writeResult
     where
-      doInsert = M.insert k (newStatus, newEntries)
+      doInsert = M.insert k (newStatus, entries)
       writePage :: Maybe PageStatus -> Maybe PageStatus -> FakePageTable -> Maybe (PageStatus, FakePageTable)
       writePage Nothing Nothing table = Just (newStatus,  doInsert table)
       writePage (Just c) (Just e) table

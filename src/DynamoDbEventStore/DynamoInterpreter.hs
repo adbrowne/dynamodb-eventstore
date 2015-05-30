@@ -32,6 +32,7 @@ fieldPageStatus = "pageStatus"
 fieldBody = "body"
 fieldPageKey = "pageKey"
 fieldPagingRequired = "pagingRequired"
+fieldEventKeys = "eventKeys"
 unpagedIndexName :: T.Text = "unpagedIndex"
 
 getDynamoKeyForEvent :: EventKey -> PrimaryKey
@@ -48,6 +49,11 @@ getDynamoKeyForPage (partition, pageNumber) =
 
 readText :: Read a => T.Text -> a
 readText  = read . T.unpack
+
+readItemValue :: Ord k => Read b => k -> Map k DValue -> Maybe b
+readItemValue fieldName item = do
+  let t = M.lookup fieldName item >>= fromValue
+  readText <$> t
 
 runCmd :: T.Text -> EventStoreCmd (IO a) -> IO a
 runCmd _ (Wait' n) = n ()
@@ -129,25 +135,27 @@ runCmd tn (GetPageEntry' pageKey n) = do
     getResult :: GetItemResponse -> Maybe (PageStatus, [EventKey])
     getResult r = do
       i <- girItem r
-      let pageStatusDValue = M.lookup fieldPageStatus i >>= fromValue
-      pageStatus <- readText <$> pageStatusDValue
-      return (pageStatus, [])
+      pageStatus <- readItemValue fieldPageStatus i
+      eventKeys <- readItemValue fieldEventKeys i
+      return (pageStatus, eventKeys)
 runCmd tn (WritePageEntry' (partition, page)
            PageWriteRequest
            {
               expectedStatus = expectedStatus,
               newStatus = newStatus,
-              newEntries = newEntries
+              entries = entries
            } n) =
   catch writePageEntry exnHandler
     where
       -- todo: this function is not complete
       exnHandler (DdbError { ddbErrCode = ConditionalCheckFailedException }) = n Nothing
       writePageEntry = do
+        let packedEntries = T.pack . show <$> entries
         let i = item [
                   attrAs text fieldStreamId (getPagePartitionStreamId partition)
                   , attrAs int fieldEventNumber (toInteger page)
                   , attrAs text fieldPageStatus (T.pack $ show newStatus)
+                  , attrAs text fieldEventKeys (T.pack $ show packedEntries)
                   --, attrAs text fieldPagingRequired (T.pack $ show time)
                   --, attr fieldBody d
                 ]
