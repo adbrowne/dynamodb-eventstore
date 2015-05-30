@@ -2,9 +2,9 @@ language: haskell
 ghc:
   - 7.8
 install:
+  - cabal install happy
   - cabal sandbox init
   - cabal sandbox add-source ./libraries/aws
-  - cabal install happy
   - cabal install --only-dependencies --enable-tests
 before_script:
   - ./scripts/run-dynamodb-local.sh
