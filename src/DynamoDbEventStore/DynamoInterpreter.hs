@@ -4,7 +4,9 @@
 
 module DynamoDbEventStore.DynamoInterpreter where
 
+import           Data.Time.Clock
 import           Control.Exception
+import           Control.Concurrent
 import           Control.Monad.Free
 import           Data.Map                (Map)
 import           Data.Maybe              (fromJust)
@@ -69,10 +71,12 @@ runCmd tn (WriteEvent' (EventKey (StreamId streamId, evtNumber)) t d n) =
       -- todo: this function is not complete
       exnHandler (DdbError { ddbErrCode = ConditionalCheckFailedException }) = n EventExists
       writeItem = do
+        time <- getCurrentTime
         let i = item [
                   attrAs text fieldStreamId streamId
                   , attrAs int fieldEventNumber (toInteger evtNumber)
                   , attrAs text fieldEventType t
+                  , attrAs text fieldPagingRequired (T.pack $ show time)
                   , attr fieldBody d
                 ]
         let conditions = Conditions CondAnd [ Condition fieldEventNumber IsNull ]
@@ -84,15 +88,18 @@ runCmd tn (SetEventPage' eventKey pk n) =
   catch setEventPage exnHandler
     where
       -- todo: this function is not complete
-      exnHandler (DdbError _ _ _ ) = n SetEventPageError
+      exnHandler (DdbError statusCode errCode errMsg ) = do
+        n SetEventPageError
       setEventPage = do
         let conditions = Conditions CondAnd [ Condition fieldPageKey IsNull ]
         let key = getDynamoKeyForEvent eventKey
         let pageKeyAttribute = attrAs text fieldPageKey (T.pack $ show pk)
         let updatePageKey = au pageKeyAttribute
-        let req0 = updateItem tn key [updatePageKey]
+        let pagingReqAttr = attrAs text fieldPagingRequired "unused"
+        let updatePagingRequired = AttributeUpdate { auAttr= pagingReqAttr, auAction = UDelete }
+        let req0 = updateItem tn key [updatePageKey, updatePagingRequired]
         let req1 = req0 { uiExpect = conditions }
-        runCommand req1
+        res0 <- runCommand req1
         n SetEventPageSuccess
 runCmd tn (ScanUnpagedEvents' n) =
   catch scanUnpaged exnHandler
@@ -107,6 +114,7 @@ runCmd tn (ScanUnpagedEvents' n) =
       -- todo: this function is not complete
       exnHandler (DdbError _ _ _ ) = n []
       scanUnpaged = do
+        threadDelay 30000
         let req0 = scan tn
         let req1 = req0 { sIndex = Just unpagedIndexName }
         res0 <- runCommand req1
@@ -145,5 +153,5 @@ evalProgram program = do
 
 runCommand r = do
     cfg <- Aws.baseConfiguration
-    let cfg' = DdbConfiguration ddbLocal HTTP (Just 8000)
+    let cfg' = DdbConfiguration (Region "127.0.0.1" "us-west-2") HTTP (Just 8000)
     Aws.simpleAws cfg cfg' r

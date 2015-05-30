@@ -32,6 +32,7 @@ library
                        free >= 4.10,
                        bytestring >= 0.10,
                        vector >= 0.10,
+                       time >= 1.4,
                        random >= 1.1,
                        aws >= 0.11.3
   hs-source-dirs:      src
