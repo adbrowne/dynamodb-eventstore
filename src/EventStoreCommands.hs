@@ -1,24 +1,47 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE FlexibleContexts #-}
 
 module EventStoreCommands where
 
+import Control.Applicative
+import Control.Monad
 import Control.Monad.Free
 import Control.Monad.Free.TH
 
+import Data.Aeson
 import Data.Int
 import qualified Data.Text as T
 import qualified Data.ByteString as BS
 
-newtype StreamId = StreamId T.Text deriving (Ord, Eq, Show, Read)
-newtype EventKey = EventKey (StreamId, Int64) deriving (Ord, Eq, Show, Read)
+newtype StreamId = StreamId T.Text deriving (Ord, Eq, Show)
+newtype EventKey = EventKey (StreamId, Int64) deriving (Ord, Eq, Show)
 type EventType = T.Text
 type PageKey = (Int, Int) -- (Partition, PageNumber)
 data EventWriteResult = WriteSuccess | EventExists | WriteError deriving (Eq, Show)
 type EventReadResult = Maybe (EventType, BS.ByteString, Maybe PageKey)
 data SetEventPageResult = SetEventPageSuccess | SetEventPageError
 data PageStatus = Version Int | Full | Verified deriving (Eq, Show, Read)
+
+instance FromJSON StreamId where
+  parseJSON (String v) =
+    return $ StreamId v
+  parseJSON _ = mzero
+instance ToJSON StreamId where
+  toJSON (StreamId streamId) =
+    String streamId
+instance FromJSON EventKey where
+  parseJSON (Object v) =
+    EventKey <$>
+    ((,) <$> v .: "streamId"
+         <*> v .: "eventNumber")
+  parseJSON _ = mzero
+instance ToJSON EventKey where
+  toJSON (EventKey(streamId, eventNumber)) =
+    object [ "streamId"    .= streamId
+           , "eventNumber" .= eventNumber
+           ]
 
 data PageWriteRequest = PageWriteRequest {
       expectedStatus :: Maybe PageStatus

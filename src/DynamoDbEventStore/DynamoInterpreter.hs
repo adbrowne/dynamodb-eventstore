@@ -4,6 +4,7 @@
 
 module DynamoDbEventStore.DynamoInterpreter where
 
+import           Data.Aeson
 import           Data.Time.Clock
 import           Control.Exception
 import           Control.Concurrent
@@ -54,6 +55,11 @@ readItemValue :: Ord k => Read b => k -> Map k DValue -> Maybe b
 readItemValue fieldName item = do
   let t = M.lookup fieldName item >>= fromValue
   readText <$> t
+
+readItemJson :: Ord k => FromJSON b => k -> Map k DValue -> Maybe b
+readItemJson fieldName item = do
+  let t = M.lookup fieldName item >>= fromValue
+  t >>= decodeStrict
 
 runCmd :: T.Text -> EventStoreCmd (IO a) -> IO a
 runCmd _ (Wait' n) = n ()
@@ -136,7 +142,7 @@ runCmd tn (GetPageEntry' pageKey n) = do
     getResult r = do
       i <- girItem r
       pageStatus <- readItemValue fieldPageStatus i
-      eventKeys <- readItemValue fieldEventKeys i
+      eventKeys <- readItemJson fieldEventKeys i
       return (pageStatus, eventKeys)
 runCmd tn (WritePageEntry' (partition, page)
            PageWriteRequest
@@ -150,12 +156,11 @@ runCmd tn (WritePageEntry' (partition, page)
       -- todo: this function is not complete
       exnHandler (DdbError { ddbErrCode = ConditionalCheckFailedException }) = n Nothing
       writePageEntry = do
-        let packedEntries = T.pack . show <$> entries
         let i = item [
                   attrAs text fieldStreamId (getPagePartitionStreamId partition)
                   , attrAs int fieldEventNumber (toInteger page)
                   , attrAs text fieldPageStatus (T.pack $ show newStatus)
-                  , attrAs text fieldEventKeys (T.pack $ show packedEntries)
+                  , attr fieldEventKeys (BL.toStrict . encode $ entries)
                   --, attrAs text fieldPagingRequired (T.pack $ show time)
                   --, attr fieldBody d
                 ]
