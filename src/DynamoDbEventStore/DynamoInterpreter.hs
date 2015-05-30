@@ -123,7 +123,6 @@ runCmd tn (ScanUnpagedEvents' n) =
       -- todo: this function is not complete
       exnHandler (DdbError _ _ _ ) = n []
       scanUnpaged = do
-        threadDelay 30000
         let req0 = scan tn
         let req1 = req0 { sIndex = Just unpagedIndexName }
         res0 <- runCommand req1
