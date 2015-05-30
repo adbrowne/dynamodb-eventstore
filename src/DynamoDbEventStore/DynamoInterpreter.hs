@@ -56,8 +56,13 @@ readItemJson :: Ord k => FromJSON b => k -> Map k DValue -> Maybe b
 readItemJson fieldName item = do
   getItemField fieldName item >>= decodeStrict
 
+encodeStrictJson :: ToJSON s => s -> BS.ByteString
+encodeStrictJson value =
+  BL.toStrict . encode $ value
+
+attrJson :: ToJSON s => T.Text -> s -> Attribute
 attrJson name value =
-  attr name (BL.toStrict . encode $ value)
+  attr name (encodeStrictJson value)
 
 runCmd :: T.Text -> EventStoreCmd (IO a) -> IO a
 runCmd _ (Wait' n) = n ()
@@ -150,6 +155,10 @@ runCmd tn (WritePageEntry' (partition, page)
     where
       -- todo: this function is not complete
       exnHandler (DdbError { ddbErrCode = ConditionalCheckFailedException }) = n Nothing
+      buildConditions Nothing =
+        Conditions CondAnd [ Condition fieldStreamId IsNull ]
+      buildConditions (Just expectedStatus) =
+        Conditions CondAnd [ Condition fieldPageStatus (DEq $ DBinary (encodeStrictJson expectedStatus)) ]
       writePageEntry = do
         let i = item [
                   attrAs text fieldStreamId (getPagePartitionStreamId partition)
@@ -157,7 +166,7 @@ runCmd tn (WritePageEntry' (partition, page)
                   , attrJson fieldPageStatus newStatus
                   , attrJson fieldEventKeys entries
                 ]
-        let conditions = Conditions CondAnd [ Condition fieldEventNumber IsNull ]
+        let conditions = buildConditions expectedStatus
         let req0 = putItem tn i
         let req1 = req0 { piExpect = conditions }
         res0 <- runCommand req1

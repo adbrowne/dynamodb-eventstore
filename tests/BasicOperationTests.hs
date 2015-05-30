@@ -100,6 +100,25 @@ tests evalProgram =
       in do
         r' <- r
         assertEqual "Result should be nothing" Nothing r'
+    , testCase "Page entry is updated when written with subsequent version" $
+      let
+        pageKey = (0,0)
+        actions = do
+          writePageEntry' pageKey
+                          PageWriteRequest {
+                               expectedStatus = Nothing,
+                               newStatus = Version 0,
+                               entries = []}
+          writePageEntry' pageKey
+                          PageWriteRequest {
+                               expectedStatus = Just $ Version 0,
+                               newStatus = Version 1,
+                               entries = [testKey]}
+          getPageEntry' pageKey
+        r = evalProgram actions
+      in do
+        r' <- r
+        assertEqual "Result should be Version 1" (Just (Version 1, [testKey])) r'
     , testCase "Written page entry should be returned by get" $
       let
         pageKey = (0,0)
