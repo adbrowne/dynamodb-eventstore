@@ -10,6 +10,7 @@ import           Data.Time.Clock
 import           Control.Exception
 import           Control.Concurrent
 import           Control.Applicative
+import           Data.Monoid
 import           Control.Monad.Free
 import           Data.Map                (Map)
 import           Data.Maybe              (fromJust)
@@ -35,19 +36,22 @@ fieldBody = "body"
 fieldPageKey = "pageKey"
 fieldPagingRequired = "pagingRequired"
 fieldEventKeys = "eventKeys"
-unpagedIndexName :: T.Text = "unpagedIndex"
+unpagedIndexName = "unpagedIndex"
 
 getDynamoKeyForEvent :: EventKey -> PrimaryKey
 getDynamoKeyForEvent (EventKey (StreamId streamId, evtNumber)) =
   hrk fieldStreamId (toValue streamId) fieldEventNumber (toValue evtNumber)
 
-getPagePartitionStreamId :: Int -> T.Text
-getPagePartitionStreamId partition =
-  T.pack $ "$Page" ++ show partition
+showText :: Int -> T.Text
+showText = T.pack . show
+
+getPagePartitionStreamId :: Int -> Int -> T.Text
+getPagePartitionStreamId partition page =
+  "$Page-" <> showText partition <> "-" <> showText page
 
 getDynamoKeyForPage :: PageKey -> PrimaryKey
 getDynamoKeyForPage (partition, pageNumber) =
-  hrk fieldStreamId (toValue (getPagePartitionStreamId partition)) fieldEventNumber (toValue pageNumber)
+  hrk fieldStreamId (toValue (getPagePartitionStreamId partition pageNumber)) fieldEventNumber (toValue (toInteger 1))
 
 getItemField :: (DynVal b, Ord k) => k -> Map k DValue -> Maybe b
 getItemField fieldName item =
@@ -157,8 +161,8 @@ runCmd tn (WritePageEntry' (partition, page)
         Conditions CondAnd [ Condition fieldPageStatus (DEq $ DBinary (encodeStrictJson expectedStatus)) ]
       writePageEntry = do
         let i = item [
-                  attrAs text fieldStreamId (getPagePartitionStreamId partition)
-                  , attrAs int fieldEventNumber (toInteger page)
+                  attrAs text fieldStreamId (getPagePartitionStreamId partition (page))
+                  , attrAs int fieldEventNumber 1
                   , attrJson fieldPageStatus newStatus
                   , attrJson fieldEventKeys entries
                 ]
