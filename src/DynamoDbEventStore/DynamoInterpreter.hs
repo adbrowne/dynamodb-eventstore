@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE RecordWildCards           #-}
 
 module DynamoDbEventStore.DynamoInterpreter where
 
@@ -53,7 +54,7 @@ getItemField fieldName item =
   M.lookup fieldName item >>= fromValue
 
 readItemJson :: Ord k => FromJSON b => k -> Map k DValue -> Maybe b
-readItemJson fieldName item = do
+readItemJson fieldName item =
   getItemField fieldName item >>= decodeStrict
 
 encodeStrictJson :: ToJSON s => s -> BS.ByteString
@@ -145,12 +146,7 @@ runCmd tn (GetPageEntry' pageKey n) = do
       eventKeys <- readItemJson fieldEventKeys i
       return (pageStatus, eventKeys)
 runCmd tn (WritePageEntry' (partition, page)
-           PageWriteRequest
-           {
-              expectedStatus = expectedStatus,
-              newStatus = newStatus,
-              entries = entries
-           } n) =
+           PageWriteRequest {..} n) =
   catch writePageEntry exnHandler
     where
       -- todo: this function is not complete
