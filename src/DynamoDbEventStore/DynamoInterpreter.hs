@@ -94,6 +94,7 @@ runCmd tn (WriteEvent' (EventKey (StreamId streamId, evtNumber)) t d n) =
     where
       -- todo: this function is not complete
       exnHandler (DdbError { ddbErrCode = ConditionalCheckFailedException }) = n EventExists
+      exnHandler (DdbError { ddbErrCode = ddbErrCode, ddbErrMsg = ddbErrMsg  }) = error $ show ddbErrMsg
       writeItem = do
         time <- getCurrentTime
         let i = item [
@@ -179,10 +180,7 @@ runCmd tn (WritePageEntry' (partition, page)
 runTest :: T.Text -> EventStoreCmdM a -> IO a
 runTest tableName = iterM $ runCmd tableName
 
-evalProgram :: EventStoreCmdM a -> IO a
-evalProgram program = do
-  tableNameId :: Int <- getStdRandom (randomR (1,9999999999))
-  let tableName = T.pack $ "testtable-" ++ show tableNameId
+buildTable tableName = do
   let unpagedGlobalSecondary = GlobalSecondaryIndex {
     globalIndexName = unpagedIndexName,
     globalKeySchema = HashOnly fieldPagingRequired,
@@ -195,7 +193,16 @@ evalProgram program = do
         (HashAndRange fieldStreamId fieldEventNumber)
         (ProvisionedThroughput 1 1)
   resp0 <- runCommand req0 { createGlobalSecondaryIndexes = [unpagedGlobalSecondary] }
+  return ()
+
+evalProgram :: EventStoreCmdM a -> IO a
+evalProgram program = do
+  tableNameId :: Int <- getStdRandom (randomR (1,9999999999))
+  let tableName = T.pack $ "testtable-" ++ show tableNameId
+  buildTable tableName
   runTest tableName program
+
+runProgram = runTest
 
 runCommand r = do
     cfg <- Aws.baseConfiguration
