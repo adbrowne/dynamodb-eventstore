@@ -17,6 +17,7 @@ build-type:          Simple
 cabal-version:       >=1.10
 
 library
+  GHC-Options: -Wall
   exposed-modules:     Webserver,
                        EventStoreCommands,
                        EventStoreActions,
@@ -40,6 +41,7 @@ library
   default-language:    Haskell2010
 
 executable web
+  GHC-Options: -Wall
   build-depends:       base,
                        scotty >= 0.9,
                        text >= 1.2,
@@ -50,6 +52,7 @@ executable web
   main-is:             Main.hs
 
 Test-Suite tasty
+  GHC-Options: -Wall
   type:                exitcode-stdio-1.0
   main-is:             tastytests.hs
   hs-source-dirs:      tests

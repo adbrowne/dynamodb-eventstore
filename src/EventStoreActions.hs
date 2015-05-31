@@ -19,13 +19,6 @@ data SubscribeAllRequest = SubscribeAllRequest {
    from            :: Maybe Text
 } deriving (Show)
 
-data RecordedEvent = RecordedEvent {
-   recordedEventStreamId :: Text,
-   recordedEventNumber   :: Int64,
-   recordedEventData     :: BL.ByteString,
-   recordedEventType     :: T.Text
-} deriving (Show, Eq, Ord)
-
 data SubscribeAllResponse = SubscribeAllResponse {
   events :: [RecordedEvent],
   next   :: Text

@@ -15,7 +15,9 @@ import GHC.Generics
 import Data.Aeson
 import Data.Int
 import qualified Data.Text as T
+import qualified Data.Text.Lazy as TL
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BL
 
 newtype StreamId = StreamId T.Text deriving (Ord, Eq, Show)
 newtype EventKey = EventKey (StreamId, Int64) deriving (Ord, Eq, Show)
@@ -25,6 +27,13 @@ data EventWriteResult = WriteSuccess | EventExists | WriteError deriving (Eq, Sh
 type EventReadResult = Maybe (EventType, BS.ByteString, Maybe PageKey)
 data SetEventPageResult = SetEventPageSuccess | SetEventPageError
 data PageStatus = Version Int | Full | Verified deriving (Eq, Show, Generic)
+
+data RecordedEvent = RecordedEvent {
+   recordedEventStreamId :: TL.Text,
+   recordedEventNumber   :: Int64,
+   recordedEventData     :: BL.ByteString,
+   recordedEventType     :: T.Text
+} deriving (Show, Eq, Ord)
 
 instance FromJSON PageStatus
 instance ToJSON PageStatus
@@ -60,6 +69,11 @@ data EventStoreCmd next =
   GetEvent'
     EventKey
     (EventReadResult -> next) |
+  GetEventsBackward'
+    StreamId
+    Int -- max events to retrieve
+    (Maybe Int64) -- starting event, Nothing means start at head
+    ([RecordedEvent] -> next) |
   WriteEvent'
     EventKey
     EventType
