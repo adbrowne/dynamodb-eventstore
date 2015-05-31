@@ -3,6 +3,7 @@
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE RecordWildCards           #-}
 
 module EventStoreCommands where
 
@@ -15,6 +16,7 @@ import GHC.Generics
 import Data.Aeson
 import Data.Int
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
 import qualified Data.ByteString as BS
 
 newtype StreamId = StreamId T.Text deriving (Ord, Eq, Show)
@@ -32,6 +34,14 @@ data RecordedEvent = RecordedEvent {
    recordedEventData     :: BS.ByteString,
    recordedEventType     :: T.Text
 } deriving (Show, Eq, Ord)
+
+instance ToJSON RecordedEvent where
+  toJSON (RecordedEvent{..}) =
+    object [ "streamId"    .= recordedEventStreamId
+           , "eventNumber" .= recordedEventNumber
+           , "eventData" .= T.decodeUtf8 recordedEventData
+           , "eventType" .= recordedEventType
+           ]
 
 instance FromJSON PageStatus
 instance ToJSON PageStatus

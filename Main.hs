@@ -16,6 +16,10 @@ showEvent tableName (PostEvent req) = do
   let program = postEventRequestProgram req
   a <- liftIO $ runProgram tableName program
   (html . TL.pack . show) a
+showEvent tableName (ReadStream req) = do
+  let program = getReadStreamRequestProgram req
+  a <- liftIO $ runProgram tableName program
+  json a
 showEvent _ a = do
   (html . TL.pack . show) a
 

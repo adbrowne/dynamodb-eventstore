@@ -40,6 +40,10 @@ postEventRequestProgram (PostEventRequest sId ev ed et) = do
   let strictED = BL.toStrict ed
   writeEvent' eventKey et strictED
 
+getReadStreamRequestProgram :: ReadStreamRequest -> EventStoreCmdM [RecordedEvent]
+getReadStreamRequestProgram (ReadStreamRequest sId) = do
+  getEventsBackward' (StreamId sId) 10 Nothing
+
 writeEventToPage :: EventKey -> EventStoreCmdM ()
 writeEventToPage key = do
   let writeRequest = PageWriteRequest { expectedStatus = Just $ Version 0, newStatus = Version 1, entries = [key] }
