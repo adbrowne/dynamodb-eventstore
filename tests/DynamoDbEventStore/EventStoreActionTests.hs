@@ -51,7 +51,10 @@ runActions :: [PostEventRequest] -> Gen [RecordedEvent]
 runActions a =
   let
     s = L.foldl' runItem emptyTestState a
-    events = (M.assocs . fst) s
+    events = do
+      (sId, events) <- (M.assocs . fst) s
+      (evtNumber, v) <- M.assocs events
+      return (EventKey (sId, evtNumber), v)
   in
     elements [fmap toRecEvent events]
   where
@@ -61,6 +64,7 @@ runActions a =
           recordedEventNumber = version,
           recordedEventData = body,
           recordedEventType = eventType }
+
 prop_AllEventsAppearInSubscription (SingleStreamValidActions actions) =
   forAll (runActions actions) $ \r ->
     S.fromList r === S.fromList (map toRecordedEvent actions)
