@@ -60,9 +60,9 @@ runCmd (GetEvent' k f) =
 runCmd (GetEventsBackward' k _ _ f) =
   f . (reverse . (getEvents k)) =<< gets fst
     where
-      getEvents (StreamId sId) t =
+      getEvents (StreamId sId) table =
         let
-          events = fromMaybe M.empty $ M.lookup (StreamId sId) t
+          events = fromMaybe M.empty $ M.lookup (StreamId sId) table
         in do
           (evtNumber, (t,d,_)) <- M.assocs events
           return (RecordedEvent sId evtNumber d t)

@@ -8,34 +8,41 @@ module DynamoDbEventStore.DynamoInterpreter where
 import           Data.Aeson
 import           Data.Time.Clock
 import           Control.Exception
-import           Control.Concurrent
-import           Control.Applicative
 import           Data.Monoid
 import           Control.Monad.Free
+import           Control.Monad.IO.Class
 import           Data.Map                (Map)
 import           Data.Maybe              (fromJust)
 import qualified Data.Map                as M
 import qualified Data.ByteString         as BS
 import qualified Data.ByteString.Lazy    as BL
-import qualified Data.Text.Lazy          as TL
 import qualified Data.Text               as T
 import qualified Data.Vector             as V
 import           System.Random
-import           EventStoreActions
 import           EventStoreCommands
 import           Aws
 import           Aws.Core
 import           Aws.DynamoDb.Commands
 import           Aws.DynamoDb.Core
 
+
+fieldStreamId :: T.Text
 fieldStreamId = "streamId"
+fieldEventNumber :: T.Text
 fieldEventNumber = "eventNumber"
+fieldEventType :: T.Text
 fieldEventType = "eventType"
+fieldPageStatus :: T.Text
 fieldPageStatus = "pageStatus"
+fieldBody :: T.Text
 fieldBody = "body"
+fieldPageKey :: T.Text
 fieldPageKey = "pageKey"
+fieldPagingRequired :: T.Text
 fieldPagingRequired = "pagingRequired"
+fieldEventKeys :: T.Text
 fieldEventKeys = "eventKeys"
+unpagedIndexName :: T.Text
 unpagedIndexName = "unpagedIndex"
 
 getDynamoKeyForEvent :: EventKey -> PrimaryKey
@@ -53,17 +60,17 @@ getDynamoKeyForPage :: PageKey -> PrimaryKey
 getDynamoKeyForPage (partition, pageNumber) =
   let
     streamId = toValue (getPagePartitionStreamId partition pageNumber)
-    eventNumber = toValue (toInteger 1)
+    eventNumber = toValue (1 :: Integer)
   in
     hrk fieldStreamId streamId fieldEventNumber eventNumber
 
 getItemField :: (DynVal b, Ord k) => k -> Map k DValue -> Maybe b
-getItemField fieldName item =
-  M.lookup fieldName item >>= fromValue
+getItemField fieldName i =
+  M.lookup fieldName i >>= fromValue
 
 readItemJson :: Ord k => FromJSON b => k -> Map k DValue -> Maybe b
-readItemJson fieldName item =
-  getItemField fieldName item >>= decodeStrict
+readItemJson fieldName i =
+  getItemField fieldName i >>= decodeStrict
 
 encodeStrictJson :: ToJSON s => s -> BS.ByteString
 encodeStrictJson value =
@@ -94,7 +101,7 @@ runCmd tn (WriteEvent' (EventKey (StreamId streamId, evtNumber)) t d n) =
     where
       -- todo: this function is not complete
       exnHandler (DdbError { ddbErrCode = ConditionalCheckFailedException }) = n EventExists
-      exnHandler (DdbError { ddbErrCode = ddbErrCode, ddbErrMsg = ddbErrMsg  }) = error $ show ddbErrMsg
+      exnHandler (DdbError {..}) = error $ show ddbErrMsg
       writeItem = do
         time <- getCurrentTime
         let i = item [
@@ -107,7 +114,7 @@ runCmd tn (WriteEvent' (EventKey (StreamId streamId, evtNumber)) t d n) =
         let conditions = Conditions CondAnd [ Condition fieldEventNumber IsNull ]
         let req0 = putItem tn i
         let req1 = req0 { piExpect = conditions }
-        runCommand req1
+        _ <- runCommand req1
         n WriteSuccess
 runCmd tn (SetEventPage' eventKey pk n) =
   catch setEventPage exnHandler
@@ -123,8 +130,29 @@ runCmd tn (SetEventPage' eventKey pk n) =
         let updatePagingRequired = AttributeUpdate { auAttr= pagingReqAttr, auAction = UDelete }
         let req0 = updateItem tn key [updatePageKey, updatePagingRequired]
         let req1 = req0 { uiExpect = conditions }
-        res0 <- runCommand req1
+        _ <- runCommand req1
         n SetEventPageSuccess
+runCmd tn (GetEventsBackward' (StreamId streamId) _ _ n) =
+  catch getBackward exnHandler
+    where
+      toRecordedEvent :: Item -> RecordedEvent
+      toRecordedEvent i = fromJust $ do
+        streamIdDValue <- M.lookup fieldStreamId i
+        sId <- fromValue streamIdDValue
+        eventNumberDValue <- M.lookup fieldEventNumber i
+        eventNumber <- fromValue eventNumberDValue
+        et <- getItemField fieldEventType i
+        b <- getItemField fieldBody i
+        return $ RecordedEvent sId eventNumber b et
+      -- todo: this function is not complete
+      exnHandler (DdbError{}) = n []
+      getBackward = do
+        let streamIdAttr = attrAs text fieldStreamId streamId
+        let slice = Slice streamIdAttr Nothing
+        let req0 = query tn slice
+        let req1 = req0 { qForwardScan = False }
+        res0 <- runCommand req1
+        n $ (V.toList . fmap toRecordedEvent) (qrItems res0)
 runCmd tn (ScanUnpagedEvents' n) =
   catch scanUnpaged exnHandler
     where
@@ -162,8 +190,8 @@ runCmd tn (WritePageEntry' (partition, page)
       exnHandler (DdbError { ddbErrCode = ConditionalCheckFailedException }) = n Nothing
       buildConditions Nothing =
         Conditions CondAnd [ Condition fieldStreamId IsNull ]
-      buildConditions (Just expectedStatus) =
-        Conditions CondAnd [ Condition fieldPageStatus (DEq $ DBinary (encodeStrictJson expectedStatus)) ]
+      buildConditions (Just expectedStatus') =
+        Conditions CondAnd [ Condition fieldPageStatus (DEq $ DBinary (encodeStrictJson expectedStatus')) ]
       writePageEntry = do
         let i = item [
                   attrAs text fieldStreamId (getPagePartitionStreamId partition page)
@@ -174,12 +202,13 @@ runCmd tn (WritePageEntry' (partition, page)
         let conditions = buildConditions expectedStatus
         let req0 = putItem tn i
         let req1 = req0 { piExpect = conditions }
-        res0 <- runCommand req1
+        _ <- runCommand req1
         n $ Just newStatus
 
 runTest :: T.Text -> EventStoreCmdM a -> IO a
 runTest tableName = iterM $ runCmd tableName
 
+buildTable :: MonadIO m => T.Text -> m ()
 buildTable tableName = do
   let unpagedGlobalSecondary = GlobalSecondaryIndex {
     globalIndexName = unpagedIndexName,
@@ -192,7 +221,7 @@ buildTable tableName = do
          , AttributeDefinition fieldPagingRequired AttrString]
         (HashAndRange fieldStreamId fieldEventNumber)
         (ProvisionedThroughput 1 1)
-  resp0 <- runCommand req0 { createGlobalSecondaryIndexes = [unpagedGlobalSecondary] }
+  _ <- runCommand req0 { createGlobalSecondaryIndexes = [unpagedGlobalSecondary] }
   return ()
 
 evalProgram :: EventStoreCmdM a -> IO a
@@ -202,6 +231,7 @@ evalProgram program = do
   buildTable tableName
   runTest tableName program
 
+runProgram :: T.Text -> EventStoreCmdM a -> IO a
 runProgram = runTest
 
 runCommand r = do

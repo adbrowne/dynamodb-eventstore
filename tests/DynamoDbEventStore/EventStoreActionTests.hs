@@ -3,13 +3,11 @@
 module DynamoDbEventStore.EventStoreActionTests where
 
 import           Control.Monad.State
-import           Data.Map                (Map)
 import qualified Data.Map                as M
 import qualified Data.List               as L
 import qualified Data.Set                as S
 import qualified Data.ByteString         as BS
 import qualified Data.ByteString.Lazy    as BL
-import qualified Data.Text.Lazy          as TL
 import qualified Data.Text               as T
 import           DynamoDbEventStore.Testing
 import           EventStoreActions
@@ -18,20 +16,20 @@ import           Test.Tasty
 import           Test.Tasty.QuickCheck
 
 runItem :: FakeState -> PostEventRequest -> FakeState
-runItem state (PostEventRequest sId v d et) =
+runItem fakeState (PostEventRequest sId v d et) =
   let
-   (_, s) = runState (runTest writeItem) state
+   (_, s) = runState (runTest writeItem) fakeState
   in s
   where
       writeItem =
-        writeEvent' (EventKey (StreamId (TL.toStrict sId),v))
+        writeEvent' (EventKey (StreamId sId,v))
           et
           (BL.toStrict d)
 
 newtype SingleStreamValidActions = SingleStreamValidActions [PostEventRequest] deriving (Show)
 
 instance Arbitrary PostEventRequest where
-  arbitrary = liftM4 PostEventRequest (fmap TL.pack arbitrary) arbitrary (fmap BL.pack arbitrary) (fmap T.pack arbitrary)
+  arbitrary = liftM4 PostEventRequest (fmap T.pack arbitrary) arbitrary (fmap BL.pack arbitrary) (fmap T.pack arbitrary)
 
 instance Arbitrary SingleStreamValidActions where
   arbitrary = do
@@ -39,10 +37,11 @@ instance Arbitrary SingleStreamValidActions where
     let (_, numberedEventList) = L.mapAccumL numberEvent 0 eventList
     return $ SingleStreamValidActions numberedEventList
     where
-      numberEvent i e = (i+1,e { expectedVersion = i })
+      numberEvent i e = (i+1,e { perExpectedVersion = i })
 
+toRecordedEvent :: PostEventRequest -> RecordedEvent
 toRecordedEvent (PostEventRequest sId v d et) = RecordedEvent {
-  recordedEventStreamId = TL.toStrict sId,
+  recordedEventStreamId = sId,
   recordedEventNumber = v,
   recordedEventData = BL.toStrict d,
   recordedEventType = et }
@@ -52,8 +51,8 @@ runActions a =
   let
     s = L.foldl' runItem emptyTestState a
     events = do
-      (sId, events) <- (M.assocs . fst) s
-      (evtNumber, v) <- M.assocs events
+      (sId, eventMap) <- (M.assocs . fst) s
+      (evtNumber, v) <- M.assocs eventMap
       return (EventKey (sId, evtNumber), v)
   in
     elements [fmap toRecEvent events]
@@ -65,6 +64,7 @@ runActions a =
           recordedEventData = body,
           recordedEventType = eventType }
 
+prop_AllEventsAppearInSubscription :: SingleStreamValidActions -> Property
 prop_AllEventsAppearInSubscription (SingleStreamValidActions actions) =
   forAll (runActions actions) $ \r ->
     S.fromList r === S.fromList (map toRecordedEvent actions)

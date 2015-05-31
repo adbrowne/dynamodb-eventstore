@@ -10,7 +10,6 @@ import           Data.Monoid               (mconcat)
 import           Control.Arrow             (left)
 import           Data.Attoparsec.Text.Lazy
 import           Data.ByteString           (ByteString)
-import qualified Data.ByteString.Lazy      as BL
 import           Data.Char                 (isDigit)
 import           Data.Int
 import qualified Data.Text.Encoding        as T

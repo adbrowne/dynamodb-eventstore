@@ -3,12 +3,7 @@
 
 module BasicOperationTests where
 
-import           Control.Monad.State
-import           Data.Map                   (Map)
-import qualified Data.Map                as M
 import qualified Data.ByteString         as BS
-import qualified Data.Text               as T
-import           DynamoDbEventStore.Testing
 import           EventStoreCommands
 import           Test.Tasty.HUnit
 import           Test.Tasty
@@ -19,7 +14,9 @@ testStreamId  = StreamId "Brownie"
 testKey :: EventKey
 testKey = EventKey (testStreamId, 0)
 
+sampleBody :: BS.ByteString
 sampleBody = BS.singleton 1
+
 sampleWrite :: EventStoreCmdM EventWriteResult
 sampleWrite = writeEvent' testKey "FooCreatedEvent" sampleBody
 
@@ -32,7 +29,7 @@ tests evalProgram =
     testCase "Write event returns WriteExists when event already exists" $
         let
           actions = do
-            sampleWrite
+            _ <- sampleWrite
             sampleWrite -- duplicate
           writeResult = evalProgram actions
         in do
@@ -41,7 +38,7 @@ tests evalProgram =
     , testCase "Can read event" $
         let
           actions = do
-            sampleWrite
+            _ <- sampleWrite
             sampleRead
           evt = evalProgram actions
           expected :: Maybe (EventType, BS.ByteString, Maybe a)
@@ -52,8 +49,8 @@ tests evalProgram =
     , testCase "Can read events backward" $
         let
           actions = do
-            writeEvent' (EventKey (testStreamId, 0)) "EventType1" sampleBody
-            writeEvent' (EventKey (testStreamId, 1)) "EventType2" sampleBody
+            _ <- writeEvent' (EventKey (testStreamId, 0)) "EventType1" sampleBody
+            _ <- writeEvent' (EventKey (testStreamId, 1)) "EventType2" sampleBody
             getEventsBackward' testStreamId 10 Nothing
           evt = evalProgram actions
           expected :: [RecordedEvent]
@@ -66,8 +63,8 @@ tests evalProgram =
     , testCase "Set event page" $
       let
         actions = do
-          sampleWrite
-          r <- setEventPage' testKey (0,0)
+          _ <- sampleWrite
+          _ <- setEventPage' testKey (0,0)
           sampleRead
         evt = evalProgram actions
         expected = Just ("FooCreatedEvent", sampleBody, Just (0,0))
@@ -83,7 +80,7 @@ tests evalProgram =
     , testCase "Scan unpaged events returns written event" $
       let
         actions = do
-          sampleWrite
+          _ <- sampleWrite
           scanUnpagedEvents'
         evtList = evalProgram actions
       in do
@@ -92,8 +89,8 @@ tests evalProgram =
     , testCase "Scan unpaged events does not returned paged event" $
       let
         actions = do
-          sampleWrite
-          setEventPage' testKey (0,0)
+          _ <- sampleWrite
+          _ <- setEventPage' testKey (0,0)
           scanUnpagedEvents'
         evtList = evalProgram actions
       in do
@@ -103,7 +100,7 @@ tests evalProgram =
       let
         pageKey = (0,0)
         actions = do
-          writePageEntry' pageKey
+          _ <- writePageEntry' pageKey
                           PageWriteRequest {
                                expectedStatus = Nothing,
                                newStatus = Version 0,
@@ -121,12 +118,12 @@ tests evalProgram =
       let
         pageKey = (0,0)
         actions = do
-          writePageEntry' pageKey
+          _ <- writePageEntry' pageKey
                           PageWriteRequest {
                                expectedStatus = Nothing,
                                newStatus = Version 0,
                                entries = []}
-          writePageEntry' pageKey
+          _ <- writePageEntry' pageKey
                           PageWriteRequest {
                                expectedStatus = Just $ Version 0,
                                newStatus = Version 1,

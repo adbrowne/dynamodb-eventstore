@@ -3,7 +3,6 @@ module WebserverSpec (postEventSpec, getStreamSpec) where
 
 import           Test.Tasty.Hspec
 import           Network.Wai.Test
-import           Network.HTTP.Types (methodPost)
 import           Network.Wai
 import qualified Webserver as W
 import qualified Web.Scotty as S
@@ -19,7 +18,9 @@ addEventPost headers =
                requestHeaders = headers,
                requestBody = pure "" }
 
+evHeader :: H.HeaderName
 evHeader = "ES-ExpectedVersion"
+etHeader :: H.HeaderName
 etHeader = "ES-EventType"
 
 postEventSpec :: Spec
@@ -35,7 +36,7 @@ postEventSpec = do
       waiCase requestWithExpectedVersion $ assertStatus 200
 
     it "responds with body" $
-      waiCase requestWithExpectedVersion $ assertBody "PostEvent (PostEventRequest {streamId = \"streamId\", expectedVersion = 1, eventData = \"\", eventType = \"MyEventType\"})"
+      waiCase requestWithExpectedVersion $ assertBody "PostEvent (PostEventRequest {perStreamId = \"streamId\", perExpectedVersion = 1, perEventData = \"\", perEventType = \"MyEventType\"})"
 
   describe "POST /streams/streamId without ExepectedVersion" $
     it "responds with 400" $

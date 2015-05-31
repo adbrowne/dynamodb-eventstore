@@ -15,9 +15,7 @@ import GHC.Generics
 import Data.Aeson
 import Data.Int
 import qualified Data.Text as T
-import qualified Data.Text.Lazy as TL
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Lazy as BL
 
 newtype StreamId = StreamId T.Text deriving (Ord, Eq, Show)
 newtype EventKey = EventKey (StreamId, Int64) deriving (Ord, Eq, Show)
