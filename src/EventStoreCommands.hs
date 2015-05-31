@@ -31,7 +31,7 @@ data PageStatus = Version Int | Full | Verified deriving (Eq, Show, Generic)
 data RecordedEvent = RecordedEvent {
    recordedEventStreamId :: TL.Text,
    recordedEventNumber   :: Int64,
-   recordedEventData     :: BL.ByteString,
+   recordedEventData     :: BS.ByteString,
    recordedEventType     :: T.Text
 } deriving (Show, Eq, Ord)
 

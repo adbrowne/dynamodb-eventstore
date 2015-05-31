@@ -13,8 +13,11 @@ import           EventStoreCommands
 import           Test.Tasty.HUnit
 import           Test.Tasty
 
+testStreamId :: StreamId
+testStreamId  = StreamId "Brownie"
+
 testKey :: EventKey
-testKey = EventKey (StreamId "Browne", 0)
+testKey = EventKey (testStreamId, 0)
 
 sampleBody = BS.singleton 1
 sampleWrite :: EventStoreCmdM EventWriteResult
@@ -46,6 +49,20 @@ tests evalProgram =
         in do
           r <- evt
           assertEqual "Event is read" expected r
+    , testCase "Can read events backward" $
+        let
+          actions = do
+            writeEvent' (EventKey (testStreamId, 0)) "EventType1" sampleBody
+            writeEvent' (EventKey (testStreamId, 1)) "EventType2" sampleBody
+            getEventsBackward' testStreamId 10 Nothing
+          evt = evalProgram actions
+          expected :: [RecordedEvent]
+          expected = [
+            RecordedEvent "Brownie" 1 sampleBody "EventType2",
+            RecordedEvent "Brownie" 0 sampleBody "EventType1" ]
+        in do
+          r <- evt
+          assertEqual "Events are returned in reverse order" expected r
     , testCase "Set event page" $
       let
         actions = do

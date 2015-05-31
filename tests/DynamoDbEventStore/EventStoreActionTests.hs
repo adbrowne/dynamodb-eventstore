@@ -44,7 +44,7 @@ instance Arbitrary SingleStreamValidActions where
 toRecordedEvent (PostEventRequest sId v d et) = RecordedEvent {
   recordedEventStreamId = sId,
   recordedEventNumber = v,
-  recordedEventData = d,
+  recordedEventData = BL.toStrict d,
   recordedEventType = et }
 
 runActions :: [PostEventRequest] -> Gen [RecordedEvent]
@@ -59,7 +59,7 @@ runActions a =
     toRecEvent (EventKey (StreamId sId, version),(eventType, body, _)) = RecordedEvent {
           recordedEventStreamId = TL.fromStrict sId,
           recordedEventNumber = version,
-          recordedEventData = BL.fromStrict body,
+          recordedEventData = body,
           recordedEventType = eventType }
 prop_AllEventsAppearInSubscription (SingleStreamValidActions actions) =
   forAll (runActions actions) $ \r ->
