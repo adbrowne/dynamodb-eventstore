@@ -57,7 +57,16 @@ runCmd :: MonadState FakeState m => EventStoreCmd (m a) -> m a
 runCmd (Wait' n) = n ()
 runCmd (GetEvent' k f) =
   f . (lookupEventKey k) =<< gets fst
-runCmd (GetEventsBackward' _ _ _ _) = error "todo"
+runCmd (GetEventsBackward' k _ _ f) =
+  f . (reverse . (getEvents k)) =<< gets fst
+    where
+      getEvents (StreamId sId) t =
+        let
+          events = fromMaybe M.empty $ M.lookup (StreamId sId) t
+        in do
+          (evtNumber, (t,d,_)) <- M.assocs events
+          return (RecordedEvent sId evtNumber d t)
+
 runCmd (WriteEvent' k t v n) = do
   exists <- gets (lookupEventKey k . fst)
   result <- writeEvent exists k t v

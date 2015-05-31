@@ -42,7 +42,7 @@ instance Arbitrary SingleStreamValidActions where
       numberEvent i e = (i+1,e { expectedVersion = i })
 
 toRecordedEvent (PostEventRequest sId v d et) = RecordedEvent {
-  recordedEventStreamId = sId,
+  recordedEventStreamId = TL.toStrict sId,
   recordedEventNumber = v,
   recordedEventData = BL.toStrict d,
   recordedEventType = et }
@@ -60,7 +60,7 @@ runActions a =
   where
     toRecEvent :: (EventKey, (EventType, BS.ByteString, Maybe PageKey)) -> RecordedEvent
     toRecEvent (EventKey (StreamId sId, version),(eventType, body, _)) = RecordedEvent {
-          recordedEventStreamId = TL.fromStrict sId,
+          recordedEventStreamId = sId,
           recordedEventNumber = version,
           recordedEventData = body,
           recordedEventType = eventType }

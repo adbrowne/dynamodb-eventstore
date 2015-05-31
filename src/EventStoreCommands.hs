@@ -29,7 +29,7 @@ data SetEventPageResult = SetEventPageSuccess | SetEventPageError
 data PageStatus = Version Int | Full | Verified deriving (Eq, Show, Generic)
 
 data RecordedEvent = RecordedEvent {
-   recordedEventStreamId :: TL.Text,
+   recordedEventStreamId :: T.Text,
    recordedEventNumber   :: Int64,
    recordedEventData     :: BS.ByteString,
    recordedEventType     :: T.Text
