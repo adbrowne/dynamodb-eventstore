@@ -39,7 +39,7 @@ data PostEventRequest = PostEventRequest {
 } deriving (Show)
 
 data ReadStreamRequest = ReadStreamRequest {
-   rsrStreamId        :: Text
+   rsrStreamId        :: T.Text
 } deriving (Show)
 
 postEventRequestProgram :: PostEventRequest -> EventStoreCmdM EventWriteResult

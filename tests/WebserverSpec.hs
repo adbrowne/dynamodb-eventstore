@@ -19,13 +19,6 @@ addEventPost headers =
                requestHeaders = headers,
                requestBody = pure "" }
 
-getStream :: T.Text -> Session SResponse
-getStream streamId =
-  request $ defaultRequest {
-               pathInfo = ["streams",streamId],
-               requestMethod = H.methodGet
-            }
-
 evHeader = "ES-ExpectedVersion"
 etHeader = "ES-EventType"
 
@@ -65,6 +58,13 @@ postEventSpec = do
       app' <- app
       flip runSession app' $ assertion =<< r
 
+getStream :: T.Text -> Session SResponse
+getStream streamId =
+  request $ defaultRequest {
+               pathInfo = ["streams",streamId],
+               requestMethod = H.methodGet
+            }
+
 getStreamSpec :: Spec
 getStreamSpec = do
   describe "Get stream" $ do
@@ -74,6 +74,11 @@ getStreamSpec = do
 
     it "responds with body" $
       waiCase getExample $ assertBody "ReadStream (ReadStreamRequest {rsrStreamId = \"myStreamId\"})"
+
+  describe "Get stream with missing stream name" $ do
+    let getExample = getStream ""
+    it "responds with 400" $
+      waiCase getExample $ assertStatus 400
 
   where
     app = S.scottyApp (W.app W.showEventResponse)

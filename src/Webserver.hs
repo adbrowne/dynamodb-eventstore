@@ -91,6 +91,10 @@ toResult = fromEither . left error400
 showEventResponse :: Show a => a -> ActionM ()
 showEventResponse = html . pack . show
 
+notEmpty :: T.Text -> Either Text T.Text
+notEmpty "" = Left "streamId required"
+notEmpty t = Right t
+
 app :: (EventStoreAction -> ActionM ()) -> ScottyM ()
 app process = do
   post "/streams/:streamId" $ do
@@ -106,6 +110,7 @@ app process = do
           <*> eventType
   get "/streams/:streamId" $ do
     streamId <- param "streamId"
+    let mStreamId = notEmpty streamId
     toResult . fmap (process . ReadStream) $
           ReadStreamRequest
-          <$> pure streamId
+          <$> mStreamId
