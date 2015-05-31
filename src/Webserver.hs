@@ -92,7 +92,7 @@ showEventResponse :: Show a => a -> ActionM ()
 showEventResponse = html . pack . show
 
 app :: (EventStoreAction -> ActionM ()) -> ScottyM ()
-app process =
+app process = do
   post "/streams/:streamId" $ do
     streamId <- param "streamId"
     expectedVersion <- parseMandatoryHeader "ES-ExpectedVersion" positiveInt64Parser
@@ -104,3 +104,5 @@ app process =
           <*> expectedVersion
           <*> pure eventData
           <*> eventType
+  get "/streams/:streamId" $ do
+    status $ mkStatus 200 (toByteString "ok")

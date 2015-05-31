@@ -29,6 +29,7 @@ import           WebserverSpec
 main :: IO ()
 main = do
   postEventSpec' <- testSpec "Post Event tests" postEventSpec
+  getStreamSpec' <- testSpec "Get Stream tests" getStreamSpec
   webserverInternalTests' <- testSpec "Webserver Internal Tests" WebserverInternalSpec.spec
   defaultMain $
     testGroup "Tests"
@@ -36,5 +37,6 @@ main = do
         testGroup "Command Tests against Dynamo" (CommandTests.tests Di.evalProgram),
         testGroup "Action Tests" ActionTests.tests,
         postEventSpec',
+        getStreamSpec',
         webserverInternalTests'
       ]

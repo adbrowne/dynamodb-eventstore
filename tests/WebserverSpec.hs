@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-module WebserverSpec (postEventSpec) where
+module WebserverSpec (postEventSpec, getStreamSpec) where
 
 import           Test.Tasty.Hspec
 import           Network.Wai.Test
@@ -9,14 +9,22 @@ import qualified Webserver as W
 import qualified Web.Scotty as S
 import qualified Network.HTTP.Types as H
 import           Control.Applicative (pure)
+import qualified Data.Text            as T
 
 addEventPost :: [H.Header] -> Session SResponse
 addEventPost headers =
   request $ defaultRequest {
                pathInfo = ["streams","streamId"],
-               requestMethod = methodPost,
+               requestMethod = H.methodPost,
                requestHeaders = headers,
                requestBody = pure "" }
+
+getStream :: T.Text -> Session SResponse
+getStream streamId =
+  request $ defaultRequest {
+               pathInfo = ["streams",streamId],
+               requestMethod = H.methodGet
+            }
 
 evHeader = "ES-ExpectedVersion"
 etHeader = "ES-EventType"
@@ -57,3 +65,14 @@ postEventSpec = do
       app' <- app
       flip runSession app' $ assertion =<< r
 
+getStreamSpec :: Spec
+getStreamSpec = do
+  describe "Get stream" $ do
+    it "responds with 200" $
+      waiCase (getStream "myStreamId") $ assertStatus 200
+
+  where
+    app = S.scottyApp (W.app W.showEventResponse)
+    waiCase r assertion = do
+      app' <- app
+      flip runSession app' $ assertion =<< r
