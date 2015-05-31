@@ -18,22 +18,31 @@ addEventPost headers =
                requestHeaders = headers,
                requestBody = pure "" }
 
+evHeader = "ES-ExpectedVersion"
+etHeader = "ES-EventType"
+
 postEventSpec :: Spec
 postEventSpec = do
-  let requestWithExpectedVersion = addEventPost [("ES-ExpectedVersion", "1")]
-  let requestWithoutExpectedVersion = addEventPost []
-  let requestWithoutBadExpectedVersion = addEventPost [("ES-ExepectedVersion", "NotAnInt")]
+  let baseHeaders = [(etHeader, "MyEventType")]
+  let requestWithExpectedVersion = addEventPost $ (evHeader, "1"):baseHeaders
+  let requestWithoutExpectedVersion = addEventPost baseHeaders
+  let requestWithoutBadExpectedVersion = addEventPost $ (evHeader, "NotAnInt"):baseHeaders
+  let requestWithoutEventType = addEventPost [(evHeader, "1")]
 
   describe "Parse Int64 header" $ do
     it "responds with 200" $
       waiCase requestWithExpectedVersion $ assertStatus 200
 
     it "responds with body" $
-      waiCase requestWithExpectedVersion $ assertBody "PostEvent (PostEventRequest {streamId = \"streamId\", expectedVersion = 1, eventData = \"\"})"
+      waiCase requestWithExpectedVersion $ assertBody "PostEvent (PostEventRequest {streamId = \"streamId\", expectedVersion = 1, eventData = \"\", eventType = \"MyEventType\"})"
 
   describe "POST /streams/streamId without ExepectedVersion" $
     it "responds with 400" $
       waiCase requestWithoutExpectedVersion $ assertStatus 400
+
+  describe "POST /streams/streamId without EventType" $
+    it "responds with 400" $
+      waiCase requestWithoutEventType $ assertStatus 400
 
   describe "POST /streams/streamId without ExepectedVersion greater than Int64.max" $
     it "responds with 400" $

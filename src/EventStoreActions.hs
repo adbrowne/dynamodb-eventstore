@@ -5,6 +5,7 @@ import qualified Data.ByteString.Lazy as BL
 import           Data.Int
 import           Data.Text.Lazy       (Text, pack)
 import qualified Data.Text.Lazy       as TL
+import qualified Data.Text            as T
 import           EventStoreCommands
 
 -- High level event store actions
@@ -20,7 +21,8 @@ data SubscribeAllRequest = SubscribeAllRequest {
 data RecordedEvent = RecordedEvent {
    recordedEventStreamId :: Text,
    recordedEventNumber   :: Int64,
-   recordedEventData     :: BL.ByteString
+   recordedEventData     :: BL.ByteString,
+   recordedEventType     :: T.Text
 } deriving (Show, Eq, Ord)
 
 data SubscribeAllResponse = SubscribeAllResponse {
@@ -31,14 +33,15 @@ data SubscribeAllResponse = SubscribeAllResponse {
 data PostEventRequest = PostEventRequest {
    streamId        :: Text,
    expectedVersion :: Int64,
-   eventData       :: BL.ByteString
+   eventData       :: BL.ByteString,
+   eventType       :: T.Text
 } deriving (Show)
 
 postEventRequestProgram :: PostEventRequest -> EventStoreCmdM EventWriteResult
-postEventRequestProgram (PostEventRequest sId ev ed) = do
+postEventRequestProgram (PostEventRequest sId ev ed et) = do
   let eventKey = EventKey (StreamId (TL.toStrict sId),ev)
   let strictED = BL.toStrict ed
-  writeEvent' eventKey "EventType" strictED
+  writeEvent' eventKey et strictED
 
 writeEventToPage :: EventKey -> EventStoreCmdM ()
 writeEventToPage key = do

@@ -14,6 +14,7 @@ import qualified Data.ByteString.Lazy      as BL
 import           Data.Char                 (isDigit)
 import           Data.Int
 import qualified Data.Text.Encoding        as T
+import qualified Data.Text                 as T
 import           Data.Text.Lazy            (Text, pack)
 import qualified Data.Text.Lazy            as TL
 import           Network.HTTP.Types        (mkStatus)
@@ -67,6 +68,10 @@ positiveIntegerParser :: Parser Integer
 positiveIntegerParser =
   fmap read $ many1 (satisfy isDigit) <* endOfInput
 
+textParser :: Parser T.Text
+textParser =
+  fmap T.pack $ many1 (satisfy (\_ -> True)) <* endOfInput
+
 positiveInt64Parser :: Parser Int64
 positiveInt64Parser =
   filterInt64 =<< positiveIntegerParser
@@ -91,9 +96,11 @@ app process =
   post "/streams/:streamId" $ do
     streamId <- param "streamId"
     expectedVersion <- parseMandatoryHeader "ES-ExpectedVersion" positiveInt64Parser
+    eventType <- parseMandatoryHeader "ES-EventType" textParser
     eventData <- body
     toResult . fmap (process . PostEvent) $
           PostEventRequest
           <$> pure streamId
           <*> expectedVersion
           <*> pure eventData
+          <*> eventType
