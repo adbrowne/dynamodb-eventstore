@@ -1,4 +1,5 @@
-{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleContexts          #-}
+{-# LANGUAGE RecordWildCards           #-}
 module DynamoDbEventStore.Testing where
 
 import           Control.Applicative
@@ -7,9 +8,6 @@ import           Control.Monad.State
 import           Data.Map                (Map)
 import qualified Data.Map                as M
 import qualified Data.ByteString         as BS
-import qualified Data.ByteString.Lazy    as BL
-import qualified Data.Text.Lazy          as TL
-import           EventStoreActions
 import           EventStoreCommands
 
 type FakeEventTable = Map EventKey (EventType, BS.ByteString, Maybe PageKey)
@@ -20,21 +18,24 @@ type FakeState = (FakeEventTable, FakePageTable)
 emptyTestState :: FakeState
 emptyTestState = (M.empty, M.empty)
 
+writeEventToState :: (t -> t1) -> (t, t2) -> (t1, t2)
 writeEventToState f (eT, pT) =
    (f eT, pT)
 
+writePageToState :: (t -> t2) -> (t1, t) -> (t1, t2)
 writePageToState f (eT, pT) =
    (eT, f pT)
 
 runCmd :: MonadState FakeState m => EventStoreCmd (m a) -> m a
 runCmd (Wait' n) = n ()
 runCmd (GetEvent' k f) = f . M.lookup k =<< gets fst
+runCmd (GetEventsBackward' _ _ _ _) = error "todo"
 runCmd (WriteEvent' k t v n) = do
   exists <- gets (M.lookup k . fst)
   result <- writeEvent exists k t v
   n result
     where
-      writeEvent Nothing k t v = do
+      writeEvent Nothing _ _ _ = do
         modify $ writeEventToState $ M.insert k  (t, v, Nothing)
         return WriteSuccess
       writeEvent (Just _) _ _ _ =
@@ -51,7 +52,7 @@ runCmd (ScanUnpagedEvents' n) = do
     unpagedEntry (_, _, Nothing) = True
 runCmd (GetPageEntry' k n) =
   n =<< gets (M.lookup k . snd)
-runCmd (WritePageEntry' k PageWriteRequest { expectedStatus = expectedStatus, newStatus = newStatus, entries = entries } n) = do
+runCmd (WritePageEntry' k PageWriteRequest {..} n) = do
   table <- gets snd
   let entryStatus = fst <$> M.lookup k table
   let writeResult = writePage expectedStatus entryStatus table
@@ -67,7 +68,7 @@ runCmd (WritePageEntry' k PageWriteRequest { expectedStatus = expectedStatus, ne
       writePage _ _ _ = Nothing
       modifyPage :: Maybe (PageStatus, FakePageTable) -> FakePageTable -> FakePageTable
       modifyPage (Just (_, pT)) _ = pT
-      modifyPage Nothing state = state
+      modifyPage Nothing s = s
 
 runTest :: MonadState FakeState m => EventStoreCmdM a -> m a
 runTest = iterM runCmd
