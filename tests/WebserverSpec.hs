@@ -68,8 +68,12 @@ postEventSpec = do
 getStreamSpec :: Spec
 getStreamSpec = do
   describe "Get stream" $ do
+    let getExample = getStream "myStreamId"
     it "responds with 200" $
-      waiCase (getStream "myStreamId") $ assertStatus 200
+      waiCase getExample $ assertStatus 200
+
+    it "responds with body" $
+      waiCase getExample $ assertBody "ReadStream (ReadStreamRequest {rsrStreamId = \"myStreamId\"})"
 
   where
     app = S.scottyApp (W.app W.showEventResponse)

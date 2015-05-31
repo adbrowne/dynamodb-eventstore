@@ -12,6 +12,7 @@ import           EventStoreCommands
 -- should map almost one to one with http interface
 data EventStoreAction =
   PostEvent PostEventRequest |
+  ReadStream ReadStreamRequest |
   SubscribeAll SubscribeAllRequest deriving (Show)
 
 data SubscribeAllRequest = SubscribeAllRequest {
@@ -35,6 +36,10 @@ data PostEventRequest = PostEventRequest {
    expectedVersion :: Int64,
    eventData       :: BL.ByteString,
    eventType       :: T.Text
+} deriving (Show)
+
+data ReadStreamRequest = ReadStreamRequest {
+   rsrStreamId        :: Text
 } deriving (Show)
 
 postEventRequestProgram :: PostEventRequest -> EventStoreCmdM EventWriteResult

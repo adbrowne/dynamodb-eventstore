@@ -105,4 +105,7 @@ app process = do
           <*> pure eventData
           <*> eventType
   get "/streams/:streamId" $ do
-    status $ mkStatus 200 (toByteString "ok")
+    streamId <- param "streamId"
+    toResult . fmap (process . ReadStream) $
+          ReadStreamRequest
+          <$> pure streamId
