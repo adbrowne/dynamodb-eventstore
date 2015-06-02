@@ -3,6 +3,7 @@ module EventStoreActions where
 
 import qualified Data.ByteString.Lazy as BL
 import           Data.Int
+import           Data.Maybe           (fromMaybe)
 import qualified Data.Text.Lazy       as TL
 import qualified Data.Text            as T
 import           EventStoreCommands
@@ -12,6 +13,7 @@ import           EventStoreCommands
 data EventStoreAction =
   PostEvent PostEventRequest |
   ReadStream ReadStreamRequest |
+  ReadAll ReadAllRequest |
   SubscribeAll SubscribeAllRequest deriving (Show)
 
 data SubscribeAllRequest = SubscribeAllRequest {
@@ -34,6 +36,8 @@ data ReadStreamRequest = ReadStreamRequest {
    rsrStreamId        :: T.Text
 } deriving (Show)
 
+data ReadAllRequest = ReadAllRequest deriving (Show)
+
 postEventRequestProgram :: PostEventRequest -> EventStoreCmdM EventWriteResult
 postEventRequestProgram (PostEventRequest sId ev ed et) = do
   let eventKey = EventKey (StreamId sId,ev)
@@ -44,15 +48,28 @@ getReadStreamRequestProgram :: ReadStreamRequest -> EventStoreCmdM [RecordedEven
 getReadStreamRequestProgram (ReadStreamRequest sId) = do
   getEventsBackward' (StreamId sId) 10 Nothing
 
+getReadAllRequestProgram :: ReadAllRequest -> EventStoreCmdM [EventKey]
+getReadAllRequestProgram ReadAllRequest = do
+  result <- getPageEntry' (0,0)
+  return $ fromMaybe [] $ fmap snd result
+
 writeEventToPage :: EventKey -> EventStoreCmdM ()
 writeEventToPage key = do
-  let writeRequest = PageWriteRequest { expectedStatus = Just $ Version 0, newStatus = Version 1, entries = [key] }
+  currentPage <- getPageEntry' (0,0)
+  let writeRequest = buildWriteRequest currentPage
   _ <- writePageEntry' (0,0) writeRequest
+  _ <- setEventPage' key (0,0)
   return ()
+    where
+      buildWriteRequest :: Maybe (PageStatus, [EventKey]) -> PageWriteRequest
+      buildWriteRequest Nothing = PageWriteRequest { expectedStatus = Nothing, newStatus = Version 0, entries = [key] }
+      buildWriteRequest (Just (pageStatus, currentKeys)) = PageWriteRequest { expectedStatus = (Just pageStatus), newStatus = Version 0, entries = key:currentKeys }
 
 writePagesProgram :: EventStoreCmdM ()
 writePagesProgram = do
   unpagedEvents <- scanUnpagedEvents'
-  mapM_ writeEventToPage unpagedEvents
-  wait'
+  processEvents unpagedEvents
   writePagesProgram
+    where
+      processEvents [] = wait'
+      processEvents unpagedEvents = mapM_ writeEventToPage unpagedEvents

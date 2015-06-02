@@ -6,6 +6,7 @@ import qualified Data.Text.Lazy as TL
 import           Web.Scotty
 import           Webserver      (app)
 import           Control.Monad.IO.Class (liftIO)
+import           Control.Concurrent
 import           DynamoDbEventStore.DynamoInterpreter
 import           EventStoreActions
 import           System.Random
@@ -20,6 +21,10 @@ showEvent tableName (ReadStream req) = do
   let program = getReadStreamRequestProgram req
   a <- liftIO $ runProgram tableName program
   json a
+showEvent tableName (ReadAll req) = do
+  let program = getReadAllRequestProgram req
+  a <- liftIO $ runProgram tableName program
+  json a
 showEvent _ a = do
   (html . TL.pack . show) a
 
@@ -29,4 +34,5 @@ main = do
   let tableName = T.pack $ "testtable-" ++ show tableNameId
   putStrLn $ show tableName
   buildTable tableName
+  _ <- forkIO $ runProgram tableName writePagesProgram
   scotty 3000 (app (showEvent tableName))
