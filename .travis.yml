@@ -19,7 +19,7 @@ install:
 before_script:
 - ./scripts/run-dynamodb-local.sh
 script:
-  - source halcyon-env && cabal configure --enable-tests && cabal test
+  - source halcyon-env && cabal install --dependencies-only --enable-tests && cabal configure --enable-tests && cabal test
 deploy:
   provider: releases
   user: adbrowne
