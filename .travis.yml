@@ -9,8 +9,8 @@ env:
   - secure: TIZz9TXAgVRQBMbJBTY7AiFfvFMTL7yaEK8JtpLdyn9V0vy6X9i2O/3q146izerl2aJJ+2RMrZKTT//Q41gHS8ly+RWDxhn3uimH5MQCJzvTY6e7MJa0ArRt5ESAYDV1+E+PZaCu9AyzMVTXmADkx5OTR/zwvlP/R8E0OKJdoMQ=
   - secure: ZwDeOXPwFo4QaTb/x3q+qfMSjKTqxJP1VOjHJXc+6V9hSM2WHRf8Snwf/cEwx3qvQrsIlqK88Se63DCUcz6NSnlGus0O+u4+2pYk4vAjhOpf3C+tHEEUwTIZsD6FS94LTDAv/3x0ABFpqNr0uBddP7YBXlTQ6vkvrox3Bu9iflw=
 before_install:
-  - sudo mkdir -p /app
-  - sudo chown $USER /app
+  - mkdir -p /app
+  - chown $USER /app
   - git clone https://github.com/mietek/halcyon.git /app/halcyon
 install:
   - pwd
