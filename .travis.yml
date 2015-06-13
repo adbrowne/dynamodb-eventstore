@@ -14,7 +14,7 @@ before_install:
   - git clone https://github.com/mietek/halcyon.git /app/halcyon
 install:
   - pwd
-  - /app/halcyon/halcyon build . --sandbox-sources=./libraries/aws
+  - /app/halcyon/halcyon build . --sandbox-sources=./libraries/aws --sandbox-extra-configure-flags=--enable-tests
   - /app/halcyon/halcyon paths > halcyon-env
   - ln -sf /app/sandbox/cabal.sandbox.config cabal.sandbox.config
 before_script:
