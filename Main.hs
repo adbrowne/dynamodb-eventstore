@@ -34,5 +34,5 @@ main = do
   let tableName = T.pack $ "testtable-" ++ show tableNameId
   putStrLn $ show tableName
   buildTable tableName
-  _ <- forkIO $ runProgram tableName writePagesProgram
+  _ <- forkIO $ runProgram tableName (writePagesProgram Nothing)
   scotty 3000 (app (showEvent tableName))

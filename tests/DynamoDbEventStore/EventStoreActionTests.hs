@@ -37,7 +37,7 @@ instance Arbitrary SingleStreamValidActions where
     let (_, numberedEventList) = L.mapAccumL numberEvent 0 eventList
     return $ SingleStreamValidActions numberedEventList
     where
-      numberEvent i e = (i+1,e { perExpectedVersion = i })
+      numberEvent i e = (i+1,e { perExpectedVersion = i, perStreamId = "s" })
 
 toRecordedEvent :: PostEventRequest -> RecordedEvent
 toRecordedEvent (PostEventRequest sId v d et) = RecordedEvent {
@@ -46,16 +46,20 @@ toRecordedEvent (PostEventRequest sId v d et) = RecordedEvent {
   recordedEventData = BL.toStrict d,
   recordedEventType = et }
 
-runActions :: [PostEventRequest] -> Gen [RecordedEvent]
+toEventKey :: PostEventRequest -> EventKey
+toEventKey (PostEventRequest sId v d et) =
+  EventKey (StreamId sId, v)
+
+runActions :: [PostEventRequest] -> Gen ([EventKey])
 runActions a =
   let
     s = L.foldl' runItem emptyTestState a
+    (_,s') = runState (runTest (writePagesProgram $ Just 100)) s
     events = do
-      (sId, eventMap) <- (M.assocs . fst) s
-      (evtNumber, v) <- M.assocs eventMap
-      return (EventKey (sId, evtNumber), v)
+      (_, entries) <- (M.elems . snd) s'
+      entries
   in
-    elements [fmap toRecEvent events]
+    elements [events]
   where
     toRecEvent :: (EventKey, (EventType, BS.ByteString, Maybe PageKey)) -> RecordedEvent
     toRecEvent (EventKey (StreamId sId, version),(eventType, body, _)) = RecordedEvent {
@@ -67,15 +71,15 @@ runActions a =
 prop_AllEventsAppearInSubscription :: SingleStreamValidActions -> Property
 prop_AllEventsAppearInSubscription (SingleStreamValidActions actions) =
   forAll (runActions actions) $ \r ->
-    S.fromList r === S.fromList (map toRecordedEvent actions)
+    S.fromList r === S.fromList (map toEventKey actions)
 
 prop_GlobalFeedPreservesEventOrdering :: SingleStreamValidActions -> Property
 prop_GlobalFeedPreservesEventOrdering (SingleStreamValidActions actions) =
   forAll (runActions actions) $ \r ->
-    r === map toRecordedEvent actions
+    r === map toEventKey actions
 
 tests :: [TestTree]
 tests = [
       testProperty "All Events Appear in Subscription" prop_AllEventsAppearInSubscription
-      --, testProperty "Global Feed preserves stream oder" prop_GlobalFeedPreservesEventOrdering
+      , testProperty "Global Feed preserves stream oder" prop_GlobalFeedPreservesEventOrdering
   ]

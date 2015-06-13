@@ -3,9 +3,11 @@ module EventStoreActions where
 
 import qualified Data.ByteString.Lazy as BL
 import           Data.Int
+import           Data.Function
 import           Data.Maybe           (fromMaybe)
 import qualified Data.Text.Lazy       as TL
 import qualified Data.Text            as T
+import qualified Data.List            as L
 import           EventStoreCommands
 
 -- High level event store actions
@@ -65,11 +67,20 @@ writeEventToPage key = do
       buildWriteRequest Nothing = PageWriteRequest { expectedStatus = Nothing, newStatus = Version 0, entries = [key] }
       buildWriteRequest (Just (pageStatus, currentKeys)) = PageWriteRequest { expectedStatus = (Just pageStatus), newStatus = Version 0, entries = key:currentKeys }
 
-writePagesProgram :: EventStoreCmdM ()
-writePagesProgram = do
+writePagesProgram :: Maybe Int -> EventStoreCmdM ()
+writePagesProgram Nothing = return ()
+writePagesProgram (Just 0) = return ()
+writePagesProgram (Just i) = do
   unpagedEvents <- scanUnpagedEvents'
   processEvents unpagedEvents
-  writePagesProgram
+  writePagesProgram (Just $ i - 1)
     where
       processEvents [] = wait'
-      processEvents unpagedEvents = mapM_ writeEventToPage unpagedEvents
+      processEvents unpagedEvents =
+        let
+         -- sorting is enough for now. we aren't yet simulating
+         -- eventual consistency in the index
+          sortedEvents = (L.reverse (L.sortBy (compare `on` getEventNumber) unpagedEvents))
+        in
+          mapM_ writeEventToPage sortedEvents
+      getEventNumber (EventKey(_,eventNumber)) = eventNumber
