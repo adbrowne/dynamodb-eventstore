@@ -69,7 +69,13 @@ prop_AllEventsAppearInSubscription (SingleStreamValidActions actions) =
   forAll (runActions actions) $ \r ->
     S.fromList r === S.fromList (map toRecordedEvent actions)
 
+prop_GlobalFeedPreservesEventOrdering :: SingleStreamValidActions -> Property
+prop_GlobalFeedPreservesEventOrdering (SingleStreamValidActions actions) =
+  forAll (runActions actions) $ \r ->
+    r === map toRecordedEvent actions
+
 tests :: [TestTree]
 tests = [
       testProperty "All Events Appear in Subscription" prop_AllEventsAppearInSubscription
+      --, testProperty "Global Feed preserves stream oder" prop_GlobalFeedPreservesEventOrdering
   ]
