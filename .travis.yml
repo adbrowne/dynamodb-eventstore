@@ -13,11 +13,9 @@ before_install:
   - sudo chown $USER /app
   - git clone https://github.com/mietek/halcyon.git /app/halcyon
 install:
-  - /app/halcyon/halcyon build
+  - /app/halcyon/halcyon build --sandbox-sources=./libraries/aws
   - /app/halcyon/halcyon paths > halcyon-env
   - ln -sf /app/sandbox/cabal.sandbox.config cabal.sandbox.config
-  - cabal sandbox add-source ./libraries/aws
-  - cabal install --only-dependencies --enable-tests
 before_script:
 - ./scripts/run-dynamodb-local.sh
 script:
