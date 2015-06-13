@@ -1,12 +1,11 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module DynamoDbEventStore.EventStoreActionTests where
+module DynamoDbEventStore.EventStoreActionTests (tests) where
 
 import           Control.Monad.State
 import qualified Data.Map                as M
 import qualified Data.List               as L
 import qualified Data.Set                as S
-import qualified Data.ByteString         as BS
 import qualified Data.ByteString.Lazy    as BL
 import qualified Data.Text               as T
 import           DynamoDbEventStore.Testing
@@ -39,15 +38,8 @@ instance Arbitrary SingleStreamValidActions where
     where
       numberEvent i e = (i+1,e { perExpectedVersion = i, perStreamId = "s" })
 
-toRecordedEvent :: PostEventRequest -> RecordedEvent
-toRecordedEvent (PostEventRequest sId v d et) = RecordedEvent {
-  recordedEventStreamId = sId,
-  recordedEventNumber = v,
-  recordedEventData = BL.toStrict d,
-  recordedEventType = et }
-
 toEventKey :: PostEventRequest -> EventKey
-toEventKey (PostEventRequest sId v d et) =
+toEventKey (PostEventRequest sId v _ _) =
   EventKey (StreamId sId, v)
 
 runActions :: [PostEventRequest] -> Gen ([EventKey])
@@ -56,17 +48,10 @@ runActions a =
     s = L.foldl' runItem emptyTestState a
     (_,s') = runState (runTest (writePagesProgram $ Just 100)) s
     events = do
-      (_, entries) <- (M.elems . snd) s'
-      entries
+      (_, pagedKeys) <- (M.elems . snd) s'
+      pagedKeys
   in
     elements [events]
-  where
-    toRecEvent :: (EventKey, (EventType, BS.ByteString, Maybe PageKey)) -> RecordedEvent
-    toRecEvent (EventKey (StreamId sId, version),(eventType, body, _)) = RecordedEvent {
-          recordedEventStreamId = sId,
-          recordedEventNumber = version,
-          recordedEventData = body,
-          recordedEventType = eventType }
 
 prop_AllEventsAppearInSubscription :: SingleStreamValidActions -> Property
 prop_AllEventsAppearInSubscription (SingleStreamValidActions actions) =

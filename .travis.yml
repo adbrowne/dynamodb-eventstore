@@ -12,7 +12,7 @@ before_install:
   - git clone https://github.com/mietek/halcyon.git "$TRAVIS_BUILD_DIR/halcyon"
   - export HALCYON_BASE="$TRAVIS_BUILD_DIR/halcyon"
 install:
-  - $TRAVIS_BUILD_DIR/halcyon/halcyon build . --sandbox-sources=./libraries/aws --sandbox-extra-configure-flags=--enable-tests
+  - $TRAVIS_BUILD_DIR/halcyon/halcyon build
   - $TRAVIS_BUILD_DIR/halcyon/halcyon paths > halcyon-env
   - ln -sf $TRAVIS_BUILD_DIR/halcyon/sandbox/cabal.sandbox.config cabal.sandbox.config
 before_script:
