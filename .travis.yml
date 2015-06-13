@@ -1,20 +1,26 @@
 language: haskell
 ghc:
-  - 7.8
-env: AWS_ACCESS_KEY_ID=foo AWS_SECRET_ACCESS_KEY=bar
+- 7.8
+env:
+  matrix:
+  - AWS_ACCESS_KEY_ID=foo AWS_SECRET_ACCESS_KEY=bar
+  global:
+  - secure: PkZAZK7kF2PPl8Ej1pAXWFJ4344EA3tOKvgPpwyjpccApzNnMGnWpIF6HUphHIH74MgLCV1eOlGYPUcsvJ2T17yEMfrdTfRsT45Aa/xqYvVlQP/rjosAypxCtB+CB08bAyG8auclDYdT/uukrqG35YPdm8GflFTVjlEI6FZEaS4=
+  - secure: TIZz9TXAgVRQBMbJBTY7AiFfvFMTL7yaEK8JtpLdyn9V0vy6X9i2O/3q146izerl2aJJ+2RMrZKTT//Q41gHS8ly+RWDxhn3uimH5MQCJzvTY6e7MJa0ArRt5ESAYDV1+E+PZaCu9AyzMVTXmADkx5OTR/zwvlP/R8E0OKJdoMQ=
+  - secure: ZwDeOXPwFo4QaTb/x3q+qfMSjKTqxJP1VOjHJXc+6V9hSM2WHRf8Snwf/cEwx3qvQrsIlqK88Se63DCUcz6NSnlGus0O+u4+2pYk4vAjhOpf3C+tHEEUwTIZsD6FS94LTDAv/3x0ABFpqNr0uBddP7YBXlTQ6vkvrox3Bu9iflw=
 install:
-  - cabal install happy
-  - cabal sandbox init
-  - cabal sandbox add-source ./libraries/aws
-  - cabal install --only-dependencies --enable-tests
+- cabal install happy
+- cabal sandbox init
+- cabal sandbox add-source ./libraries/aws
+- cabal install --only-dependencies --enable-tests
 before_script:
-  - ./scripts/run-dynamodb-local.sh
+- ./scripts/run-dynamodb-local.sh
 deploy:
   provider: releases
   user: adbrowne
   api-key:
     secure: Uhjc0cPR4NMqmVOyzk1Gpc6ZIX/w92Td0PhA2je2GRepNTWow1xvJ2pll25pYZzffCWj5fWUL3KEEw0RnkVZTDzgXV47QXo/y4kzbkBJrDYFTN2DHjPVLyl7mobKeVAhYk2ndId9Dnb4ea+uZwOkVFvB2K1l/LbdnN3t6RegfnE=
-  file: dist/build/web/web 
+  file: dist/build/web/web
   skip_cleanup: true
   on:
     tags: true
