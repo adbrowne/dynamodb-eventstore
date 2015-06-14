@@ -21,7 +21,7 @@ main = do
   defaultMain $
     testGroup "Tests"
       [ testGroup "Command Unit Tests" (CommandTests.tests evalProgram),
-        --testGroup "Command Tests against Dynamo" (CommandTests.tests Di.evalProgram),
+        testGroup "Command Tests against Dynamo" (CommandTests.tests Di.evalProgram),
         testGroup "Action Tests" ActionTests.tests,
         postEventSpec',
         getStreamSpec',
