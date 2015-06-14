@@ -1,6 +1,4 @@
-language: haskell
-ghc:
-- 7.8
+language: sh
 env:
   matrix:
   - AWS_ACCESS_KEY_ID=foo AWS_SECRET_ACCESS_KEY=bar
