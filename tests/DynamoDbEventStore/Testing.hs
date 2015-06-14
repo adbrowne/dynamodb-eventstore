@@ -11,6 +11,7 @@ import           Data.Maybe              (fromMaybe)
 import qualified Data.Map                as M
 import qualified Data.ByteString         as BS
 import           EventStoreCommands
+import           Test.Tasty.QuickCheck
 
 type FakeEventTable = Map StreamId (Map Int64 (EventType, BS.ByteString, Maybe PageKey))
 type FakePageTable = Map PageKey (PageStatus, [EventKey])
@@ -120,6 +121,9 @@ runCmd (WritePageEntry' k PageWriteRequest {..} n) = do
 
 runTest :: MonadState FakeState m => EventStoreCmdM a -> m a
 runTest = iterM runCmd
+
+runTestGen :: MonadState FakeState m => EventStoreCmdM a -> Gen (m a)
+runTestGen = return . (iterM runCmd)
 
 evalProgram :: EventStoreCmdM a -> IO a
 evalProgram program = return $ evalState (runTest program) (M.empty, M.empty)

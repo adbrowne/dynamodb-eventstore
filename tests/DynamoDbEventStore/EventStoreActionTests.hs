@@ -14,10 +14,18 @@ import           EventStoreCommands
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 
+import qualified Test.QuickCheck.Gen as QC
+import qualified Test.QuickCheck.Random as QC
+import qualified System.Random as Random
+newtype GenT m a = GenT { unGenT :: QC.QCGen -> Int -> m a }
+
+runGenT :: GenT m a -> QC.Gen (m a)
+runGenT (GenT run) = QC.MkGen run
+
 runItem :: FakeState -> PostEventRequest -> FakeState
 runItem fakeState (PostEventRequest sId v d et) =
   let
-   (_, s) = runState (runTest writeItem) fakeState
+     (_,s) = runState (runTest writeItem) fakeState
   in s
   where
       writeItem =
@@ -51,7 +59,7 @@ runActions a =
       (_, pagedKeys) <- (M.elems . snd) s'
       pagedKeys
   in
-    elements [events]
+    return events
 
 prop_AllEventsAppearInSubscription :: SingleStreamValidActions -> Property
 prop_AllEventsAppearInSubscription (SingleStreamValidActions actions) =

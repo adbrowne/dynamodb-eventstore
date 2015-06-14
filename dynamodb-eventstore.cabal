@@ -74,6 +74,8 @@ Test-Suite tasty
                        tasty-hspec >= 1.0,
                        tasty-hunit >= 0.9,
                        tasty-quickcheck >= 0.8,
+                       QuickCheck,
+                       random,
                        containers >= 0.5,
                        http-types >= 0.8,
                        mtl >= 2.1,
