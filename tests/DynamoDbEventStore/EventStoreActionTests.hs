@@ -51,15 +51,14 @@ toEventKey (PostEventRequest sId v _ _) =
   EventKey (StreamId sId, v)
 
 runActions :: [PostEventRequest] -> Gen ([EventKey])
-runActions a =
-  let
-    s = L.foldl' runItem emptyTestState a
-    (_,s') = runState (runTest (writePagesProgram $ Just 100)) s
-    events = do
-      (_, pagedKeys) <- (M.elems . snd) s'
+runActions a = do
+  let s = L.foldl' runItem emptyTestState a
+  (_,s') <- runStateT (runTest (writePagesProgram $ Just 100)) s
+  return $ events s'
+  where
+    events s = do
+      (_, pagedKeys) <- (M.elems . snd) s
       pagedKeys
-  in
-    return events
 
 prop_AllEventsAppearInSubscription :: SingleStreamValidActions -> Property
 prop_AllEventsAppearInSubscription (SingleStreamValidActions actions) =
