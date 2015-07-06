@@ -2,12 +2,12 @@
 module EventStoreActions where
 
 import qualified Data.ByteString.Lazy as BL
-import           Data.Int
 import           Data.Function
-import           Data.Maybe           (fromMaybe)
-import qualified Data.Text.Lazy       as TL
-import qualified Data.Text            as T
-import qualified Data.List            as L
+import           Data.Int
+import qualified Data.List as L
+import           Data.Maybe (fromMaybe)
+import qualified Data.Text as T
+import qualified Data.Text.Lazy as TL
 import           EventStoreCommands
 
 -- High level event store actions
