@@ -20,7 +20,7 @@ import qualified Test.QuickCheck.Random     as QC
 runItem :: FakeState -> PostEventRequest -> FakeState
 runItem fakeState (PostEventRequest sId v d et) =
   let
-     (_,s) = runStateT (runTestGen writeItem) fakeState
+     (_,s) = runState (runTest writeItem) fakeState
   in s
   where
       writeItem =

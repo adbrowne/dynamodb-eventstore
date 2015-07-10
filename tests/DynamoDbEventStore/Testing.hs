@@ -122,7 +122,7 @@ runCmd (WritePageEntry' k PageWriteRequest {..} n) = do
 runTest :: MonadState FakeState m => EventStoreCmdM a -> m a
 runTest = iterM runCmd
 
-runCmdGen :: MonadState FakeState Gen => EventStoreCmd (Gen a) -> Gen a
+runCmdGen :: EventStoreCmd (StateT FakeState Gen a) -> StateT FakeState Gen a
 runCmdGen (Wait' n) = n ()
 runCmdGen (GetEvent' k f) =
   f . (lookupEventKey k) =<< gets fst
@@ -186,7 +186,7 @@ runCmdGen (WritePageEntry' k PageWriteRequest {..} n) = do
       modifyPage :: Maybe (PageStatus, FakePageTable) -> FakePageTable -> FakePageTable
       modifyPage (Just (_, pT)) _ = pT
       modifyPage Nothing s = s
-runTestGen :: MonadState FakeState Gen => EventStoreCmdM a -> Gen a
+runTestGen :: EventStoreCmdM a -> StateT FakeState Gen a
 runTestGen = iterM runCmdGen
 
 evalProgram :: EventStoreCmdM a -> IO a
