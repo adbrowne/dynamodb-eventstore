@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings   #-}
 module EventStoreActions where
 
+import           Control.Monad
 import qualified Data.ByteString.Lazy as BL
 import           Data.Function
 import           Data.Int
@@ -67,6 +68,18 @@ writeEventToPage key = do
       buildWriteRequest Nothing = PageWriteRequest { expectedStatus = Nothing, newStatus = Version 0, entries = [key] }
       buildWriteRequest (Just (pageStatus, currentKeys)) = PageWriteRequest { expectedStatus = (Just pageStatus), newStatus = Version 0, entries = key:currentKeys }
 
+--newtype EventKey = EventKey (StreamId, Int64) deriving (Ord, Eq, Show)
+--type EventReadResult = Maybe (EventType, BS.ByteString, Maybe PageKey)
+previousEventIsPaged :: EventKey -> EventStoreCmdM Bool
+previousEventIsPaged (EventKey (_, 0)) = return True
+previousEventIsPaged key = do
+  storedEvent <- getEvent' key
+  return $ isPaged storedEvent
+    where
+      isPaged Nothing = False
+      isPaged (Just(_,_,Just _)) = True
+      isPaged (Just(_,_,Nothing)) = False
+
 writePagesProgram :: Maybe Int -> EventStoreCmdM ()
 writePagesProgram Nothing = return ()
 writePagesProgram (Just 0) = return ()
@@ -76,11 +89,8 @@ writePagesProgram (Just i) = do
   writePagesProgram (Just $ i - 1)
     where
       processEvents [] = wait'
-      processEvents unpagedEvents =
-        let
-         -- sorting is enough for now. we aren't yet simulating
-         -- eventual consistency in the index
-          sortedEvents = (L.reverse (L.sortBy (compare `on` getEventNumber) unpagedEvents))
-        in
-          mapM_ writeEventToPage sortedEvents
+      processEvents unpagedEvents = do
+        let sortedEvents = (L.reverse . (L.sortBy (compare `on` getEventNumber))) unpagedEvents
+        canPageEvents' <- filterM previousEventIsPaged sortedEvents
+        mapM_ writeEventToPage canPageEvents'
       getEventNumber (EventKey(_,eventNumber)) = eventNumber

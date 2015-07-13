@@ -137,7 +137,6 @@ runCmdGen (GetEventsBackward' k _ _ f) =
           return (RecordedEvent sId evtNumber d t)
 
 runCmdGen (WriteEvent' k t v n) = do
-  doWork <- (lift $ elements [True, False])
   exists <- gets (lookupEventKey k . fst)
   result <- writeEvent exists k t v
   n result
@@ -154,7 +153,8 @@ runCmdGen (SetEventPage' k pk n) = do
 runCmdGen (ScanUnpagedEvents' n) = do
   allItems <- gets (buildAllItems . fst)
   let unpaged = filter unpagedEntry allItems
-  n $ fmap fst unpaged
+  toReturn <- lift (sublistOf (fmap fst unpaged))
+  n toReturn
   where
     buildAllItems :: FakeEventTable -> [(EventKey, Maybe PageKey)]
     buildAllItems t =
