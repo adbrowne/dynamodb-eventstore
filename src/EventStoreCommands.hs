@@ -1,26 +1,30 @@
+{-# LANGUAGE DeriveFunctor     #-}
+{-# LANGUAGE DeriveGeneric     #-}
+{-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE RecordWildCards           #-}
+{-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE TemplateHaskell   #-}
 
 module EventStoreCommands where
 
-import Control.Applicative
-import Control.Monad
-import Control.Monad.Free
-import Control.Monad.Free.TH
+import           Control.Applicative
+import           Control.Monad
+import           Control.Monad.Free
+import           Control.Monad.Free.TH
 
-import GHC.Generics
-import Data.Aeson
-import Data.Int
-import qualified Data.Text as T
-import qualified Data.Text.Encoding as T
-import qualified Data.ByteString as BS
+import           Data.Aeson
+import qualified Data.ByteString       as BS
+import           Data.Int
+import qualified Data.Text             as T
+import qualified Data.Text.Encoding    as T
+import           GHC.Generics
+import           TextShow
+import           TextShow.TH
 
 newtype StreamId = StreamId T.Text deriving (Ord, Eq, Show)
+deriveTextShow ''StreamId
 newtype EventKey = EventKey (StreamId, Int64) deriving (Ord, Eq, Show)
+deriveTextShow ''EventKey
 type EventType = T.Text
 type PageKey = (Int, Int) -- (Partition, PageNumber)
 data EventWriteResult = WriteSuccess | EventExists | WriteError deriving (Eq, Show)
@@ -68,7 +72,7 @@ instance ToJSON EventKey where
 data PageWriteRequest = PageWriteRequest {
       expectedStatus :: Maybe PageStatus
       , newStatus    :: PageStatus
-      , entries   :: [EventKey]
+      , entries      :: [EventKey]
 }
 
 -- Low level event store commands

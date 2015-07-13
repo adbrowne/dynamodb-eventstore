@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts          #-}
+{-# LANGUAGE OverloadedStrings         #-}
 {-# LANGUAGE RecordWildCards           #-}
 module DynamoDbEventStore.Testing where
 
@@ -6,28 +7,36 @@ import           Control.Applicative
 import           Control.Monad.Free
 import           Control.Monad.State
 import           Data.Int
+import qualified Data.List               as L
 import           Data.Map                (Map)
 import           Data.Maybe              (fromMaybe)
 import qualified Data.Map                as M
+import           Data.Monoid
 import qualified Data.ByteString         as BS
+import qualified Data.Text               as T
 import           EventStoreCommands
 import           Test.Tasty.QuickCheck
+import           TextShow
 
 type FakeEventTable = Map StreamId (Map Int64 (EventType, BS.ByteString, Maybe PageKey))
 type FakePageTable = Map PageKey (PageStatus, [EventKey])
+type Log = [T.Text]
+type FakeState = (FakeEventTable, FakePageTable, Log)
 
-type FakeState = (FakeEventTable, FakePageTable)
+getEventTable (a,_,_) = a
+getPageTable (_,a,_) = a
+getLog (_,_,a) = a
 
 emptyTestState :: FakeState
-emptyTestState = (M.empty, M.empty)
+emptyTestState = (M.empty, M.empty, [])
 
-writeEventToState :: (t -> t1) -> (t, t2) -> (t1, t2)
-writeEventToState f (eT, pT) =
-   (f eT, pT)
+writeEventToState :: (t -> t1) -> (t, t2, l) -> (t1, t2, l)
+writeEventToState f (eT, pT, l) =
+   (f eT, pT, l)
 
-writePageToState :: (t -> t2) -> (t1, t) -> (t1, t2)
-writePageToState f (eT, pT) =
-   (eT, f pT)
+writePageToState :: (t -> t2) -> (t1, t, l) -> (t1, t2, l)
+writePageToState f (eT, pT, l) =
+   (eT, f pT, l)
 
 writeEventToTable :: EventKey -> (EventType, BS.ByteString, Maybe PageKey) -> FakeEventTable -> FakeEventTable
 writeEventToTable (EventKey (sId, evtNumber)) v t =
@@ -57,9 +66,9 @@ lookupEventKey (EventKey (sId, evtNumber)) t =
 runCmd :: MonadState FakeState m => EventStoreCmd (m a) -> m a
 runCmd (Wait' n) = n ()
 runCmd (GetEvent' k f) =
-  f . (lookupEventKey k) =<< gets fst
+  f . (lookupEventKey k) =<< gets getEventTable
 runCmd (GetEventsBackward' k _ _ f) =
-  f . (reverse . (getEvents k)) =<< gets fst
+  f . (reverse . (getEvents k)) =<< gets getEventTable
     where
       getEvents (StreamId sId) table =
         let
@@ -69,7 +78,7 @@ runCmd (GetEventsBackward' k _ _ f) =
           return (RecordedEvent sId evtNumber d t)
 
 runCmd (WriteEvent' k t v n) = do
-  exists <- gets (lookupEventKey k . fst)
+  exists <- gets (lookupEventKey k . getEventTable)
   result <- writeEvent exists k t v
   n result
     where
@@ -83,7 +92,7 @@ runCmd (SetEventPage' k pk n) = do
   modify $ writeEventToState $ updateEvent f k
   n SetEventPageSuccess
 runCmd (ScanUnpagedEvents' n) = do
-  allItems <- gets (buildAllItems . fst)
+  allItems <- gets (buildAllItems . getEventTable)
   let unpaged = filter unpagedEntry allItems
   n $ fmap fst unpaged
   where
@@ -100,9 +109,9 @@ runCmd (ScanUnpagedEvents' n) = do
     unpagedEntry (_, Just _) = False
     unpagedEntry (_, Nothing) = True
 runCmd (GetPageEntry' k n) =
-  n =<< gets (M.lookup k . snd)
+  n =<< gets (M.lookup k . getPageTable)
 runCmd (WritePageEntry' k PageWriteRequest {..} n) = do
-  table <- gets snd
+  table <- gets getPageTable
   let entryStatus = fst <$> M.lookup k table
   let writeResult = writePage expectedStatus entryStatus table
   modify $ writePageToState (modifyPage writeResult)
@@ -124,10 +133,13 @@ runTest = iterM runCmd
 
 runCmdGen :: EventStoreCmd (StateT FakeState Gen a) -> StateT FakeState Gen a
 runCmdGen (Wait' n) = n ()
-runCmdGen (GetEvent' k f) =
-  f . (lookupEventKey k) =<< gets fst
+runCmdGen (GetEvent' k f) = do
+  eventTable <- gets getEventTable
+  let event = lookupEventKey k eventTable
+  writeLog ("GetEvent " <> showt k <> " " <> showt event)
+  f event
 runCmdGen (GetEventsBackward' k _ _ f) =
-  f . (reverse . (getEvents k)) =<< gets fst
+  f . (reverse . (getEvents k)) =<< gets getEventTable
     where
       getEvents (StreamId sId) table =
         let
@@ -137,7 +149,7 @@ runCmdGen (GetEventsBackward' k _ _ f) =
           return (RecordedEvent sId evtNumber d t)
 
 runCmdGen (WriteEvent' k t v n) = do
-  exists <- gets (lookupEventKey k . fst)
+  exists <- gets (lookupEventKey k . getEventTable)
   result <- writeEvent exists k t v
   n result
     where
@@ -149,9 +161,10 @@ runCmdGen (WriteEvent' k t v n) = do
 runCmdGen (SetEventPage' k pk n) = do
   let f (et, eb, _) = (et, eb, Just pk)
   modify $ writeEventToState $ updateEvent f k
+  writeLog ("SetEventPage: " <> (showt k) <> " " <> (showt pk))
   n SetEventPageSuccess
 runCmdGen (ScanUnpagedEvents' n) = do
-  allItems <- gets (buildAllItems . fst)
+  allItems <- gets (buildAllItems . getEventTable)
   let unpaged = filter unpagedEntry allItems
   toReturn <- lift (sublistOf (fmap fst unpaged))
   n toReturn
@@ -169,12 +182,13 @@ runCmdGen (ScanUnpagedEvents' n) = do
     unpagedEntry (_, Just _) = False
     unpagedEntry (_, Nothing) = True
 runCmdGen (GetPageEntry' k n) =
-  n =<< gets (M.lookup k . snd)
+  n =<< gets (M.lookup k . getPageTable)
 runCmdGen (WritePageEntry' k PageWriteRequest {..} n) = do
-  table <- gets snd
+  table <- gets getPageTable
   let entryStatus = fst <$> M.lookup k table
   let writeResult = writePage expectedStatus entryStatus table
   modify $ writePageToState (modifyPage writeResult)
+  writeLog "WritePageEntry"
   n $ fmap fst writeResult
     where
       doInsert = M.insert k (newStatus, entries)
@@ -187,8 +201,15 @@ runCmdGen (WritePageEntry' k PageWriteRequest {..} n) = do
       modifyPage :: Maybe (PageStatus, FakePageTable) -> FakePageTable -> FakePageTable
       modifyPage (Just (_, pT)) _ = pT
       modifyPage Nothing s = s
+
+writeLog :: T.Text -> StateT FakeState Gen ()
+writeLog msg = do
+  modify $ addToLog
+  where
+    addToLog (a, b, log) = (a, b, msg:log)
+
 runTestGen :: EventStoreCmdM a -> StateT FakeState Gen a
 runTestGen = iterM runCmdGen
 
 evalProgram :: EventStoreCmdM a -> IO a
-evalProgram program = return $ evalState (runTest program) (M.empty, M.empty)
+evalProgram program = return $ evalState (runTest program) (M.empty, M.empty, [])

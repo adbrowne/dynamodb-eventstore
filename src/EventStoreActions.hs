@@ -73,12 +73,13 @@ writeEventToPage key = do
 previousEventIsPaged :: EventKey -> EventStoreCmdM Bool
 previousEventIsPaged (EventKey (_, 0)) = return True
 previousEventIsPaged key = do
-  storedEvent <- getEvent' key
+  storedEvent <- getEvent' (getPrevKey key)
   return $ isPaged storedEvent
     where
       isPaged Nothing = False
       isPaged (Just(_,_,Just _)) = True
       isPaged (Just(_,_,Nothing)) = False
+      getPrevKey (EventKey (s, n)) = EventKey (s, n - 1)
 
 writePagesProgram :: Maybe Int -> EventStoreCmdM ()
 writePagesProgram Nothing = return ()

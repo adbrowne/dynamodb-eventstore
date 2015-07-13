@@ -46,13 +46,13 @@ toEventKey (PostEventRequest sId v _ _) =
   EventKey (StreamId sId, v)
 
 getEventsFromState s = do
-  (_, pagedKeys) <- (M.elems . snd) s
-  pagedKeys
+  (_, pagedKeys) <- (M.elems . getPageTable) s
+  reverse pagedKeys
 
 runActions :: [PostEventRequest] -> Gen FakeState
 runActions a = do
   s <- foldM runItem emptyTestState a
-  (_,s') <- runStateT (runTestGen (writePagesProgram $ Just 100)) s
+  (_,s') <- runStateT (runTestGen (writePagesProgram $ Just 1000)) s
   return s'
 
 prop_AllEventsAppearInSubscription :: SingleStreamValidActions -> Property
@@ -63,9 +63,7 @@ prop_AllEventsAppearInSubscription (SingleStreamValidActions actions) =
 prop_GlobalFeedPreservesEventOrdering :: SingleStreamValidActions -> Property
 prop_GlobalFeedPreservesEventOrdering (SingleStreamValidActions actions) =
   forAll (runActions actions) $ \s ->
-    whenFail
-       (putStrLn $ show s) 
-       (getEventsFromState s === map toEventKey actions)
+    (getEventsFromState s === map toEventKey actions)
 
 tests :: [TestTree]
 tests = [
