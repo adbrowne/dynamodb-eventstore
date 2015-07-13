@@ -137,6 +137,7 @@ runCmdGen (GetEventsBackward' k _ _ f) =
           return (RecordedEvent sId evtNumber d t)
 
 runCmdGen (WriteEvent' k t v n) = do
+  doWork <- (lift $ elements [True, False])
   exists <- gets (lookupEventKey k . fst)
   result <- writeEvent exists k t v
   n result

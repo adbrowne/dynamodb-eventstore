@@ -3,6 +3,7 @@
 module DynamoDbEventStore.EventStoreActionTests (tests) where
 
 import           Control.Monad.State
+import           Control.Monad
 import qualified Data.ByteString.Lazy       as BL
 import qualified Data.List                  as L
 import qualified Data.Map                   as M
@@ -17,11 +18,10 @@ import           Test.Tasty.QuickCheck
 import qualified Test.QuickCheck.Gen        as QC
 import qualified Test.QuickCheck.Random     as QC
 
-runItem :: FakeState -> PostEventRequest -> FakeState
-runItem fakeState (PostEventRequest sId v d et) =
-  let
-     (_,s) = runState (runTest writeItem) fakeState
-  in s
+runItem :: FakeState -> PostEventRequest -> Gen FakeState
+runItem fakeState (PostEventRequest sId v d et) = do
+  (_,s) <- runStateT (runTestGen writeItem) fakeState
+  return s
   where
       writeItem =
         writeEvent' (EventKey (StreamId sId,v))
@@ -47,7 +47,7 @@ toEventKey (PostEventRequest sId v _ _) =
 
 runActions :: [PostEventRequest] -> Gen ([EventKey])
 runActions a = do
-  let s = L.foldl' runItem emptyTestState a
+  s <- foldM runItem emptyTestState a
   (_,s') <- runStateT (runTestGen (writePagesProgram $ Just 100)) s
   return $ events s'
   where
