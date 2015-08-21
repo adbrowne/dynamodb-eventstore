@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RecordWildCards           #-}
+{-# LANGUAGE TypeFamilies               #-}
 
 module DynamoDbEventStore.DynamoInterpreter where
 
@@ -234,6 +235,8 @@ evalProgram program = do
 runProgram :: T.Text -> EventStoreCmdM a -> IO a
 runProgram = runTest
 
+--runCommand :: (NormalQuery r, Transaction r a, AsMemoryResponse a, MonadIO m) => 
+--                r -> m (MemoryResponse a)
 runCommand r = do
     cfg <- Aws.baseConfiguration
     let cfg' = DdbConfiguration (Region "127.0.0.1" "us-west-2") HTTP (Just 8000)

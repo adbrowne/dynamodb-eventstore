@@ -7,7 +7,7 @@
 
 module EventStoreCommands where
 
-import           Control.Applicative
+
 import           Control.Monad
 import           Control.Monad.Free
 import           Control.Monad.Free.TH
@@ -18,7 +18,7 @@ import           Data.Int
 import qualified Data.Text             as T
 import qualified Data.Text.Encoding    as T
 import           GHC.Generics
-import           TextShow
+
 import           TextShow.TH
 
 newtype StreamId = StreamId T.Text deriving (Ord, Eq, Show)

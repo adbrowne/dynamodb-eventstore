@@ -1,0 +1,8 @@
+flags: {}
+packages:
+- '.'
+- location:
+    git: git@github.com:aristidb/aws.git
+    commit: a6f062efe6c78d8d25609f6cc4fe27d428e5ef65
+extra-deps: []
+resolver: lts-3.1

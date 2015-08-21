@@ -2,10 +2,7 @@
 
 module Webserver where
 
-import           Control.Applicative
 import           Web.Scotty
-
-import           Data.Monoid               (mconcat)
 
 import           Control.Arrow             (left)
 import           Data.Attoparsec.Text.Lazy
