@@ -1,4 +1,4 @@
-language: sh
+language: haskell
 env:
   matrix:
   - AWS_ACCESS_KEY_ID=foo AWS_SECRET_ACCESS_KEY=bar
@@ -7,16 +7,16 @@ env:
   - secure: TIZz9TXAgVRQBMbJBTY7AiFfvFMTL7yaEK8JtpLdyn9V0vy6X9i2O/3q146izerl2aJJ+2RMrZKTT//Q41gHS8ly+RWDxhn3uimH5MQCJzvTY6e7MJa0ArRt5ESAYDV1+E+PZaCu9AyzMVTXmADkx5OTR/zwvlP/R8E0OKJdoMQ=
   - secure: ZwDeOXPwFo4QaTb/x3q+qfMSjKTqxJP1VOjHJXc+6V9hSM2WHRf8Snwf/cEwx3qvQrsIlqK88Se63DCUcz6NSnlGus0O+u4+2pYk4vAjhOpf3C+tHEEUwTIZsD6FS94LTDAv/3x0ABFpqNr0uBddP7YBXlTQ6vkvrox3Bu9iflw=
 before_install:
-  - git clone https://github.com/mietek/halcyon.git "$TRAVIS_BUILD_DIR/halcyon"
-  - export HALCYON_BASE="$TRAVIS_BUILD_DIR/halcyon"
+  - wget -q -O- http://download.fpcomplete.com/ubuntu/fpco.key | sudo apt-key add -
+  - echo 'deb http://download.fpcomplete.com/ubuntu/precise stable main' | sudo tee /etc/apt/sources.list.d/fpco.list
+  - sudo apt-get update
+  - sudo apt-get install stack -y
 install:
-  - $TRAVIS_BUILD_DIR/halcyon/halcyon build
-  - $TRAVIS_BUILD_DIR/halcyon/halcyon paths > halcyon-env
-  - ln -sf $TRAVIS_BUILD_DIR/halcyon/sandbox/cabal.sandbox.config cabal.sandbox.config
+  - stack setup
 before_script:
 - ./scripts/run-dynamodb-local.sh
 script:
-  - source halcyon-env && cabal configure --enable-tests && cabal test
+  - stack test
 deploy:
   provider: releases
   user: adbrowne
