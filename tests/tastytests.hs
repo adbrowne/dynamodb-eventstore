@@ -6,6 +6,7 @@ import qualified BasicOperationTests     as CommandTests
 import           DynamoDbEventStore.Testing
 import           DynamoDbEventStore.EventStoreActionTests as ActionTests
 import qualified DynamoDbEventStore.DynamoInterpreter as Di
+import qualified DynamoDbEventStore.AmazonkaInterpreter as Ai
 
 import           Test.Tasty
 import           Test.Tasty.Hspec
@@ -22,6 +23,7 @@ main = do
     testGroup "Tests"
       [ testGroup "Command Unit Tests" (CommandTests.tests evalProgram),
         testGroup "Command Tests against Dynamo" (CommandTests.tests Di.evalProgram),
+        testGroup "Command Tests against Dynamo - Amazonka" (CommandTests.tests Ai.evalProgram),
         testGroup "Action Tests" ActionTests.tests,
         postEventSpec',
         getStreamSpec',

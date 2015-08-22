@@ -233,9 +233,15 @@ buildTable tableName = do
     globalKeySchema = HashOnly fieldPagingRequired,
     globalProjection = ProjectKeysOnly,
     globalProvisionedThroughput = ProvisionedThroughput 1 1 } -}
+  let attributeDefinitions = [
+        attributeDefinition fieldStreamId S,
+        attributeDefinition fieldEventNumber N ] --,
+--        attributeDefinition fieldPagingRequired S ]
+
   let req0 = createTable tableName
          (keySchemaElement fieldStreamId Hash :| [ keySchemaElement fieldEventNumber Range ])
          (provisionedThroughput 1 1)
+         & (set ctAttributeDefinitions attributeDefinitions)
 {-        [AttributeDefinition fieldStreamId AttrString
          , AttributeDefinition fieldEventNumber AttrNumber
          , AttributeDefinition fieldPagingRequired AttrString]
