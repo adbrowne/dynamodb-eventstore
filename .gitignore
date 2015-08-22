@@ -20,3 +20,5 @@ cabal.config
 scripts/dynamodb_local_latest/
 halcyon-env
 TAGS
+tags
+.stack-work/

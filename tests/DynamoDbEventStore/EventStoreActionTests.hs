@@ -2,8 +2,8 @@
 
 module DynamoDbEventStore.EventStoreActionTests (tests) where
 
-import           Control.Monad.State
 import           Control.Monad
+import           Control.Monad.State
 import qualified Data.ByteString.Lazy       as BL
 import qualified Data.List                  as L
 import qualified Data.Map                   as M

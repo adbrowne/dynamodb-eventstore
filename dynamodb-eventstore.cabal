@@ -21,7 +21,8 @@ library
   exposed-modules:     Webserver,
                        EventStoreCommands,
                        EventStoreActions,
-                       DynamoDbEventStore.DynamoInterpreter
+                       DynamoDbEventStore.DynamoInterpreter,
+                       DynamoDbEventStore.AmazonkaInterpreter
   -- other-extensions:    
   build-depends:       base >=4.8 && <4.9,
                        scotty >= 0.9,
@@ -38,7 +39,15 @@ library
                        aeson >= 0.8,
                        random >= 1.1,
                        transformers >= 0.4,
-                       aws >= 0.12.1
+                       aws >= 0.12.1,
+                       unordered-containers,
+                       semigroups,
+                       exceptions,
+                       lens,
+                       amazonka >= 1.0,
+                       amazonka-core >= 1.0,
+                       amazonka-dynamodb >= 1.0,
+                       resourcet
   hs-source-dirs:      src
   default-language:    Haskell2010
 
@@ -51,6 +60,7 @@ executable web
                        random >= 1.1,
                        transformers >= 0.4
   default-language:    Haskell2010
+  hs-source-dirs:      web
   main-is:             Main.hs
 
 executable client

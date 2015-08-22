@@ -4,5 +4,9 @@ packages:
 - location:
     git: https://github.com/aristidb/aws.git    
     commit: a6f062efe6c78d8d25609f6cc4fe27d428e5ef65
-extra-deps: []
+  extra-dep: true
+extra-deps:
+- amazonka-1.1.0
+- amazonka-core-1.1.0
+- amazonka-dynamodb-1.1.0
 resolver: lts-3.1
