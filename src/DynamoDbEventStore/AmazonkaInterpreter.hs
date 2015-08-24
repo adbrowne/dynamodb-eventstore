@@ -167,6 +167,19 @@ runCmd tn (GetEventsBackward' (StreamId streamId) _ _ n) =
                 & (set qKeyConditionExpression (Just $ fieldStreamId <> " = :streamId"))
         let items :: [HM.HashMap T.Text AttributeValue] = view qrsItems resp
         n $ (fmap toRecordedEvent) items
+runCmd tn (ScanUnpagedEvents' n) =
+  scanUnpaged
+    where
+      toEntry :: HM.HashMap T.Text AttributeValue -> EventKey
+      toEntry i = fromJust $ do
+        streamId <- view (ix fieldStreamId . avS) i
+        eventNumber <- view (ix fieldEventNumber . avN) i >>= readMay
+        return (EventKey (StreamId streamId, eventNumber))
+      scanUnpaged = do
+        resp <- runCommand $
+             scan tn
+             & (set sIndexName $ Just unpagedIndexName)
+        n $ fmap toEntry (view srsItems resp)
 runCmd tn (SetEventPage' eventKey pk n) =
   setEventPage
     where
@@ -184,23 +197,6 @@ runCmd tn (SetEventPage' eventKey pk n) =
         _ <- runCommand req0
         n SetEventPageSuccess
 {-
-runCmd tn (ScanUnpagedEvents' n) =
-  catch scanUnpaged exnHandler
-    where
-      toEntry :: Item -> EventKey
-      toEntry i = fromJust $ do
-        streamIdDValue <- M.lookup fieldStreamId i
-        streamId <- fromValue streamIdDValue
-        eventNumberDValue <- M.lookup fieldEventNumber i
-        eventNumber <- fromValue eventNumberDValue
-        return (EventKey (StreamId streamId, eventNumber))
-      -- todo: this function is not complete
-      exnHandler (DdbError{}) = n []
-      scanUnpaged = do
-        let req0 = scan tn
-        let req1 = req0 { sIndex = Just unpagedIndexName }
-        res0 <- runCommand req1
-        n $ (V.toList . fmap toEntry) (srItems res0)
 runCmd tn (GetPageEntry' pageKey n) = do
   let key = getDynamoKeyForPage pageKey
   let req0 = getItem tn key
@@ -241,20 +237,21 @@ runTest tableName = iterM $ runCmd tableName
 
 buildTable :: T.Text -> IO ()
 buildTable tableName = do
-{-  let unpagedGlobalSecondary = GlobalSecondaryIndex {
-    globalIndexName = unpagedIndexName,
-    globalKeySchema = HashOnly fieldPagingRequired,
-    globalProjection = ProjectKeysOnly,
-    globalProvisionedThroughput = ProvisionedThroughput 1 1 } -}
+  let unpagedGlobalSecondary = globalSecondaryIndex
+          unpagedIndexName
+          (keySchemaElement fieldPagingRequired Hash :| [])
+          (set pProjectionType (Just KeysOnly) projection)
+          (provisionedThroughput 1 1)
   let attributeDefinitions = [
         attributeDefinition fieldStreamId S,
-        attributeDefinition fieldEventNumber N ] --,
---        attributeDefinition fieldPagingRequired S ]
+        attributeDefinition fieldEventNumber N,
+        attributeDefinition fieldPagingRequired S ]
 
   let req0 = createTable tableName
          (keySchemaElement fieldStreamId Hash :| [ keySchemaElement fieldEventNumber Range ])
          (provisionedThroughput 1 1)
          & (set ctAttributeDefinitions attributeDefinitions)
+         & (set ctGlobalSecondaryIndexes [unpagedGlobalSecondary])
 {-        [AttributeDefinition fieldStreamId AttrString
          , AttributeDefinition fieldEventNumber AttrNumber
          , AttributeDefinition fieldPagingRequired AttrString]
