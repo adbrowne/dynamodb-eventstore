@@ -196,19 +196,19 @@ runCmd tn (SetEventPage' eventKey pk n) =
               & (set uiConditionExpression conditionExpression)
         _ <- runCommand req0
         n SetEventPageSuccess
-{-
 runCmd tn (GetPageEntry' pageKey n) = do
   let key = getDynamoKeyForPage pageKey
-  let req0 = getItem tn key
+  let req0 = getItem tn & (set giKey key)
   resp0 <- runCommand req0
   n $ getResult resp0
   where
     getResult :: GetItemResponse -> Maybe (PageStatus, [EventKey])
     getResult r = do
-      i <- girItem r
+      let i = view girsItem r
       pageStatus <- readItemJson fieldPageStatus i
       eventKeys <- readItemJson fieldEventKeys i
       return (pageStatus, eventKeys)
+{-
 runCmd tn (WritePageEntry' (partition, page)
            PageWriteRequest {..} n) =
   catch writePageEntry exnHandler
@@ -252,12 +252,7 @@ buildTable tableName = do
          (provisionedThroughput 1 1)
          & (set ctAttributeDefinitions attributeDefinitions)
          & (set ctGlobalSecondaryIndexes [unpagedGlobalSecondary])
-{-        [AttributeDefinition fieldStreamId AttrString
-         , AttributeDefinition fieldEventNumber AttrNumber
-         , AttributeDefinition fieldPagingRequired AttrString]
-        (HashAndRange fieldStreamId fieldEventNumber)
-        (ProvisionedThroughput 1 1) -}
-  _ <- runCommand req0 -- { createGlobalSecondaryIndexes = [unpagedGlobalSecondary] }
+  _ <- runCommand req0
   return ()
 
 evalProgram :: EventStoreCmdM a -> IO a
