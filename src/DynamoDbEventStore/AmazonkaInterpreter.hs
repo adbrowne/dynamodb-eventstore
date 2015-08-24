@@ -88,17 +88,11 @@ getDynamoKeyForPage (partition, pageNumber) =
 readMay :: Read a => T.Text -> Maybe a
 readMay = Safe.readMay . T.unpack
 {- 
-readItemJson :: Ord k => FromJSON b => k -> Map k AttributeValue -> Maybe b
-readItemJson fieldName i =
-  getItemField fieldName i >>= decodeStrict
 
 getItemField :: (DynVal b, Ord k) => k -> Map k DValue -> Maybe b
 getItemField fieldName i =
   M.lookup fieldName i >>= fromValue
 
-encodeStrictJson :: ToJSON s => s -> BS.ByteString
-encodeStrictJson value =
-  BL.toStrict . encode $ value
 
 attrJson :: ToJSON s => T.Text -> s -> Attribute
 attrJson name value =
@@ -109,6 +103,17 @@ attrJson name value =
 itemAttribute :: T.Text -> Lens' AttributeValue (Maybe v) -> v -> (T.Text, AttributeValue)
 itemAttribute key lens value =
   (key, set lens (Just value) attributeValue)
+
+readItemJson :: FromJSON b => T.Text -> HM.HashMap T.Text AttributeValue -> Maybe b
+readItemJson fieldName i =
+  view (ix fieldName . avB) i >>= decodeStrict
+
+attrJson :: ToJSON s => s -> AttributeValue
+attrJson value = set avB (Just (encodeStrictJson value)) attributeValue
+
+encodeStrictJson :: ToJSON s => s -> BS.ByteString
+encodeStrictJson value =
+  BL.toStrict . encode $ value
 
 runCmd :: T.Text -> EventStoreCmd (IO a) -> IO a
 runCmd _ (Wait' n) = n ()
@@ -123,8 +128,8 @@ runCmd tn (GetEvent' eventKey n) = do
       let i = view girsItem r
       et <- view (ix fieldEventType . avS) i
       b <- view (ix fieldBody . avB) i
-      --let pageKey = readItemJson fieldPageKey i
-      return (et, b, Nothing) -- pageKey)
+      let pageKey = readItemJson fieldPageKey i
+      return (et, b, pageKey)
 runCmd tn (WriteEvent' (EventKey (StreamId streamId, evtNumber)) t d n) =
   catches writeItem [handler _ConditionalCheckFailedException (\_ -> n EventExists)] 
     where
@@ -137,12 +142,10 @@ runCmd tn (WriteEvent' (EventKey (StreamId streamId, evtNumber)) t d n) =
                   itemAttribute fieldPagingRequired avS (T.pack $ show time),
                   itemAttribute fieldBody avB d
                 ]
-        let conditionExpression = Just "attribute_not_exists(#fieldEventNumber)"
-        let expressionAttributeNames = HM.fromList [("#fieldEventNumber", fieldEventNumber)]
+        let conditionExpression = Just $ "attribute_not_exists(" <> fieldEventNumber <> ")"
         let req0 =
               putItem tn
               & (set piItem item)
-              & (set piExpressionAttributeNames expressionAttributeNames)
               & (set piConditionExpression conditionExpression)
         _ <- runCommand req0
         n WriteSuccess
@@ -164,23 +167,23 @@ runCmd tn (GetEventsBackward' (StreamId streamId) _ _ n) =
                 & (set qKeyConditionExpression (Just $ fieldStreamId <> " = :streamId"))
         let items :: [HM.HashMap T.Text AttributeValue] = view qrsItems resp
         n $ (fmap toRecordedEvent) items
-{-
 runCmd tn (SetEventPage' eventKey pk n) =
-  catch setEventPage exnHandler
+  setEventPage
     where
-      -- todo: this function is not complete
-      exnHandler (DdbError{}) = n SetEventPageError
       setEventPage = do
-        let conditions = Conditions CondAnd [ Condition fieldPageKey IsNull ]
+        let conditionExpression = Just $ "attribute_not_exists(" <> fieldPageKey <> ")"
         let key = getDynamoKeyForEvent eventKey
-        let pageKeyAttribute = attrJson fieldPageKey pk
-        let updatePageKey = au pageKeyAttribute
-        let pagingReqAttr = attrAs text fieldPagingRequired "unused"
-        let updatePagingRequired = AttributeUpdate { auAttr= pagingReqAttr, auAction = UDelete }
-        let req0 = updateItem tn key [updatePageKey, updatePagingRequired]
-        let req1 = req0 { uiExpect = conditions }
-        _ <- runCommand req1
+        let updateExpression = Just $ "SET " <> fieldPageKey <> "=:pageKey REMOVE " <> fieldPagingRequired
+        let expressionAttributeValues = HM.fromList [(":pageKey", attrJson pk)]
+        let req0 =
+              updateItem tn
+              & (set uiKey key)
+              & (set uiExpressionAttributeValues expressionAttributeValues)
+              & (set uiUpdateExpression updateExpression)
+              & (set uiConditionExpression conditionExpression)
+        _ <- runCommand req0
         n SetEventPageSuccess
+{-
 runCmd tn (ScanUnpagedEvents' n) =
   catch scanUnpaged exnHandler
     where
