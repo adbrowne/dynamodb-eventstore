@@ -5,8 +5,12 @@ packages:
     git: https://github.com/aristidb/aws.git    
     commit: a6f062efe6c78d8d25609f6cc4fe27d428e5ef65
   extra-dep: true
-extra-deps:
-- amazonka-1.1.0
-- amazonka-core-1.1.0
-- amazonka-dynamodb-1.1.0
+- location: 
+    git: https://github.com/adbrowne/amazonka.git
+    commit: 717610206e0b9e97d370e8099a2ce2f9d6137860
+  extra-dep: true
+  subdirs:
+  - core
+  - amazonka
+  - amazonka-dynamodb
 resolver: lts-3.1

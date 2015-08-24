@@ -3,12 +3,13 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RecordWildCards           #-}
 {-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE RankNTypes               #-}
 
 module DynamoDbEventStore.AmazonkaInterpreter where
 
 import           Data.Aeson
 import           Data.Time.Clock
-import           Control.Exception
+import           Control.Exception.Lens
 import           Data.Monoid
 import           Control.Monad.Free
 import           Control.Monad.Catch
@@ -27,6 +28,7 @@ import qualified Data.Vector             as V
 import           TextShow
 import           System.Random
 import           EventStoreCommands
+import           System.IO (stdout)
 --import           Aws
 --import           Aws.Core
 --import           Aws.DynamoDb.Commands
@@ -35,6 +37,7 @@ import           EventStoreCommands
 import Network.AWS
 import Network.AWS.DynamoDB
 import Control.Monad.Trans.Resource
+import Control.Monad.Trans.AWS (newLogger)
 
 fieldStreamId :: T.Text
 fieldStreamId = "streamId"
@@ -98,6 +101,11 @@ attrJson name value =
   attr name (encodeStrictJson value)
 
 -}
+
+itemAttribute :: T.Text -> Lens' AttributeValue (Maybe v) -> v -> (T.Text, AttributeValue)
+itemAttribute key lens value =
+  (key, set lens (Just value) attributeValue)
+
 runCmd :: T.Text -> EventStoreCmd (IO a) -> IO a
 runCmd _ (Wait' n) = n ()
 runCmd tn (GetEvent' eventKey n) = do
@@ -113,27 +121,31 @@ runCmd tn (GetEvent' eventKey n) = do
       b <- view (ix fieldBody . avB) i
       --let pageKey = readItemJson fieldPageKey i
       return (et, b, Nothing) -- pageKey)
-{-
 runCmd tn (WriteEvent' (EventKey (StreamId streamId, evtNumber)) t d n) =
-  catch writeItem exnHandler
+  catches writeItem [handler _ConditionalCheckFailedException (\_ -> n EventExists)] 
     where
       -- todo: this function is not complete
-      exnHandler (DdbError { ddbErrCode = ConditionalCheckFailedException }) = n EventExists
-      exnHandler (DdbError {..}) = error $ show ddbErrMsg
+      --exnHandler (DdbError { ddbErrCode = ConditionalCheckFailedException }) = n EventExists
+      --exnHandler (DdbError {..}) = error $ show ddbErrMsg
       writeItem = do
         time <- getCurrentTime
-        let i = item [
-                  attrAs text fieldStreamId streamId
-                  , attrAs int fieldEventNumber (toInteger evtNumber)
-                  , attrAs text fieldEventType t
-                  , attrAs text fieldPagingRequired (T.pack $ show time)
-                  , attr fieldBody d
+        let item = HM.fromList [
+                  itemAttribute fieldStreamId avS streamId,
+                  itemAttribute fieldEventNumber avN (showt evtNumber),
+                  itemAttribute fieldEventType avS t,
+                  itemAttribute fieldPagingRequired avS (T.pack $ show time),
+                  itemAttribute fieldBody avB d
                 ]
-        let conditions = Conditions CondAnd [ Condition fieldEventNumber IsNull ]
-        let req0 = putItem tn i
-        let req1 = req0 { piExpect = conditions }
-        _ <- runCommand req1
+        let conditionExpression = Just "attribute_not_exists(#fieldEventNumber)"
+        let expressionAttributeNames = HM.fromList [("#fieldEventNumber", fieldEventNumber)]
+        let req0 =
+              putItem tn
+              & (set piItem item)
+              & (set piExpressionAttributeNames expressionAttributeNames)
+              & (set piConditionExpression conditionExpression)
+        _ <- runCommand req0
         n WriteSuccess
+{-
 runCmd tn (SetEventPage' eventKey pk n) =
   catch setEventPage exnHandler
     where
@@ -226,7 +238,7 @@ runCmd tn (WritePageEntry' (partition, page)
 runTest :: T.Text -> EventStoreCmdM a -> IO a
 runTest tableName = iterM $ runCmd tableName
 
-buildTable :: (MonadCatch m, MonadIO m, MonadBaseControl IO m) => T.Text -> m ()
+buildTable :: T.Text -> IO ()
 buildTable tableName = do
 {-  let unpagedGlobalSecondary = GlobalSecondaryIndex {
     globalIndexName = unpagedIndexName,
@@ -260,7 +272,17 @@ evalProgram program = do
 runProgram :: T.Text -> EventStoreCmdM a -> IO a
 runProgram = runTest
 
+redirect :: Maybe (BS.ByteString, Int) -> Endpoint -> Endpoint
+redirect Nothing       = id
+redirect (Just (h, p)) =
+      (endpointHost   .~ h)
+    . (endpointPort   .~ p)
+    . (endpointSecure .~ (p == 443))
+
+runCommand :: forall a. (AWSRequest a) => a -> IO (Rs a)
 runCommand req = do
+    myLogger <- newLogger Trace stdout
     env <- newEnv Sydney (FromEnv "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" Nothing)
-    runResourceT $ runAWS env $ do
+    runResourceT $ runAWS (env) $ do -- & envLogger .~ myLogger) $ do
+      endpoint (redirect  $ Just ("localhost", 8000)) $ do
         send req

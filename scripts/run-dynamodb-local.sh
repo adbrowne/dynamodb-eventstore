@@ -13,4 +13,4 @@ fi
 DYNAMO_LIB_PATH="$DYNAMO_DESTINATION/DynamoDBLocal_lib"
 DYNAMO_JAR_PATH="$DYNAMO_DESTINATION/DynamoDBLocal.jar"
 
-java -Djava.library.path=$DYNAMO_LIB_PATH -jar $DYNAMO_JAR_PATH &
+java -Djava.library.path=$DYNAMO_LIB_PATH -jar $DYNAMO_JAR_PATH
