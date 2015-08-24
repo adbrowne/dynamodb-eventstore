@@ -29,6 +29,7 @@ import           TextShow
 import           System.Random
 import           EventStoreCommands
 import           System.IO (stdout)
+import qualified Safe
 --import           Aws
 --import           Aws.Core
 --import           Aws.DynamoDb.Commands
@@ -83,6 +84,9 @@ getDynamoKeyForPage (partition, pageNumber) =
   in
     getDynamoKey hashKey 1
 
+-- from http://haddock.stackage.org/lts-3.2/basic-prelude-0.5.0/src/BasicPrelude.html#readMay
+readMay :: Read a => T.Text -> Maybe a
+readMay = Safe.readMay . T.unpack
 {- 
 readItemJson :: Ord k => FromJSON b => k -> Map k AttributeValue -> Maybe b
 readItemJson fieldName i =
@@ -124,9 +128,6 @@ runCmd tn (GetEvent' eventKey n) = do
 runCmd tn (WriteEvent' (EventKey (StreamId streamId, evtNumber)) t d n) =
   catches writeItem [handler _ConditionalCheckFailedException (\_ -> n EventExists)] 
     where
-      -- todo: this function is not complete
-      --exnHandler (DdbError { ddbErrCode = ConditionalCheckFailedException }) = n EventExists
-      --exnHandler (DdbError {..}) = error $ show ddbErrMsg
       writeItem = do
         time <- getCurrentTime
         let item = HM.fromList [
@@ -145,6 +146,25 @@ runCmd tn (WriteEvent' (EventKey (StreamId streamId, evtNumber)) t d n) =
               & (set piConditionExpression conditionExpression)
         _ <- runCommand req0
         n WriteSuccess
+runCmd tn (GetEventsBackward' (StreamId streamId) _ _ n) =
+  getBackward
+    where
+      toRecordedEvent :: HM.HashMap T.Text AttributeValue -> RecordedEvent
+      toRecordedEvent i = fromJust $ do
+        sId <- view (ix fieldStreamId . avS) i
+        eventNumber <- view (ix fieldEventNumber . avN) i >>= readMay
+        et <- view (ix fieldEventType . avS) i
+        b <- view (ix fieldBody . avB) i
+        return $ RecordedEvent sId eventNumber b et
+      getBackward = do
+        resp <- runCommand $
+                query tn
+                & (set qScanIndexForward (Just False))
+                & (set qExpressionAttributeValues (HM.fromList [(":streamId",set avS (Just streamId) attributeValue)]))
+                & (set qExpressionAttributeNames (HM.fromList [("#fieldStreamId", fieldStreamId)]))
+                & (set qKeyConditionExpression (Just $ "#fieldStreamId = :streamId"))
+        let items :: [HM.HashMap T.Text AttributeValue] = view qrsItems resp
+        n $ (fmap toRecordedEvent) items
 {-
 runCmd tn (SetEventPage' eventKey pk n) =
   catch setEventPage exnHandler
@@ -162,27 +182,6 @@ runCmd tn (SetEventPage' eventKey pk n) =
         let req1 = req0 { uiExpect = conditions }
         _ <- runCommand req1
         n SetEventPageSuccess
-runCmd tn (GetEventsBackward' (StreamId streamId) _ _ n) =
-  catch getBackward exnHandler
-    where
-      toRecordedEvent :: Item -> RecordedEvent
-      toRecordedEvent i = fromJust $ do
-        streamIdDValue <- M.lookup fieldStreamId i
-        sId <- fromValue streamIdDValue
-        eventNumberDValue <- M.lookup fieldEventNumber i
-        eventNumber <- fromValue eventNumberDValue
-        et <- getItemField fieldEventType i
-        b <- getItemField fieldBody i
-        return $ RecordedEvent sId eventNumber b et
-      -- todo: this function is not complete
-      exnHandler (DdbError{}) = n []
-      getBackward = do
-        let streamIdAttr = attrAs text fieldStreamId streamId
-        let slice = Slice streamIdAttr Nothing
-        let req0 = query tn slice
-        let req1 = req0 { qForwardScan = False }
-        res0 <- runCommand req1
-        n $ (V.toList . fmap toRecordedEvent) (qrItems res0)
 runCmd tn (ScanUnpagedEvents' n) =
   catch scanUnpaged exnHandler
     where
