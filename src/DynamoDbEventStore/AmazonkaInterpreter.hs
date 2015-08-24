@@ -161,8 +161,7 @@ runCmd tn (GetEventsBackward' (StreamId streamId) _ _ n) =
                 query tn
                 & (set qScanIndexForward (Just False))
                 & (set qExpressionAttributeValues (HM.fromList [(":streamId",set avS (Just streamId) attributeValue)]))
-                & (set qExpressionAttributeNames (HM.fromList [("#fieldStreamId", fieldStreamId)]))
-                & (set qKeyConditionExpression (Just $ fieldStreamId </> " = :streamId"))
+                & (set qKeyConditionExpression (Just $ fieldStreamId <> " = :streamId"))
         let items :: [HM.HashMap T.Text AttributeValue] = view qrsItems resp
         n $ (fmap toRecordedEvent) items
 {-
