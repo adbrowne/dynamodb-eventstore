@@ -110,9 +110,9 @@ runCmd :: T.Text -> EventStoreCmd (IO a) -> IO a
 runCmd _ (Wait' n) = n ()
 runCmd tn (GetEvent' eventKey n) = do
   let key = getDynamoKeyForEvent eventKey
-  let req0 = (getItem tn :: GetItem) & (set giKey key)
-  resp0 <- runCommand req0
-  n $ getResult resp0
+  let req = (getItem tn) & (set giKey key)
+  resp <- runCommand req
+  n $ getResult resp
   where
     getResult :: GetItemResponse -> EventReadResult
     getResult r = do
