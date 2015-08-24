@@ -208,30 +208,33 @@ runCmd tn (GetPageEntry' pageKey n) = do
       pageStatus <- readItemJson fieldPageStatus i
       eventKeys <- readItemJson fieldEventKeys i
       return (pageStatus, eventKeys)
-{-
 runCmd tn (WritePageEntry' (partition, page)
            PageWriteRequest {..} n) =
-  catch writePageEntry exnHandler
+  catches writePageEntry [handler _ConditionalCheckFailedException (\_ -> n Nothing)]
     where
-      -- todo: this function is not complete
-      exnHandler (DdbError { ddbErrCode = ConditionalCheckFailedException }) = n Nothing
-      buildConditions Nothing =
-        Conditions CondAnd [ Condition fieldStreamId IsNull ]
-      buildConditions (Just expectedStatus') =
-        Conditions CondAnd [ Condition fieldPageStatus (DEq $ DBinary (encodeStrictJson expectedStatus')) ]
+      addConditions Nothing req =
+            req
+            & (set piConditionExpression (Just $ "attribute_not_exists(" <> fieldEventNumber <> ")"))
+      addConditions (Just expectedStatus') req =
+        let
+            attributeValues = HM.fromList [(":expectedStatus", attrJson expectedStatus')]
+            conditionExpression = fieldPageStatus <> "= :expectedStatus"
+        in
+            req
+            & (set piConditionExpression (Just conditionExpression))
+            & (set piExpressionAttributeValues attributeValues)
       writePageEntry = do
-        let i = item [
-                  attrAs text fieldStreamId (getPagePartitionStreamId partition page)
-                  , attrAs int fieldEventNumber 1
-                  , attrJson fieldPageStatus newStatus
-                  , attrJson fieldEventKeys entries
+        let item = HM.fromList [
+                  itemAttribute fieldStreamId avS (getPagePartitionStreamId partition page),
+                  itemAttribute fieldEventNumber avN "1",
+                  (fieldPageStatus, attrJson newStatus),
+                  (fieldEventKeys, attrJson entries)
                 ]
-        let conditions = buildConditions expectedStatus
-        let req0 = putItem tn i
-        let req1 = req0 { piExpect = conditions }
+        let req0 = putItem tn
+                   & (set piItem item)
+        let req1 = addConditions expectedStatus req0
         _ <- runCommand req1
         n $ Just newStatus
--}
 runTest :: T.Text -> EventStoreCmdM a -> IO a
 runTest tableName = iterM $ runCmd tableName
 
