@@ -1,4 +1,5 @@
-language: haskell
+sudo: false
+language: c
 env:
   matrix:
   - AWS_ACCESS_KEY_ID=foo AWS_SECRET_ACCESS_KEY=bar
@@ -6,17 +7,22 @@ env:
   - secure: PkZAZK7kF2PPl8Ej1pAXWFJ4344EA3tOKvgPpwyjpccApzNnMGnWpIF6HUphHIH74MgLCV1eOlGYPUcsvJ2T17yEMfrdTfRsT45Aa/xqYvVlQP/rjosAypxCtB+CB08bAyG8auclDYdT/uukrqG35YPdm8GflFTVjlEI6FZEaS4=
   - secure: TIZz9TXAgVRQBMbJBTY7AiFfvFMTL7yaEK8JtpLdyn9V0vy6X9i2O/3q146izerl2aJJ+2RMrZKTT//Q41gHS8ly+RWDxhn3uimH5MQCJzvTY6e7MJa0ArRt5ESAYDV1+E+PZaCu9AyzMVTXmADkx5OTR/zwvlP/R8E0OKJdoMQ=
   - secure: ZwDeOXPwFo4QaTb/x3q+qfMSjKTqxJP1VOjHJXc+6V9hSM2WHRf8Snwf/cEwx3qvQrsIlqK88Se63DCUcz6NSnlGus0O+u4+2pYk4vAjhOpf3C+tHEEUwTIZsD6FS94LTDAv/3x0ABFpqNr0uBddP7YBXlTQ6vkvrox3Bu9iflw=
+addons:
+  apt:
+    packages:
+    - libgmp-dev
+
 before_install:
-  - wget -q -O- http://download.fpcomplete.com/ubuntu/fpco.key | sudo apt-key add -
-  - echo 'deb http://download.fpcomplete.com/ubuntu/precise stable main' | sudo tee /etc/apt/sources.list.d/fpco.list
-  - sudo apt-get update
-  - sudo apt-get install stack -y
-install:
-  - stack setup
+# Download and unpack the stack executable
+- mkdir -p ~/.local/bin
+- export PATH=$HOME/.local/bin:$PATH
+- travis_retry curl -L https://www.stackage.org/stack/linux-x86_64 | tar xz --wildcards --strip-components=1 -C ~/.local/bin '*/stack'
+
 before_script:
 - ./scripts/run-dynamodb-local.sh
-script:
-  - stack test
+
+script: stack $ARGS --no-terminal --install-ghc test
+
 deploy:
   provider: releases
   user: adbrowne
@@ -26,3 +32,6 @@ deploy:
   skip_cleanup: true
   on:
     tags: true
+cache:
+  directories:
+    - $HOME/.stack
