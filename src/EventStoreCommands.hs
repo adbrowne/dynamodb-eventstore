@@ -20,6 +20,9 @@ import qualified Data.Text.Encoding    as T
 import           GHC.Generics
 
 import           TextShow.TH
+import qualified Data.HashMap.Strict     as HM
+
+import Network.AWS.DynamoDB
 
 newtype StreamId = StreamId T.Text deriving (Ord, Eq, Show)
 deriveTextShow ''StreamId
@@ -111,3 +114,48 @@ data EventStoreCmd next =
 type EventStoreCmdM = Free EventStoreCmd
 
 makeFree ''EventStoreCmd
+
+data DynamoKey = DynamoKey {
+  dynamoKeyKey :: T.Text,
+  dynamoKeyEventNumber :: Int
+} deriving (Show, Eq, Ord)
+
+type DynamoValues = HM.HashMap T.Text AttributeValue
+data DynamoReadResult = DynamoReadResult {
+  dynamoReadResultKey :: DynamoKey,
+  dynamoReadResultVersion :: Int,
+  dynamoReadResultValue :: DynamoValues
+}
+
+type DynamoVersion = Maybe Int
+
+data DynamoWriteResult =
+  DynamoWriteSuccess |
+  DynamoWriteFailure |
+  DynamoWriteWrongVersion deriving (Eq, Show)
+
+data LogLevel =
+  Debug |
+  Info |
+  Warn |
+  Error
+
+data DynamoCmd next =
+  ReadFromDynamo'
+    DynamoKey
+    (Maybe DynamoReadResult -> next) |
+  WriteToDynamo'
+    DynamoKey
+    DynamoValues
+    DynamoVersion
+    (DynamoWriteResult -> next) |
+  ScanNeedsPaging'
+    ([DynamoKey] -> next) |
+  Log'
+    LogLevel
+    T.Text
+    next
+
+  deriving (Functor)
+
+makeFree ''DynamoCmd
