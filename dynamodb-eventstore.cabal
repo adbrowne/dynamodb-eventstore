@@ -21,7 +21,6 @@ library
   exposed-modules:     Webserver,
                        EventStoreCommands,
                        EventStoreActions,
-                       DynamoDbEventStore.DynamoInterpreter,
                        DynamoDbEventStore.AmazonkaInterpreter
   -- other-extensions:    
   build-depends:       base >=4.8 && <4.9,
@@ -39,7 +38,6 @@ library
                        aeson >= 0.8,
                        random >= 1.1,
                        transformers >= 0.4,
-                       aws >= 0.12.1,
                        unordered-containers,
                        semigroups,
                        exceptions,

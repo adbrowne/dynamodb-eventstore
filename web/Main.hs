@@ -7,7 +7,7 @@ import           Web.Scotty
 import           Webserver      (app)
 import           Control.Monad.IO.Class (liftIO)
 import           Control.Concurrent
-import           DynamoDbEventStore.DynamoInterpreter
+import           DynamoDbEventStore.AmazonkaInterpreter
 import           EventStoreActions
 import           System.Random
 import qualified Data.Text               as T
