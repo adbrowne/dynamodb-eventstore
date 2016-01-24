@@ -13,32 +13,21 @@ import           Control.Exception.Lens
 import           Data.Monoid
 import           Control.Monad.Free
 import           Control.Monad.Catch
-import           Control.Monad.IO.Class
 import           Data.Int
-import           Data.Map                (Map)
 import qualified Data.HashMap.Strict     as HM
 import           Control.Lens
 import           Data.Maybe              (fromJust)
-import qualified Data.Map                as M
-import           Data.List.NonEmpty
+import           Data.List.NonEmpty      (NonEmpty (..))
 import qualified Data.ByteString         as BS
 import qualified Data.ByteString.Lazy    as BL
 import qualified Data.Text               as T
-import qualified Data.Vector             as V
 import           TextShow
 import           System.Random
 import           EventStoreCommands
-import           System.IO (stdout)
 import qualified Safe
---import           Aws
---import           Aws.Core
---import           Aws.DynamoDb.Commands
---import           Aws.DynamoDb.Core
 
 import Network.AWS
 import Network.AWS.DynamoDB
-import Control.Monad.Trans.Resource
-import Control.Monad.Trans.AWS (newLogger)
 
 fieldStreamId :: T.Text
 fieldStreamId = "streamId"
@@ -101,8 +90,8 @@ attrJson name value =
 -}
 
 itemAttribute :: T.Text -> Lens' AttributeValue (Maybe v) -> v -> (T.Text, AttributeValue)
-itemAttribute key lens value =
-  (key, set lens (Just value) attributeValue)
+itemAttribute key l value =
+  (key, set l (Just value) attributeValue)
 
 readItemJson :: FromJSON b => T.Text -> HM.HashMap T.Text AttributeValue -> Maybe b
 readItemJson fieldName i =
@@ -277,9 +266,8 @@ redirect (Just (h, p)) =
 
 runCommand :: forall a. (AWSRequest a) => a -> IO (Rs a)
 runCommand req = do
-    myLogger <- newLogger Trace stdout
     let dynamo = setEndpoint False "localhost" 8000 dynamoDB
     env <- newEnv Sydney (FromEnv "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" Nothing)
-    runResourceT $ runAWS (env) $ do -- & envLogger .~ myLogger) $ do
+    runResourceT $ runAWS (env) $ do
       reconfigure dynamo $ do
         send req
