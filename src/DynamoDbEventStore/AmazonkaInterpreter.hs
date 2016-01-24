@@ -278,7 +278,8 @@ redirect (Just (h, p)) =
 runCommand :: forall a. (AWSRequest a) => a -> IO (Rs a)
 runCommand req = do
     myLogger <- newLogger Trace stdout
+    let dynamo = setEndpoint False "localhost" 8000 dynamoDB
     env <- newEnv Sydney (FromEnv "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" Nothing)
     runResourceT $ runAWS (env) $ do -- & envLogger .~ myLogger) $ do
-      endpoint (redirect  $ Just ("localhost", 8000)) $ do
+      reconfigure dynamo $ do
         send req
