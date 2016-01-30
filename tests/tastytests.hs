@@ -5,6 +5,7 @@ module Main where
 import qualified BasicOperationTests     as CommandTests
 import           DynamoDbEventStore.Testing
 import           DynamoDbEventStore.EventStoreActionTests as ActionTests
+import           DynamoDbEventStore.GlobalFeedWriterSpec as GlobalFeedWriterSpec
 import qualified DynamoDbEventStore.AmazonkaInterpreter as Ai
 
 import           Test.Tasty
@@ -23,6 +24,7 @@ main = do
       [ testGroup "Command Unit Tests" (CommandTests.tests evalProgram),
         testGroup "Command Tests against Dynamo - Amazonka" (CommandTests.tests Ai.evalProgram),
         testGroup "Action Tests" ActionTests.tests,
+        testGroup "Global Feed Writer" GlobalFeedWriterSpec.tests,
         postEventSpec',
         getStreamSpec',
         webserverInternalTests'

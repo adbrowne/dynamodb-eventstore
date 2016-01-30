@@ -7,7 +7,6 @@
 
 module EventStoreCommands where
 
-
 import           Control.Monad
 import           Control.Monad.Free
 import           Control.Monad.Free.TH
@@ -159,3 +158,5 @@ data DynamoCmd next =
   deriving (Functor)
 
 makeFree ''DynamoCmd
+
+type DynamoCmdM = Free DynamoCmd
