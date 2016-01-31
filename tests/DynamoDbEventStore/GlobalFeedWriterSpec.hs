@@ -112,12 +112,10 @@ stepProgram ps = do
     runCmd _ = undefined
 
 updateLoopState :: T.Text -> (Either () (RunningProgramState r)) -> InterpreterApp r ()
-updateLoopState programName (Left ()) = modify removeProgram
-  where removeProgram =
-          over loopStatePrograms (Map.delete programName)
-updateLoopState programName (Right newState) = modify updateProgram
-  where updateProgram =
-          over loopStatePrograms (Map.adjust (const newState) programName)
+updateLoopState programName (Left ()) =
+  loopStatePrograms %= (Map.delete programName)
+updateLoopState programName (Right newState) =
+  loopStatePrograms %= (Map.adjust (const newState) programName)
 
 iterateApp :: InterpreterApp a ()
 iterateApp = do
