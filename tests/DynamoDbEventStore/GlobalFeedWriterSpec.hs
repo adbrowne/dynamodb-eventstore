@@ -1,15 +1,17 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
---{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE FlexibleContexts #-}
---{-# LANGUAGE PartialTypeSignatures #-}
 
 module DynamoDbEventStore.GlobalFeedWriterSpec where
 
+import           Data.List
+import           Data.Maybe
 import           Test.Tasty
 import           Test.Tasty.QuickCheck((===),testProperty)
 import qualified Test.Tasty.QuickCheck as QC
+import           Control.Applicative
 import           Control.Lens
 import           Control.Lens.TH
 import           Control.Monad.State
@@ -22,9 +24,11 @@ import           EventStoreCommands
 import           Data.Foldable
 import qualified Data.Map.Strict as Map
 import qualified Data.Vector as V
+import qualified Data.Aeson as Aeson
 
 import Network.AWS.DynamoDB
-newtype UploadList = UploadList [(T.Text,Int,T.Text)] deriving (Show)
+type UploadItem = (T.Text,Int,T.Text)
+newtype UploadList = UploadList [UploadItem] deriving (Show)
 
 -- Generateds a list of length between 1 and maxLength
 cappedList :: QC.Arbitrary a => Int -> QC.Gen[a]
@@ -45,7 +49,7 @@ instance QC.Arbitrary UploadList where
         stream <- QC.elements streams
         return (stream, event)
       groupTuple xs = HM.toList $ HM.fromListWith (++) ((\(a,b) -> (a,[b])) <$> xs)
-      numberEvents :: [(T.Text, T.Text)] -> [(T.Text, Int, T.Text)]
+      numberEvents :: [(T.Text, T.Text)] -> [UploadItem]
       numberEvents xs = do
         (stream, events) <- groupTuple xs
         (event, number) <- zip events [0..]
@@ -63,6 +67,27 @@ dynamoWriteWithRetry (stream, eventNumber, body) = loop DynamoWriteFailure
     loop r = return r
 
 type TestDynamoTable = Map.Map DynamoKey (Int, DynamoValues)
+
+data FeedEntry = FeedEntry {
+  feedEntryStream :: T.Text,
+  feedEntryNumber :: Int
+} deriving (Eq, Show)
+
+instance QC.Arbitrary FeedEntry where
+  arbitrary = do
+    stream <- QC.arbitrary
+    number <- QC.arbitrary
+    return $ FeedEntry stream number
+
+instance Aeson.FromJSON FeedEntry where
+    parseJSON (Aeson.Object v) = FeedEntry <$>
+                           v Aeson..: "s" <*>
+                           v Aeson..: "n"
+    parseJSON _          = empty
+
+instance Aeson.ToJSON FeedEntry where
+    toJSON (FeedEntry stream number) =
+        Aeson.object ["s" Aeson..= stream, "n" Aeson..= number]
 
 data RunningProgramState r = RunningProgramState {
   runningProgramStateNext :: DynamoCmdM r
@@ -176,11 +201,32 @@ publisher :: [(T.Text,Int,T.Text)] -> DynamoCmdM ()
 publisher [] = return ()
 publisher xs = forM_ xs dynamoWriteWithRetry
 
-expectedGlobalFeedFromUploadList :: [(T.Text,Int,T.Text)] -> Map.Map T.Text (V.Vector Int)
-expectedGlobalFeedFromUploadList xs =
+globalFeedFromTestDynamoTable :: TestDynamoTable -> Map.Map T.Text (V.Vector Int)
+globalFeedFromTestDynamoTable testTable =
+  foldl' acc Map.empty (getPagedEventOrder testTable)
+  where
+    getPagedEventOrder :: TestDynamoTable -> [(T.Text, Int)]
+    getPagedEventOrder dynamoTable =
+      let
+        feedEntryToTuple (FeedEntry stream number) = (stream, number)
+        readPageValues :: (DynamoKey, (Int, DynamoValues)) -> [FeedEntry]
+        readPageValues (_, (_, values)) = fromMaybe [] $
+          (view (ix "body" . avB) values) >>= Aeson.decodeStrict
+        pageEntries = (Map.toList dynamoTable) &
+                      filter (\(DynamoKey stream _, _) -> T.isPrefixOf "$page" stream) &
+                      sortOn (\(key,_) -> key) >>=
+                      readPageValues
+      in feedEntryToTuple <$> pageEntries
+    acc :: Map.Map T.Text (V.Vector Int) -> (T.Text, Int) -> Map.Map T.Text (V.Vector Int)
+    acc s (stream, number) =
+      let newValue = maybe (V.singleton number) (flip V.snoc number) $ Map.lookup stream s
+      in Map.insert stream newValue s
+
+globalFeedFromUploadList :: [UploadItem] -> Map.Map T.Text (V.Vector Int)
+globalFeedFromUploadList xs =
   foldl' acc Map.empty xs
   where
-    acc :: Map.Map T.Text (V.Vector Int) -> (T.Text,Int,T.Text) -> Map.Map T.Text (V.Vector Int)
+    acc :: Map.Map T.Text (V.Vector Int) -> UploadItem -> Map.Map T.Text (V.Vector Int)
     acc s (stream, number, body) =
       let newValue = maybe (V.singleton number) (flip V.snoc number) $ Map.lookup stream s
       in Map.insert stream newValue s
@@ -191,9 +237,11 @@ prop_EventShouldAppearInGlobalFeedInStreamOrder (UploadList uploadList) =
     programs = Map.singleton "Publisher" $ publisher uploadList
   in QC.forAll (runPrograms programs) check
      where
-       check (_, testState) = Map.empty === expectedGlobalFeedFromUploadList uploadList
+       check (_, testState) = globalFeedFromTestDynamoTable (testState ^. testStateDynamo) === globalFeedFromUploadList uploadList
 
 tests :: [TestTree]
 tests = [
-      testProperty "Global Feed preserves stream order" prop_EventShouldAppearInGlobalFeedInStreamOrder
+      testProperty "Global Feed preserves stream order" prop_EventShouldAppearInGlobalFeedInStreamOrder,
+      testProperty "Can round trip FeedEntry via JSON" (\(a :: FeedEntry) -> (Aeson.decode . Aeson.encode) a === Just a)
+
   ]
