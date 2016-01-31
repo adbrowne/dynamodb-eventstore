@@ -1,11 +1,16 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE PartialTypeSignatures #-}
 
-module DynamoDbEventStore.GlobalFeedWriterSpec (tests) where
+module DynamoDbEventStore.GlobalFeedWriterSpec where
 
 import           Test.Tasty
-import           Test.Tasty.QuickCheck
-import           Control.Lens (set)
+import           Test.Tasty.QuickCheck((===),testProperty)
+import qualified Test.Tasty.QuickCheck as QC
+import           Control.Lens
+import           Control.Lens.TH
 import           Control.Monad.State
 import           Control.Monad.Free
 import           Control.Monad.Trans.Class
@@ -20,14 +25,14 @@ import Network.AWS.DynamoDB
 newtype UploadList = UploadList [(T.Text,Int,T.Text)] deriving (Show)
 
 -- Generateds a list of length between 1 and maxLength
-cappedList :: Arbitrary a => Int -> Gen[a]
-cappedList maxLength = listOf1 arbitrary `suchThat` ((< maxLength) . length)
+cappedList :: QC.Arbitrary a => Int -> QC.Gen[a]
+cappedList maxLength = QC.listOf1 QC.arbitrary `QC.suchThat` ((< maxLength) . length)
 
-instance Arbitrary T.Text where
-  arbitrary = T.pack <$> arbitrary
-  shrink xs = T.pack <$> shrink (T.unpack xs)
+instance QC.Arbitrary T.Text where
+  arbitrary = T.pack <$> QC.arbitrary
+  shrink xs = T.pack <$> QC.shrink (T.unpack xs)
 
-instance Arbitrary UploadList where
+instance QC.Arbitrary UploadList where
   arbitrary = do
     streams <- cappedList 5
     events <- cappedList 100
@@ -35,7 +40,7 @@ instance Arbitrary UploadList where
     return $ UploadList $ numberEvents eventsWithStream
     where
       assignStream streams event = do
-        stream <- elements streams
+        stream <- QC.elements streams
         return (stream, event)
       groupTuple xs = HM.toList $ HM.fromListWith (++) ((\(a,b) -> (a,[b])) <$> xs)
       numberEvents :: [(T.Text, T.Text)] -> [(T.Text, Int, T.Text)]
@@ -63,31 +68,33 @@ data RunningProgramState r = RunningProgramState {
 
 data LoopState r = LoopState {
   loopStateIterations :: Int,
-  loopStateTestState :: TestState,
-  loopStatePrograms :: Map.Map T.Text (RunningProgramState r)
+  _loopStateTestState :: TestState,
+  _loopStatePrograms :: Map.Map T.Text (RunningProgramState r)
 }
 
 data TestState = TestState {
-  testStateDynamo :: TestDynamoTable,
-  testStateLog :: V.Vector T.Text
+  _testStateDynamo :: TestDynamoTable,
+  _testStateLog :: V.Vector T.Text
 } deriving (Show, Eq)
 
-type InterpreterApp a = (StateT (LoopState a) Gen)
+$(makeLenses ''LoopState)
+
+$(makeLenses ''TestState)
+
+type InterpreterApp a = (StateT (LoopState a) QC.Gen)
 
 maxIterations = 100000
 isComplete :: InterpreterApp a Bool
 isComplete = do
-  allProgramsComplete <- Map.null <$> gets loopStatePrograms
+  allProgramsComplete <- Map.null <$> gets _loopStatePrograms
   tooManyIterations <- (> maxIterations) <$> gets loopStateIterations
   return $ allProgramsComplete || tooManyIterations
 
 addLog :: T.Text -> LoopState r -> LoopState r
-addLog m state =
+addLog m =
   let
-    testState = loopStateTestState state
-    log = testStateLog testState
-    log' = V.snoc log m
-  in state { loopStateTestState = testState { testStateLog = log' } }
+    appendMessage = flip V.snoc m
+  in over (loopStateTestState . testStateLog) appendMessage
 
 stepProgram :: RunningProgramState r -> InterpreterApp r (Either () (RunningProgramState r))
 stepProgram ps = do
@@ -106,29 +113,23 @@ stepProgram ps = do
 
 updateLoopState :: T.Text -> (Either () (RunningProgramState r)) -> InterpreterApp r ()
 updateLoopState programName (Left ()) = modify removeProgram
-  where removeProgram state =
-          let
-            programs = loopStatePrograms state
-            programs' = Map.delete programName programs
-          in state { loopStatePrograms = programs' }
+  where removeProgram =
+          over loopStatePrograms (Map.delete programName)
 updateLoopState programName (Right newState) = modify updateProgram
-  where updateProgram state =
-          let
-            programs = loopStatePrograms state
-            programs' = Map.adjust (const newState) programName programs
-          in state { loopStatePrograms = programs' }
+  where updateProgram =
+          over loopStatePrograms (Map.adjust (const newState) programName)
 
 iterateApp :: InterpreterApp a ()
 iterateApp = do
- programs <- gets loopStatePrograms
- (programId, programState) <- lift . elements $ Map.toList programs
+ programs <- gets _loopStatePrograms
+ (programId, programState) <- lift . QC.elements $ Map.toList programs
  stepResult' <- stepProgram programState
  _ <- updateLoopState programId stepResult'
  return ()
 
-runPrograms :: Map.Map T.Text (DynamoCmdM a) -> Gen ([a],TestState)
+runPrograms :: Map.Map T.Text (DynamoCmdM a) -> QC.Gen ([a],TestState)
 runPrograms programs =
-  fmap (\(as,ls) -> (as, loopStateTestState ls)) $ runStateT loop initialState
+  fmap (\(as,ls) -> (as, _loopStateTestState ls)) $ runStateT loop initialState
   where
         runningPrograms = fmap (RunningProgramState) programs
         initialState = LoopState 0 (TestState Map.empty V.empty) runningPrograms
@@ -143,13 +144,13 @@ publisher :: [(T.Text,Int,T.Text)] -> DynamoCmdM ()
 publisher [] = return ()
 publisher xs = forM_ xs dynamoWriteWithRetry
 
-prop_EventShouldAppearInGlobalFeedInStreamOrder :: UploadList -> Property
-prop_EventShouldAppearInGlobalFeedInStreamOrder (UploadList xs) =
+prop_EventShouldAppearInGlobalFeedInStreamOrder :: UploadList -> QC.Property
+prop_EventShouldAppearInGlobalFeedInStreamOrder (UploadList uploadList) =
   let
-    programs = Map.singleton "Publisher" $ publisher xs
-  in forAll (runPrograms programs) check
+    programs = Map.singleton "Publisher" $ publisher uploadList
+  in QC.forAll (runPrograms programs) check
      where
-       check (_, testState) = V.length (testStateLog testState) === length xs
+       check (_, testState) = V.length (testState ^. testStateLog) === length uploadList
 
 tests :: [TestTree]
 tests = [
