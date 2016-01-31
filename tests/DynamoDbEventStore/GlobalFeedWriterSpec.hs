@@ -67,7 +67,7 @@ data RunningProgramState r = RunningProgramState {
 }
 
 data LoopState r = LoopState {
-  loopStateIterations :: Int,
+  _loopStateIterations :: Int,
   _loopStateTestState :: TestState,
   _loopStatePrograms :: Map.Map T.Text (RunningProgramState r)
 }
@@ -86,8 +86,8 @@ type InterpreterApp a = (StateT (LoopState a) QC.Gen)
 maxIterations = 100000
 isComplete :: InterpreterApp a Bool
 isComplete = do
-  allProgramsComplete <- Map.null <$> gets _loopStatePrograms
-  tooManyIterations <- (> maxIterations) <$> gets loopStateIterations
+  allProgramsComplete <- uses loopStatePrograms Map.null
+  tooManyIterations <- uses loopStateIterations (> maxIterations)
   return $ allProgramsComplete || tooManyIterations
 
 addLog :: T.Text -> LoopState r -> LoopState r
@@ -112,14 +112,15 @@ stepProgram ps = do
     runCmd _ = undefined
 
 updateLoopState :: T.Text -> (Either () (RunningProgramState r)) -> InterpreterApp r ()
-updateLoopState programName (Left ()) =
-  loopStatePrograms %= (Map.delete programName)
-updateLoopState programName (Right newState) =
-  loopStatePrograms %= (Map.adjust (const newState) programName)
+updateLoopState programName result =
+  loopStatePrograms %= (updateProgramEntry result)
+  where
+    updateProgramEntry (Left ())        = Map.delete programName
+    updateProgramEntry (Right newState) = Map.adjust (const newState) programName
 
 iterateApp :: InterpreterApp a ()
 iterateApp = do
- programs <- gets _loopStatePrograms
+ programs <- use loopStatePrograms
  (programId, programState) <- lift . QC.elements $ Map.toList programs
  stepResult' <- stepProgram programState
  _ <- updateLoopState programId stepResult'
@@ -127,7 +128,7 @@ iterateApp = do
 
 runPrograms :: Map.Map T.Text (DynamoCmdM a) -> QC.Gen ([a],TestState)
 runPrograms programs =
-  fmap (\(as,ls) -> (as, _loopStateTestState ls)) $ runStateT loop initialState
+  fmap (over _2 (view loopStateTestState)) $ runStateT loop initialState
   where
         runningPrograms = fmap (RunningProgramState) programs
         initialState = LoopState 0 (TestState Map.empty V.empty) runningPrograms
