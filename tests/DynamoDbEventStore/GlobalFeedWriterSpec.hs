@@ -17,6 +17,7 @@ import           Control.Monad.Free
 import           Control.Monad.Trans.Class
 import qualified Data.HashMap.Lazy as HM
 import qualified Data.Text             as T
+import           Data.Functor (($>))
 import           EventStoreCommands
 import           Data.Foldable
 import qualified Data.Map.Strict as Map
@@ -112,8 +113,7 @@ writeToDynamo key values version next =
   potentialFailure 25 onFailure onSuccess
   where
     onFailure = do
-      _ <- addLog "Random write failure"
-      return $ next DynamoWriteFailure
+      addLog "Random write failure" $> next DynamoWriteFailure
     onSuccess = do
       currentEntry <- (Map.lookup key) <$> use (loopStateTestState . testStateDynamo)
       let currentVersion = fst <$> currentEntry
@@ -176,13 +176,22 @@ publisher :: [(T.Text,Int,T.Text)] -> DynamoCmdM ()
 publisher [] = return ()
 publisher xs = forM_ xs dynamoWriteWithRetry
 
+expectedGlobalFeedFromUploadList :: [(T.Text,Int,T.Text)] -> Map.Map T.Text (V.Vector Int)
+expectedGlobalFeedFromUploadList xs =
+  foldl' acc Map.empty xs
+  where
+    acc :: Map.Map T.Text (V.Vector Int) -> (T.Text,Int,T.Text) -> Map.Map T.Text (V.Vector Int)
+    acc s (stream, number, body) =
+      let newValue = maybe (V.singleton number) (flip V.snoc number) $ Map.lookup stream s
+      in Map.insert stream newValue s
+
 prop_EventShouldAppearInGlobalFeedInStreamOrder :: UploadList -> QC.Property
 prop_EventShouldAppearInGlobalFeedInStreamOrder (UploadList uploadList) =
   let
     programs = Map.singleton "Publisher" $ publisher uploadList
   in QC.forAll (runPrograms programs) check
      where
-       check (_, testState) = (V.length . (V.filter (== "Writing to dynamo")) ) (testState ^. testStateLog) === length uploadList
+       check (_, testState) = Map.empty === expectedGlobalFeedFromUploadList uploadList
 
 tests :: [TestTree]
 tests = [
