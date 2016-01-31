@@ -156,6 +156,11 @@ writeToDynamo key values version next =
        _ <- (loopStateTestState . testStateDynamo) %= (Map.insert key (newVersion, values))
        return $ next DynamoWriteSuccess
 
+getReadResult :: DynamoKey -> TestDynamoTable -> Maybe DynamoReadResult
+getReadResult key table = do
+  (version, values) <- Map.lookup key table
+  return $ DynamoReadResult key version values
+
 stepProgram :: RunningProgramState r -> InterpreterApp r (Either () (RunningProgramState r))
 stepProgram ps = do
   result <- runCmd $ runningProgramStateNext ps
@@ -167,7 +172,7 @@ stepProgram ps = do
     runCmd :: DynamoCmdM r -> InterpreterApp r (Either () (DynamoCmdM r))
     runCmd (Pure x) = return $ Left ()
     runCmd (Free (WriteToDynamo' key values version r)) = Right <$> writeToDynamo key values version r
-    runCmd _ = undefined
+    runCmd (Free (ReadFromDynamo' key r)) = Right <$> (uses (loopStateTestState . testStateDynamo) (r . (getReadResult key)))
 
 updateLoopState :: T.Text -> (Either () (RunningProgramState r)) -> InterpreterApp r ()
 updateLoopState programName result =
