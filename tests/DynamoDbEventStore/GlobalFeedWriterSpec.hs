@@ -1,8 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE PartialTypeSignatures #-}
+--{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE FlexibleContexts #-}
+--{-# LANGUAGE PartialTypeSignatures #-}
 
 module DynamoDbEventStore.GlobalFeedWriterSpec where
 
@@ -90,11 +91,45 @@ isComplete = do
   tooManyIterations <- uses loopStateIterations (> maxIterations)
   return $ allProgramsComplete || tooManyIterations
 
-addLog :: T.Text -> LoopState r -> LoopState r
+addLog :: T.Text -> InterpreterApp a ()
 addLog m =
   let
     appendMessage = flip V.snoc m
-  in over (loopStateTestState . testStateLog) appendMessage
+  in (loopStateTestState . testStateLog) %= appendMessage
+
+addLogS :: String -> InterpreterApp a ()
+addLogS = addLog . T.pack
+
+potentialFailure :: Double -> InterpreterApp a r -> InterpreterApp a r -> InterpreterApp a r
+potentialFailure failurePercent onFailure onSuccess = do
+   r <- lift $ QC.choose (0, 99)
+   if r < failurePercent
+     then onFailure
+     else onSuccess
+
+writeToDynamo :: DynamoKey -> DynamoValues -> DynamoVersion -> (DynamoWriteResult -> n)  -> InterpreterApp a n
+writeToDynamo key values version next =
+  potentialFailure 25 onFailure onSuccess
+  where
+    onFailure = do
+      _ <- addLog "Random write failure"
+      return $ next DynamoWriteFailure
+    onSuccess = do
+      currentEntry <- (Map.lookup key) <$> use (loopStateTestState . testStateDynamo)
+      let currentVersion = fst <$> currentEntry
+      writeVersion version currentVersion
+    writeVersion Nothing Nothing = performWrite 0
+    writeVersion (Just v) (Just cv)
+      | cv == v - 1 = performWrite(v)
+      | otherwise = versionFailure (Just v) (Just cv)
+    writeVersion writeVersion currentVersion = versionFailure writeVersion currentVersion
+    versionFailure writeVersion currentVersion = do
+       _ <- addLogS $ "Wrong version writing: " ++ (show writeVersion) ++ " current: " ++ (show currentVersion)
+       return $ next DynamoWriteWrongVersion
+    performWrite newVersion = do
+       _ <- addLogS $ "Performing write: " ++ (show key) ++ " " ++ (show values) ++ " " ++ (show version)
+       _ <- (loopStateTestState . testStateDynamo) %= (Map.insert key (newVersion, values))
+       return $ next DynamoWriteSuccess
 
 stepProgram :: RunningProgramState r -> InterpreterApp r (Either () (RunningProgramState r))
 stepProgram ps = do
@@ -106,9 +141,7 @@ stepProgram ps = do
     setNextProgram ps n = ps { runningProgramStateNext = n }
     runCmd :: DynamoCmdM r -> InterpreterApp r (Either () (DynamoCmdM r))
     runCmd (Pure x) = return $ Left ()
-    runCmd (Free (WriteToDynamo' _ _ _ r)) = do
-      _ <- modify $ addLog "Writing to dynamo"
-      return $ Right (r DynamoWriteSuccess)
+    runCmd (Free (WriteToDynamo' key values version r)) = Right <$> writeToDynamo key values version r
     runCmd _ = undefined
 
 updateLoopState :: T.Text -> (Either () (RunningProgramState r)) -> InterpreterApp r ()
@@ -149,7 +182,7 @@ prop_EventShouldAppearInGlobalFeedInStreamOrder (UploadList uploadList) =
     programs = Map.singleton "Publisher" $ publisher uploadList
   in QC.forAll (runPrograms programs) check
      where
-       check (_, testState) = V.length (testState ^. testStateLog) === length uploadList
+       check (_, testState) = (V.length . (V.filter (== "Writing to dynamo")) ) (testState ^. testStateLog) === length uploadList
 
 tests :: [TestTree]
 tests = [
