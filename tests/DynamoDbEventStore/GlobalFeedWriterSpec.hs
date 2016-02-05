@@ -13,15 +13,12 @@ import           Test.Tasty.QuickCheck((===),testProperty)
 import qualified Test.Tasty.QuickCheck as QC
 import           Control.Applicative
 import           Control.Lens
-import           Control.Lens.TH
 import           Control.Monad.State
 import           Control.Monad.Free
-import           Control.Monad.Trans.Class
 import qualified Data.HashMap.Lazy as HM
 import qualified Data.Text             as T
 import           Data.Functor (($>))
 import           EventStoreCommands
-import           Data.Foldable
 import qualified Data.Map.Strict as Map
 import qualified Data.Vector as V
 import qualified Data.Aeson as Aeson
@@ -31,7 +28,7 @@ type UploadItem = (T.Text,Int,T.Text)
 newtype UploadList = UploadList [UploadItem] deriving (Show)
 
 -- Generateds a list of length between 1 and maxLength
-cappedList :: QC.Arbitrary a => Int -> QC.Gen[a]
+cappedList :: QC.Arbitrary a => Int -> QC.Gen [a]
 cappedList maxLength = QC.listOf1 QC.arbitrary `QC.suchThat` ((< maxLength) . length)
 
 instance QC.Arbitrary T.Text where
@@ -42,7 +39,7 @@ instance QC.Arbitrary UploadList where
   arbitrary = do
     streams <- cappedList 5
     events <- cappedList 100
-    eventsWithStream <- sequence $ map (assignStream streams) events
+    eventsWithStream <- mapM (assignStream streams) events
     return $ UploadList $ numberEvents eventsWithStream
     where
       assignStream streams event = do
@@ -62,7 +59,7 @@ dynamoWriteWithRetry (stream, eventNumber, body) = loop DynamoWriteFailure
       [ ("Body", set avS (Just body) attributeValue),
         ("NeedsPaging", set avS (Just "True") attributeValue) ]
     loop :: DynamoWriteResult -> DynamoCmdM DynamoWriteResult
-    loop DynamoWriteFailure = do
+    loop DynamoWriteFailure =
       writeToDynamo' (DynamoKey stream eventNumber) values Nothing >>= loop
     loop r = return r
 
@@ -110,7 +107,9 @@ $(makeLenses ''TestState)
 
 type InterpreterApp a = (StateT (LoopState a) QC.Gen)
 
+maxIterations :: Int
 maxIterations = 100000
+
 isComplete :: InterpreterApp a Bool
 isComplete = do
   allProgramsComplete <- uses loopStatePrograms Map.null
@@ -137,23 +136,23 @@ writeToDynamo :: DynamoKey -> DynamoValues -> DynamoVersion -> (DynamoWriteResul
 writeToDynamo key values version next =
   potentialFailure 25 onFailure onSuccess
   where
-    onFailure = do
+    onFailure =
       addLog "Random write failure" $> next DynamoWriteFailure
     onSuccess = do
-      currentEntry <- (Map.lookup key) <$> use (loopStateTestState . testStateDynamo)
+      currentEntry <- Map.lookup key <$> use (loopStateTestState . testStateDynamo)
       let currentVersion = fst <$> currentEntry
       writeVersion version currentVersion
     writeVersion Nothing Nothing = performWrite 0
     writeVersion (Just v) (Just cv)
-      | cv == v - 1 = performWrite(v)
+      | cv == v - 1 = performWrite v
       | otherwise = versionFailure (Just v) (Just cv)
-    writeVersion writeVersion currentVersion = versionFailure writeVersion currentVersion
-    versionFailure writeVersion currentVersion = do
-       _ <- addLogS $ "Wrong version writing: " ++ (show writeVersion) ++ " current: " ++ (show currentVersion)
+    writeVersion newVersion currentVersion = versionFailure newVersion currentVersion
+    versionFailure newVersion currentVersion = do
+       _ <- addLogS $ "Wrong version writing: " ++ show newVersion ++ " current: " ++ show currentVersion
        return $ next DynamoWriteWrongVersion
     performWrite newVersion = do
-       _ <- addLogS $ "Performing write: " ++ (show key) ++ " " ++ (show values) ++ " " ++ (show version)
-       _ <- (loopStateTestState . testStateDynamo) %= (Map.insert key (newVersion, values))
+       _ <- addLogS $ "Performing write: " ++ show key ++ " " ++ show values ++ " " ++ show version
+       _ <- loopStateTestState . testStateDynamo %= (Map.insert key (newVersion, values))
        return $ next DynamoWriteSuccess
 
 getReadResult :: DynamoKey -> TestDynamoTable -> Maybe DynamoReadResult
@@ -164,19 +163,20 @@ getReadResult key table = do
 stepProgram :: RunningProgramState r -> InterpreterApp r (Either () (RunningProgramState r))
 stepProgram ps = do
   result <- runCmd $ runningProgramStateNext ps
-  let toReturn = fmap (setNextProgram ps) result
+  let toReturn = fmap setNextProgram result
   return toReturn
   where
-    setNextProgram :: RunningProgramState r -> DynamoCmdM r -> RunningProgramState r
-    setNextProgram ps n = ps { runningProgramStateNext = n }
+    setNextProgram :: DynamoCmdM r -> RunningProgramState r
+    setNextProgram n = ps { runningProgramStateNext = n }
     runCmd :: DynamoCmdM r -> InterpreterApp r (Either () (DynamoCmdM r))
-    runCmd (Pure x) = return $ Left ()
+    runCmd (Pure _) = return $ Left ()
     runCmd (Free (WriteToDynamo' key values version r)) = Right <$> writeToDynamo key values version r
-    runCmd (Free (ReadFromDynamo' key r)) = Right <$> (uses (loopStateTestState . testStateDynamo) (r . (getReadResult key)))
+    runCmd (Free (ReadFromDynamo' key r)) = Right <$> uses (loopStateTestState . testStateDynamo) (r . (getReadResult key))
+    runCmd _ = undefined -- todo
 
-updateLoopState :: T.Text -> (Either () (RunningProgramState r)) -> InterpreterApp r ()
+updateLoopState :: T.Text -> Either () (RunningProgramState r) -> InterpreterApp r ()
 updateLoopState programName result =
-  loopStatePrograms %= (updateProgramEntry result)
+  loopStatePrograms %= updateProgramEntry result
   where
     updateProgramEntry (Left ())        = Map.delete programName
     updateProgramEntry (Right newState) = Map.adjust (const newState) programName
@@ -191,9 +191,9 @@ iterateApp = do
 
 runPrograms :: Map.Map T.Text (DynamoCmdM a) -> QC.Gen ([a],TestState)
 runPrograms programs =
-  fmap (over _2 (view loopStateTestState)) $ runStateT loop initialState
+  over _2 (view loopStateTestState) <$> runStateT loop initialState
   where
-        runningPrograms = fmap (RunningProgramState) programs
+        runningPrograms = fmap RunningProgramState programs
         initialState = LoopState 0 (TestState Map.empty V.empty) runningPrograms
         loop :: InterpreterApp a [a]
         loop = do
@@ -216,24 +216,24 @@ globalFeedFromTestDynamoTable testTable =
         feedEntryToTuple (FeedEntry stream number) = (stream, number)
         readPageValues :: (DynamoKey, (Int, DynamoValues)) -> [FeedEntry]
         readPageValues (_, (_, values)) = fromMaybe [] $
-          (view (ix "body" . avB) values) >>= Aeson.decodeStrict
-        pageEntries = (Map.toList dynamoTable) &
+          view (ix "body" . avB) values >>= Aeson.decodeStrict
+        pageEntries = Map.toList dynamoTable &
                       filter (\(DynamoKey stream _, _) -> T.isPrefixOf "$page" stream) &
-                      sortOn (\(key,_) -> key) >>=
+                      sortOn fst >>=
                       readPageValues
       in feedEntryToTuple <$> pageEntries
     acc :: Map.Map T.Text (V.Vector Int) -> (T.Text, Int) -> Map.Map T.Text (V.Vector Int)
     acc s (stream, number) =
-      let newValue = maybe (V.singleton number) (flip V.snoc number) $ Map.lookup stream s
+      let newValue = maybe (V.singleton number) (`V.snoc` number) $ Map.lookup stream s
       in Map.insert stream newValue s
 
 globalFeedFromUploadList :: [UploadItem] -> Map.Map T.Text (V.Vector Int)
-globalFeedFromUploadList xs =
-  foldl' acc Map.empty xs
+globalFeedFromUploadList =
+  foldl' acc Map.empty
   where
     acc :: Map.Map T.Text (V.Vector Int) -> UploadItem -> Map.Map T.Text (V.Vector Int)
-    acc s (stream, number, body) =
-      let newValue = maybe (V.singleton number) (flip V.snoc number) $ Map.lookup stream s
+    acc s (stream, number, _) =
+      let newValue = maybe (V.singleton number) (`V.snoc` number) $ Map.lookup stream s
       in Map.insert stream newValue s
 
 prop_EventShouldAppearInGlobalFeedInStreamOrder :: UploadList -> QC.Property
