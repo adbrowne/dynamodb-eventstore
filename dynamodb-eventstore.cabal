@@ -21,6 +21,7 @@ library
   exposed-modules:     Webserver,
                        EventStoreCommands,
                        EventStoreActions,
+                       GlobalFeedWriter,
                        DynamoDbEventStore.AmazonkaInterpreter
   -- other-extensions:    
   build-depends:       base >=4.8 && <4.9,

@@ -18,12 +18,15 @@ import           Control.Monad.Free
 import qualified Data.HashMap.Lazy as HM
 import qualified Data.Text             as T
 import           Data.Functor (($>))
-import           EventStoreCommands
 import qualified Data.Map.Strict as Map
 import qualified Data.Vector as V
 import qualified Data.Aeson as Aeson
-
 import Network.AWS.DynamoDB
+
+import           EventStoreCommands
+import qualified GlobalFeedWriter as GlobalFeedWriter
+
+
 type UploadItem = (T.Text,Int,T.Text)
 newtype UploadList = UploadList [UploadItem] deriving (Show)
 
@@ -172,6 +175,7 @@ stepProgram ps = do
     runCmd (Pure _) = return $ Left ()
     runCmd (Free (WriteToDynamo' key values version r)) = Right <$> writeToDynamo key values version r
     runCmd (Free (ReadFromDynamo' key r)) = Right <$> uses (loopStateTestState . testStateDynamo) (r . (getReadResult key))
+    runCmd (Free (Log' _ msg r)) = Right <$> (addLog msg >> return r)
     runCmd _ = undefined -- todo
 
 updateLoopState :: T.Text -> Either () (RunningProgramState r) -> InterpreterApp r ()
@@ -239,7 +243,9 @@ globalFeedFromUploadList =
 prop_EventShouldAppearInGlobalFeedInStreamOrder :: UploadList -> QC.Property
 prop_EventShouldAppearInGlobalFeedInStreamOrder (UploadList uploadList) =
   let
-    programs = Map.singleton "Publisher" $ publisher uploadList
+    programs = Map.fromList [
+      ("Publisher", publisher uploadList),
+      ("GlobalFeedWriter1", GlobalFeedWriter.main) ]
   in QC.forAll (runPrograms programs) check
      where
        check (_, testState) = globalFeedFromTestDynamoTable (testState ^. testStateDynamo) === globalFeedFromUploadList uploadList
