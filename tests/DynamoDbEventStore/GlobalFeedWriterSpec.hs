@@ -179,6 +179,7 @@ stepProgram ps = do
     setNextProgram n = ps { runningProgramStateNext = n }
     runCmd :: DynamoCmdM r -> InterpreterApp r (Either () (DynamoCmdM r))
     runCmd (Pure _) = return $ Left ()
+    runCmd (Free (FatalError' msg)) = Left <$> (addLog $ T.append "Fatal Error" msg)
     runCmd (Free (WriteToDynamo' key values version r)) = Right <$> writeToDynamo key values version r
     runCmd (Free (ReadFromDynamo' key r)) = Right <$> uses (loopStateTestState . testStateDynamo) (r . (getReadResult key))
     runCmd (Free (Log' _ msg r)) = Right <$> (addLog msg >> return r)

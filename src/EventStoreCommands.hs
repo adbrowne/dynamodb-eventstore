@@ -150,6 +150,8 @@ data DynamoCmd next =
     (DynamoWriteResult -> next) |
   ScanNeedsPaging'
     ([DynamoKey] -> next) |
+  FatalError'
+    T.Text |
   Log'
     LogLevel
     T.Text

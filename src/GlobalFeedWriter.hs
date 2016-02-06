@@ -9,6 +9,17 @@ import qualified Data.HashMap.Lazy as HM
 import qualified DynamoDbEventStore.Constants as Constants
 import           EventStoreCommands
 
+toText :: Show s => s -> T.Text
+toText = T.pack . show
+
+dynamoWriteWithRetry :: DynamoKey -> DynamoValues -> Maybe Int -> DynamoCmdM DynamoWriteResult
+dynamoWriteWithRetry key value version = loop 0 DynamoWriteFailure
+  where 
+    loop :: Int -> DynamoWriteResult -> DynamoCmdM DynamoWriteResult
+    loop 100 previousResult = return previousResult
+    loop count DynamoWriteFailure = writeToDynamo' key value version >>= loop (count  + 1)
+    loop _ previousResult = return previousResult
+
 markKeyDone :: DynamoKey -> DynamoCmdM ()
 markKeyDone key = do
   (entry :: Maybe DynamoReadResult) <- readFromDynamo' key
@@ -16,14 +27,18 @@ markKeyDone key = do
   return ()
   where
     removePagingKey :: DynamoReadResult -> DynamoCmdM ()
-    removePagingKey DynamoReadResult { dynamoReadResultVersion = version, dynamoReadResultValue = value } = 
+    removePagingKey DynamoReadResult { dynamoReadResultVersion = version, dynamoReadResultValue = value } = do
       let 
         value' = HM.delete Constants.needsPagingKey value
-      in void (writeToDynamo' key value' (Just $ version + 1)) -- todo handle failure 
+        version' = Just $ version + 1
+      result <- dynamoWriteWithRetry key value' version'
+      case result of DynamoWriteSuccess -> return ()
+                     DynamoWriteWrongVersion -> markKeyDone key
+                     DynamoWriteFailure -> fatalError' "Too many failures writing to dynamo"
 
 main :: DynamoCmdM ()
 main = do
   scanResult <- scanNeedsPaging'
   forM_ scanResult markKeyDone
-  log' Debug $ (T.pack . show . length) scanResult
+  log' Debug $ (toText . length) scanResult
   main
