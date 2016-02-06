@@ -2,7 +2,11 @@
 
 module GlobalFeedWriter (main) where
 
-import EventStoreCommands
+import qualified Data.Text             as T
+import           EventStoreCommands
 
 main :: DynamoCmdM ()
-main = log' Debug "Test"
+main = do
+  scanResult <- scanNeedsPaging'
+  log' Debug $ (T.pack . show . length) scanResult
+  main

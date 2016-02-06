@@ -21,11 +21,11 @@ import           Data.Functor (($>))
 import qualified Data.Map.Strict as Map
 import qualified Data.Vector as V
 import qualified Data.Aeson as Aeson
-import Network.AWS.DynamoDB
+import           Network.AWS.DynamoDB
 
 import           EventStoreCommands
 import qualified GlobalFeedWriter as GlobalFeedWriter
-
+import qualified DynamoDbEventStore.Constants as Constants
 
 type UploadItem = (T.Text,Int,T.Text)
 newtype UploadList = UploadList [UploadItem] deriving (Show)
@@ -60,7 +60,7 @@ dynamoWriteWithRetry (stream, eventNumber, body) = loop DynamoWriteFailure
   where
     values = HM.fromList
       [ ("Body", set avS (Just body) attributeValue),
-        ("NeedsPaging", set avS (Just "True") attributeValue) ]
+        (Constants.needsPagingKey, set avS (Just "True") attributeValue) ]
     loop :: DynamoWriteResult -> DynamoCmdM DynamoWriteResult
     loop DynamoWriteFailure =
       writeToDynamo' (DynamoKey stream eventNumber) values Nothing >>= loop
@@ -163,6 +163,12 @@ getReadResult key table = do
   (version, values) <- Map.lookup key table
   return $ DynamoReadResult key version values
 
+scanNeedsPaging :: TestDynamoTable -> [DynamoKey]
+scanNeedsPaging = 
+   let 
+     entryNeedsPaging = HM.member Constants.needsPagingKey . snd
+   in Map.keys . Map.filter entryNeedsPaging
+
 stepProgram :: RunningProgramState r -> InterpreterApp r (Either () (RunningProgramState r))
 stepProgram ps = do
   result <- runCmd $ runningProgramStateNext ps
@@ -176,7 +182,7 @@ stepProgram ps = do
     runCmd (Free (WriteToDynamo' key values version r)) = Right <$> writeToDynamo key values version r
     runCmd (Free (ReadFromDynamo' key r)) = Right <$> uses (loopStateTestState . testStateDynamo) (r . (getReadResult key))
     runCmd (Free (Log' _ msg r)) = Right <$> (addLog msg >> return r)
-    runCmd _ = undefined -- todo
+    runCmd (Free (ScanNeedsPaging' r)) = Right <$> uses (loopStateTestState . testStateDynamo) (r . scanNeedsPaging)
 
 updateLoopState :: T.Text -> Either () (RunningProgramState r) -> InterpreterApp r ()
 updateLoopState programName result =
@@ -193,6 +199,9 @@ iterateApp = do
  _ <- updateLoopState programId stepResult'
  return ()
 
+incrimentIterations :: InterpreterApp a ()
+incrimentIterations = loopStateIterations %= (+ 1)
+
 runPrograms :: Map.Map T.Text (DynamoCmdM a) -> QC.Gen ([a],TestState)
 runPrograms programs =
   over _2 (view loopStateTestState) <$> runStateT loop initialState
@@ -204,10 +213,9 @@ runPrograms programs =
           complete <- isComplete
           if complete
              then return []
-             else iterateApp >> loop
+             else iterateApp >> incrimentIterations >> loop
 
 publisher :: [(T.Text,Int,T.Text)] -> DynamoCmdM ()
-publisher [] = return ()
 publisher xs = forM_ xs dynamoWriteWithRetry
 
 globalFeedFromTestDynamoTable :: TestDynamoTable -> Map.Map T.Text (V.Vector Int)
