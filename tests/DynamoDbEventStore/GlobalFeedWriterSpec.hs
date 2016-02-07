@@ -93,8 +93,13 @@ data RunningProgramState r = RunningProgramState {
   runningProgramStateNext :: DynamoCmdM r
 }
 
+data LoopActivity = 
+  LoopActive { _loopActiveIdleCount :: (Map.Map T.Text Int) } |
+  LoopAllIdle { _loopAllIdleIterationsRemaining :: (Map.Map T.Text Int) }
+
 data LoopState r = LoopState {
   _loopStateIterations :: Int,
+  _loopStateActivity :: LoopActivity,
   _loopStateTestState :: TestState,
   _loopStatePrograms :: Map.Map T.Text (RunningProgramState r)
 }
@@ -169,12 +174,18 @@ scanNeedsPaging =
      entryNeedsPaging = HM.member Constants.needsPagingKey . snd
    in Map.keys . Map.filter entryNeedsPaging
 
-stepProgram :: RunningProgramState r -> InterpreterApp r (Either () (RunningProgramState r))
-stepProgram ps = do
-  result <- runCmd $ runningProgramStateNext ps
-  let toReturn = fmap setNextProgram result
-  return toReturn
+setPulseStatus :: T.Text -> Int -> InterpreterApp a ()
+setPulseStatus idleCount = undefined
+
+stepProgram :: T.Text -> RunningProgramState r -> InterpreterApp r () 
+stepProgram programId ps = do
+  cmdResult <- runCmd $ runningProgramStateNext ps
+  bigBanana cmdResult
   where
+    bigBanana :: Either () (DynamoCmdM r) -> InterpreterApp r ()
+    bigBanana next = do 
+      let result = (fmap setNextProgram next)
+      updateLoopState programId result
     setNextProgram :: DynamoCmdM r -> RunningProgramState r
     setNextProgram n = ps { runningProgramStateNext = n }
     runCmd :: DynamoCmdM r -> InterpreterApp r (Either () (DynamoCmdM r))
@@ -183,6 +194,7 @@ stepProgram ps = do
     runCmd (Free (WriteToDynamo' key values version r)) = Right <$> writeToDynamo key values version r
     runCmd (Free (ReadFromDynamo' key r)) = Right <$> uses (loopStateTestState . testStateDynamo) (r . (getReadResult key))
     runCmd (Free (Log' _ msg r)) = Right <$> (addLog msg >> return r)
+    runCmd (Free (SetPulseStatus' idleCount r)) = Right <$> (setPulseStatus programId idleCount >> return r)
     runCmd (Free (ScanNeedsPaging' r)) = Right <$> uses (loopStateTestState . testStateDynamo) (r . scanNeedsPaging)
 
 updateLoopState :: T.Text -> Either () (RunningProgramState r) -> InterpreterApp r ()
@@ -196,9 +208,7 @@ iterateApp :: InterpreterApp a ()
 iterateApp = do
  programs <- use loopStatePrograms
  (programId, programState) <- lift . QC.elements $ Map.toList programs
- stepResult' <- stepProgram programState
- _ <- updateLoopState programId stepResult'
- return ()
+ stepProgram programId programState
 
 incrimentIterations :: InterpreterApp a ()
 incrimentIterations = loopStateIterations %= (+ 1)
@@ -208,7 +218,7 @@ runPrograms programs =
   over _2 (view loopStateTestState) <$> runStateT loop initialState
   where
         runningPrograms = fmap RunningProgramState programs
-        initialState = LoopState 0 (TestState Map.empty V.empty) runningPrograms
+        initialState = LoopState 0 (LoopActive Map.empty) (TestState Map.empty V.empty) runningPrograms
         loop :: InterpreterApp a [a]
         loop = do
           complete <- isComplete

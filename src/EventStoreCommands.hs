@@ -152,6 +152,9 @@ data DynamoCmd next =
     ([DynamoKey] -> next) |
   FatalError'
     T.Text |
+  SetPulseStatus'
+    Int
+    next |
   Log'
     LogLevel
     T.Text
