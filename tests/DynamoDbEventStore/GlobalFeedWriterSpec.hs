@@ -160,7 +160,7 @@ writeToDynamo key values version next =
        return $ next DynamoWriteWrongVersion
     performWrite newVersion = do
        _ <- addLogS $ "Performing write: " ++ show key ++ " " ++ show values ++ " " ++ show version
-       _ <- loopStateTestState . testStateDynamo %= (Map.insert key (newVersion, values))
+       _ <- loopStateTestState . testStateDynamo %= Map.insert key (newVersion, values)
        return $ next DynamoWriteSuccess
 
 getReadResult :: DynamoKey -> TestDynamoTable -> Maybe DynamoReadResult
@@ -174,8 +174,18 @@ scanNeedsPaging =
      entryNeedsPaging = HM.member Constants.needsPagingKey . snd
    in Map.keys . Map.filter entryNeedsPaging
 
-setPulseStatus :: T.Text -> Int -> InterpreterApp a ()
-setPulseStatus idleCount = undefined
+setPulseStatus :: T.Text -> Bool -> InterpreterApp a ()
+setPulseStatus programName isActive =
+  loopStateActivity %= updatePulseStatus isActive
+  where 
+    alterIdleCount :: Bool -> Maybe Int -> Maybe Int
+    alterIdleCount True _ = Just 0
+    alterIdleCount False Nothing = Just 1
+    alterIdleCount False (Just idleCount) = Just $ idleCount + 1
+    updatePulseStatus :: Bool -> LoopActivity -> LoopActivity
+    updatePulseStatus _ LoopActive { _loopActiveIdleCount = idleCount } = LoopActive $ Map.alter (alterIdleCount isActive) programName idleCount
+    updatePulseStatus True LoopAllIdle { _loopAllIdleIterationsRemaining = idleRemaining } = LoopActive Map.empty
+    updatePulseStatus False LoopAllIdle { _loopAllIdleIterationsRemaining = idleRemaining } = LoopAllIdle $ Map.adjust (\x -> x - 1) programName idleRemaining
 
 stepProgram :: T.Text -> RunningProgramState r -> InterpreterApp r () 
 stepProgram programId ps = do
@@ -184,7 +194,7 @@ stepProgram programId ps = do
   where
     bigBanana :: Either () (DynamoCmdM r) -> InterpreterApp r ()
     bigBanana next = do 
-      let result = (fmap setNextProgram next)
+      let result = fmap setNextProgram next
       updateLoopState programId result
     setNextProgram :: DynamoCmdM r -> RunningProgramState r
     setNextProgram n = ps { runningProgramStateNext = n }
@@ -194,7 +204,7 @@ stepProgram programId ps = do
     runCmd (Free (WriteToDynamo' key values version r)) = Right <$> writeToDynamo key values version r
     runCmd (Free (ReadFromDynamo' key r)) = Right <$> uses (loopStateTestState . testStateDynamo) (r . (getReadResult key))
     runCmd (Free (Log' _ msg r)) = Right <$> (addLog msg >> return r)
-    runCmd (Free (SetPulseStatus' idleCount r)) = Right <$> (setPulseStatus programId idleCount >> return r)
+    runCmd (Free (SetPulseStatus' isActive r)) = Right <$> (setPulseStatus programId isActive >> return r)
     runCmd (Free (ScanNeedsPaging' r)) = Right <$> uses (loopStateTestState . testStateDynamo) (r . scanNeedsPaging)
 
 updateLoopState :: T.Text -> Either () (RunningProgramState r) -> InterpreterApp r ()

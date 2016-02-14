@@ -37,15 +37,9 @@ markKeyDone key = do
                      DynamoWriteFailure -> fatalError' "Too many failures writing to dynamo"
 
 main :: DynamoCmdM ()
-main = loop 0
-  where 
-  loop :: Int -> DynamoCmdM ()
-  loop idleCount = do
-    setPulseStatus' idleCount
-    scanResult <- scanNeedsPaging'
-    forM_ scanResult markKeyDone
-    log' Debug $ (toText . length) scanResult
-    let idleCount' = case scanResult of [] -> idleCount + 1
-                                        _  -> 0
-
-    loop idleCount'
+main = forever $ do
+  scanResult <- scanNeedsPaging'
+  forM_ scanResult markKeyDone
+  log' Debug $ (toText . length) scanResult
+  setPulseStatus' $ case scanResult of [] -> False
+                                       _  -> True

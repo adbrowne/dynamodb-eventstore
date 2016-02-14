@@ -153,7 +153,7 @@ data DynamoCmd next =
   FatalError'
     T.Text |
   SetPulseStatus'
-    Int
+    Bool
     next |
   Log'
     LogLevel
