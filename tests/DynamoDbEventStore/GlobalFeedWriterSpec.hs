@@ -14,7 +14,8 @@ import qualified Test.Tasty.QuickCheck as QC
 import           Control.Applicative
 import           Control.Lens
 import           Control.Monad.State
-import           Control.Monad.Free
+import qualified Control.Monad.Free.Church as Church
+import qualified Control.Monad.Free as Free
 import qualified Data.HashMap.Lazy as HM
 import qualified Data.Text             as T
 import           Data.Functor (($>))
@@ -27,6 +28,7 @@ import           EventStoreCommands
 import qualified GlobalFeedWriter as GlobalFeedWriter
 import qualified DynamoDbEventStore.Constants as Constants
 
+type DynamoCmdMFree = Free.Free DynamoCmd
 type UploadItem = (T.Text,Int,T.Text)
 newtype UploadList = UploadList [UploadItem] deriving (Show)
 
@@ -90,12 +92,13 @@ instance Aeson.ToJSON FeedEntry where
         Aeson.object ["s" Aeson..= stream, "n" Aeson..= number]
 
 data RunningProgramState r = RunningProgramState {
-  runningProgramStateNext :: DynamoCmdM r
+  runningProgramStateNext :: DynamoCmdMFree r,
+  runningProgramStateMaxIdle :: Int
 }
 
 data LoopActivity = 
-  LoopActive { _loopActiveIdleCount :: (Map.Map T.Text Int) } |
-  LoopAllIdle { _loopAllIdleIterationsRemaining :: (Map.Map T.Text Int) }
+  LoopActive { _loopActiveIdleCount :: Map.Map T.Text Int } |
+  LoopAllIdle { _loopAllIdleIterationsRemaining :: Map.Map T.Text Int }
 
 data LoopState r = LoopState {
   _loopStateIterations :: Int,
@@ -192,20 +195,20 @@ stepProgram programId ps = do
   cmdResult <- runCmd $ runningProgramStateNext ps
   bigBanana cmdResult
   where
-    bigBanana :: Either () (DynamoCmdM r) -> InterpreterApp r ()
+    bigBanana :: Either () (DynamoCmdMFree r) -> InterpreterApp r ()
     bigBanana next = do 
       let result = fmap setNextProgram next
       updateLoopState programId result
-    setNextProgram :: DynamoCmdM r -> RunningProgramState r
+    setNextProgram :: DynamoCmdMFree r -> RunningProgramState r
     setNextProgram n = ps { runningProgramStateNext = n }
-    runCmd :: DynamoCmdM r -> InterpreterApp r (Either () (DynamoCmdM r))
-    runCmd (Pure _) = return $ Left ()
-    runCmd (Free (FatalError' msg)) = Left <$> (addLog $ T.append "Fatal Error" msg)
-    runCmd (Free (WriteToDynamo' key values version r)) = Right <$> writeToDynamo key values version r
-    runCmd (Free (ReadFromDynamo' key r)) = Right <$> uses (loopStateTestState . testStateDynamo) (r . (getReadResult key))
-    runCmd (Free (Log' _ msg r)) = Right <$> (addLog msg >> return r)
-    runCmd (Free (SetPulseStatus' isActive r)) = Right <$> (setPulseStatus programId isActive >> return r)
-    runCmd (Free (ScanNeedsPaging' r)) = Right <$> uses (loopStateTestState . testStateDynamo) (r . scanNeedsPaging)
+    runCmd :: DynamoCmdMFree r -> InterpreterApp r (Either () (DynamoCmdMFree r))
+    runCmd (Free.Pure _) = return $ Left ()
+    runCmd (Free.Free (FatalError' msg)) = Left <$> (addLog $ T.append "Fatal Error" msg)
+    runCmd (Free.Free (WriteToDynamo' key values version r)) = Right <$> writeToDynamo key values version r
+    runCmd (Free.Free (ReadFromDynamo' key r)) = Right <$> uses (loopStateTestState . testStateDynamo) (r . (getReadResult key))
+    runCmd (Free.Free (Log' _ msg r)) = Right <$> (addLog msg >> return r)
+    runCmd (Free.Free (SetPulseStatus' isActive r)) = Right <$> (setPulseStatus programId isActive >> return r)
+    runCmd (Free.Free (ScanNeedsPaging' r)) = Right <$> uses (loopStateTestState . testStateDynamo) (r . scanNeedsPaging)
 
 updateLoopState :: T.Text -> Either () (RunningProgramState r) -> InterpreterApp r ()
 updateLoopState programName result =
@@ -223,11 +226,11 @@ iterateApp = do
 incrimentIterations :: InterpreterApp a ()
 incrimentIterations = loopStateIterations %= (+ 1)
 
-runPrograms :: Map.Map T.Text (DynamoCmdM a) -> QC.Gen ([a],TestState)
+runPrograms :: Map.Map T.Text (DynamoCmdM a, Int) -> QC.Gen ([a],TestState)
 runPrograms programs =
   over _2 (view loopStateTestState) <$> runStateT loop initialState
   where
-        runningPrograms = fmap RunningProgramState programs
+        runningPrograms = fmap (\(p,maxIdleIterations) -> RunningProgramState (Church.fromF p) maxIdleIterations) programs
         initialState = LoopState 0 (LoopActive Map.empty) (TestState Map.empty V.empty) runningPrograms
         loop :: InterpreterApp a [a]
         loop = do
@@ -273,8 +276,8 @@ prop_EventShouldAppearInGlobalFeedInStreamOrder :: UploadList -> QC.Property
 prop_EventShouldAppearInGlobalFeedInStreamOrder (UploadList uploadList) =
   let
     programs = Map.fromList [
-      ("Publisher", publisher uploadList),
-      ("GlobalFeedWriter1", GlobalFeedWriter.main) ]
+      ("Publisher", (publisher uploadList,100)),
+      ("GlobalFeedWriter1", (GlobalFeedWriter.main, 100)) ]
   in QC.forAll (runPrograms programs) check
      where
        check (_, testState) = globalFeedFromTestDynamoTable (testState ^. testStateDynamo) === globalFeedFromUploadList uploadList

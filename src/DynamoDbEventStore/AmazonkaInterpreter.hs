@@ -11,7 +11,7 @@ import           Data.Aeson
 import           Data.Time.Clock
 import           Control.Exception.Lens
 import           Data.Monoid
-import           Control.Monad.Free
+import           Control.Monad.Free.Church
 import           Control.Monad.Catch
 import           Data.Int
 import qualified Data.HashMap.Strict     as HM

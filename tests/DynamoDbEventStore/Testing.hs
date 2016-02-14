@@ -4,7 +4,7 @@
 module DynamoDbEventStore.Testing where
 
 import           Control.Applicative
-import           Control.Monad.Free
+import           Control.Monad.Free.Church
 import           Control.Monad.State
 import           Data.Int
 import qualified Data.List               as L

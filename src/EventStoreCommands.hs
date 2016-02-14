@@ -8,7 +8,7 @@
 module EventStoreCommands where
 
 import           Control.Monad
-import           Control.Monad.Free
+import           Control.Monad.Free.Church
 import           Control.Monad.Free.TH
 
 import           Data.Aeson
@@ -110,7 +110,7 @@ data EventStoreCmd next =
     ([EventKey] -> next)
   deriving (Functor) -- todo support paging
 
-type EventStoreCmdM = Free EventStoreCmd
+type EventStoreCmdM = F EventStoreCmd
 
 makeFree ''EventStoreCmd
 
@@ -164,4 +164,4 @@ data DynamoCmd next =
 
 makeFree ''DynamoCmd
 
-type DynamoCmdM = Free DynamoCmd
+type DynamoCmdM = F DynamoCmd
