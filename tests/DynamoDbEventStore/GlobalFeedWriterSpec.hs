@@ -25,7 +25,7 @@ import qualified Data.Aeson as Aeson
 import           Network.AWS.DynamoDB
 
 import           EventStoreCommands
-import qualified GlobalFeedWriter as GlobalFeedWriter
+import qualified GlobalFeedWriter
 import qualified DynamoDbEventStore.Constants as Constants
 
 type DynamoCmdMFree = Free.Free DynamoCmd
@@ -198,7 +198,7 @@ setPulseStatus programName isActive = do
     updatePulseStatus :: LoopActivity -> Bool -> LoopActivity -> LoopActivity
     updatePulseStatus allInactiveState _ LoopActive { _loopActiveIdleCount = idleCount } =
       let updated = Map.alter (const (Just isActive)) programName idleCount
-      in if (allInactive updated) then allInactiveState else LoopActive updated
+      in if allInactive updated then allInactiveState else LoopActive updated
     updatePulseStatus _ True LoopAllIdle { _loopAllIdleIterationsRemaining = idleRemaining } = LoopActive Map.empty
     updatePulseStatus _ False LoopAllIdle { _loopAllIdleIterationsRemaining = idleRemaining } = LoopAllIdle $ Map.adjust (\x -> x - 1) programName idleRemaining
 
@@ -215,9 +215,9 @@ stepProgram programId ps = do
     setNextProgram n = ps { runningProgramStateNext = n }
     runCmd :: DynamoCmdMFree r -> InterpreterApp r (Either () (DynamoCmdMFree r))
     runCmd (Free.Pure _) = return $ Left ()
-    runCmd (Free.Free (FatalError' msg)) = Left <$> (addLog $ T.append "Fatal Error" msg)
+    runCmd (Free.Free (FatalError' msg)) = Left <$> addLog (T.append "Fatal Error" msg)
     runCmd (Free.Free (WriteToDynamo' key values version r)) = Right <$> writeToDynamo key values version r
-    runCmd (Free.Free (ReadFromDynamo' key r)) = Right <$> uses (loopStateTestState . testStateDynamo) (r . (getReadResult key))
+    runCmd (Free.Free (ReadFromDynamo' key r)) = Right <$> uses (loopStateTestState . testStateDynamo) (r . getReadResult key)
     runCmd (Free.Free (Log' _ msg r)) = Right <$> (addLog msg >> return r)
     runCmd (Free.Free (SetPulseStatus' isActive r)) = Right <$> (setPulseStatus programId isActive >> return r)
     runCmd (Free.Free (ScanNeedsPaging' r)) = Right <$> uses (loopStateTestState . testStateDynamo) (r . scanNeedsPaging)
