@@ -97,7 +97,7 @@ data RunningProgramState r = RunningProgramState {
 }
 
 data LoopActivity = 
-  LoopActive { _loopActiveIdleCount :: Map.Map T.Text Int } |
+  LoopActive { _loopActiveIdleCount :: Map.Map T.Text Bool } |
   LoopAllIdle { _loopAllIdleIterationsRemaining :: Map.Map T.Text Int }
 
 data LoopState r = LoopState {
@@ -125,7 +125,12 @@ isComplete :: InterpreterApp a Bool
 isComplete = do
   allProgramsComplete <- uses loopStatePrograms Map.null
   tooManyIterations <- uses loopStateIterations (> maxIterations)
-  return $ allProgramsComplete || tooManyIterations
+  allProgramsOverMaxIdle <- uses loopStateActivity allOverMaxIdle
+  return $ allProgramsComplete || tooManyIterations || allProgramsOverMaxIdle
+  where 
+    allOverMaxIdle :: LoopActivity -> Bool 
+    allOverMaxIdle (LoopActive _) = False
+    allOverMaxIdle (LoopAllIdle status) = Map.filter (>0) status == Map.empty
 
 addLog :: T.Text -> InterpreterApp a ()
 addLog m =
@@ -178,17 +183,24 @@ scanNeedsPaging =
    in Map.keys . Map.filter entryNeedsPaging
 
 setPulseStatus :: T.Text -> Bool -> InterpreterApp a ()
-setPulseStatus programName isActive =
-  loopStateActivity %= updatePulseStatus isActive
+setPulseStatus programName isActive = do
+  allInactive <- uses loopStatePrograms initialAllInactive
+  loopStateActivity %= updatePulseStatus (LoopAllIdle allInactive) isActive
   where 
+    allInactive :: Map.Map T.Text Bool -> Bool
+    allInactive m = Map.filter id m == Map.empty
+    initialAllInactive :: Map.Map T.Text (RunningProgramState a) -> Map.Map T.Text Int
+    initialAllInactive = fmap runningProgramStateMaxIdle
     alterIdleCount :: Bool -> Maybe Int -> Maybe Int
     alterIdleCount True _ = Just 0
     alterIdleCount False Nothing = Just 1
     alterIdleCount False (Just idleCount) = Just $ idleCount + 1
-    updatePulseStatus :: Bool -> LoopActivity -> LoopActivity
-    updatePulseStatus _ LoopActive { _loopActiveIdleCount = idleCount } = LoopActive $ Map.alter (alterIdleCount isActive) programName idleCount
-    updatePulseStatus True LoopAllIdle { _loopAllIdleIterationsRemaining = idleRemaining } = LoopActive Map.empty
-    updatePulseStatus False LoopAllIdle { _loopAllIdleIterationsRemaining = idleRemaining } = LoopAllIdle $ Map.adjust (\x -> x - 1) programName idleRemaining
+    updatePulseStatus :: LoopActivity -> Bool -> LoopActivity -> LoopActivity
+    updatePulseStatus allInactiveState _ LoopActive { _loopActiveIdleCount = idleCount } =
+      let updated = Map.alter (const (Just isActive)) programName idleCount
+      in if (allInactive updated) then allInactiveState else LoopActive updated
+    updatePulseStatus _ True LoopAllIdle { _loopAllIdleIterationsRemaining = idleRemaining } = LoopActive Map.empty
+    updatePulseStatus _ False LoopAllIdle { _loopAllIdleIterationsRemaining = idleRemaining } = LoopAllIdle $ Map.adjust (\x -> x - 1) programName idleRemaining
 
 stepProgram :: T.Text -> RunningProgramState r -> InterpreterApp r () 
 stepProgram programId ps = do
