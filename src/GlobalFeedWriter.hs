@@ -5,7 +5,6 @@ module GlobalFeedWriter (main, FeedEntry(FeedEntry)) where
 
 import           Control.Monad
 import qualified Data.Text             as T
-import qualified Data.Text.Encoding    as T
 import qualified Data.Text.Lazy        as TL
 import qualified Data.ByteString.Lazy  as BL
 import qualified Data.Text.Lazy.Builder        as TL
@@ -19,7 +18,6 @@ import           Network.AWS.DynamoDB
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Encode as Aeson
 import           Control.Applicative
-import           Data.Text.Format (format)
 import           Text.Printf (printf)
 
 toText :: Show s => s -> T.Text
@@ -76,22 +74,6 @@ previousEntryIsPaged item =
     else
       entryIsPaged (item { dynamoKeyEventNumber = itemEventNumber - 1})
 
-markKeyDone :: DynamoKey -> DynamoCmdM ()
-markKeyDone key = do
-  (entry :: Maybe DynamoReadResult) <- readFromDynamo' key
-  _ <- maybe (return ()) removePagingKey entry
-  return ()
-  where
-    removePagingKey :: DynamoReadResult -> DynamoCmdM ()
-    removePagingKey DynamoReadResult { dynamoReadResultVersion = version, dynamoReadResultValue = value } = do
-      let 
-        value' = HM.delete Constants.needsPagingKey value
-        version' = Just $ version + 1
-      result <- dynamoWriteWithRetry key value' version'
-      case result of DynamoWriteSuccess -> return ()
-                     DynamoWriteWrongVersion -> markKeyDone key
-                     DynamoWriteFailure -> fatalError' "Too many failures writing to dynamo"
-
 readPageBody :: DynamoValues -> [FeedEntry]
 readPageBody values = -- todo don't ignore errors 
   fromMaybe [] $ view (ix Constants.pageBodyKey . avB) values >>= Aeson.decodeStrict
@@ -133,9 +115,6 @@ verifyPage pageNumber = do
 logIf :: Bool -> LogLevel -> T.Text -> DynamoCmdM ()
 logIf True logLevel t = log' logLevel t
 logIf False _ _ = return ()
-
-asJsonText :: Aeson.ToJSON a => a -> T.Text
-asJsonText = TL.toStrict . TL.toLazyText . Aeson.encodeToTextBuilder . Aeson.toJSON 
 
 readFromDynamoMustExist :: DynamoKey -> DynamoCmdM DynamoReadResult
 readFromDynamoMustExist key = do

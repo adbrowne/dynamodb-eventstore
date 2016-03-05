@@ -6,13 +6,11 @@
 
 module DynamoDbEventStore.GlobalFeedWriterSpec where
 
-import           Debug.Trace
 import           Data.List
 import           Data.Maybe
 import           Test.Tasty
 import           Test.Tasty.QuickCheck((===),testProperty)
 import qualified Test.Tasty.QuickCheck as QC
-import           Control.Applicative
 import           Control.Lens
 import           Control.Monad.State
 import qualified Control.Monad.Free.Church as Church
