@@ -26,6 +26,7 @@ import           Network.AWS.DynamoDB
 
 import           EventStoreCommands
 import qualified GlobalFeedWriter
+import           GlobalFeedWriter (FeedEntry())
 import qualified DynamoDbEventStore.Constants as Constants
 
 type DynamoCmdMFree = Free.Free DynamoCmd
@@ -70,26 +71,11 @@ dynamoWriteWithRetry (stream, eventNumber, body) = loop DynamoWriteFailure
 
 type TestDynamoTable = Map.Map DynamoKey (Int, DynamoValues)
 
-data FeedEntry = FeedEntry {
-  feedEntryStream :: T.Text,
-  feedEntryNumber :: Int
-} deriving (Eq, Show)
-
-instance QC.Arbitrary FeedEntry where
+instance QC.Arbitrary GlobalFeedWriter.FeedEntry where
   arbitrary = do
     stream <- QC.arbitrary
     number <- QC.arbitrary
-    return $ FeedEntry stream number
-
-instance Aeson.FromJSON FeedEntry where
-    parseJSON (Aeson.Object v) = FeedEntry <$>
-                           v Aeson..: "s" <*>
-                           v Aeson..: "n"
-    parseJSON _          = empty
-
-instance Aeson.ToJSON FeedEntry where
-    toJSON (FeedEntry stream number) =
-        Aeson.object ["s" Aeson..= stream, "n" Aeson..= number]
+    return $ GlobalFeedWriter.FeedEntry stream number
 
 data RunningProgramState r = RunningProgramState {
   runningProgramStateNext :: DynamoCmdMFree r,
@@ -150,7 +136,7 @@ potentialFailure failurePercent onFailure onSuccess = do
 
 writeToDynamo :: DynamoKey -> DynamoValues -> DynamoVersion -> (DynamoWriteResult -> n)  -> InterpreterApp a n
 writeToDynamo key values version next =
-  potentialFailure 25 onFailure onSuccess
+  potentialFailure 0 onFailure onSuccess -- todo: reinstate failure
   where
     onFailure =
       addLog "Random write failure" $> next DynamoWriteFailure
@@ -261,12 +247,12 @@ globalFeedFromTestDynamoTable testTable =
     getPagedEventOrder :: TestDynamoTable -> [(T.Text, Int)]
     getPagedEventOrder dynamoTable =
       let
-        feedEntryToTuple (FeedEntry stream number) = (stream, number)
-        readPageValues :: (DynamoKey, (Int, DynamoValues)) -> [FeedEntry]
+        feedEntryToTuple (GlobalFeedWriter.FeedEntry stream number) = (stream, number)
+        readPageValues :: (DynamoKey, (Int, DynamoValues)) -> [GlobalFeedWriter.FeedEntry]
         readPageValues (_, (_, values)) = fromMaybe [] $
-          view (ix "body" . avB) values >>= Aeson.decodeStrict
+          view (ix Constants.pageBodyKey . avB) values >>= Aeson.decodeStrict
         pageEntries = Map.toList dynamoTable &
-                      filter (\(DynamoKey stream _, _) -> T.isPrefixOf "$page" stream) &
+                      filter (\(DynamoKey stream _, _) -> T.isPrefixOf Constants.pageDynamoKeyPrefix stream) &
                       sortOn fst >>=
                       readPageValues
       in feedEntryToTuple <$> pageEntries

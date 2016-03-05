@@ -124,7 +124,7 @@ data DynamoReadResult = DynamoReadResult {
   dynamoReadResultKey :: DynamoKey,
   dynamoReadResultVersion :: Int,
   dynamoReadResultValue :: DynamoValues
-}
+} deriving Show
 
 type DynamoVersion = Maybe Int
 
