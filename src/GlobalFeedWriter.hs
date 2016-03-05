@@ -5,9 +5,7 @@ module GlobalFeedWriter (main, FeedEntry(FeedEntry)) where
 
 import           Control.Monad
 import qualified Data.Text             as T
-import qualified Data.Text.Lazy        as TL
 import qualified Data.ByteString.Lazy  as BL
-import qualified Data.Text.Lazy.Builder        as TL
 import qualified Data.HashMap.Lazy as HM
 import qualified DynamoDbEventStore.Constants as Constants
 import           EventStoreCommands
@@ -16,7 +14,6 @@ import           Data.Monoid
 import           Control.Lens
 import           Network.AWS.DynamoDB
 import qualified Data.Aeson as Aeson
-import qualified Data.Aeson.Encode as Aeson
 import           Control.Applicative
 import           Text.Printf (printf)
 
