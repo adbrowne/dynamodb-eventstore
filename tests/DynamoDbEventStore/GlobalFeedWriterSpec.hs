@@ -6,6 +6,7 @@
 
 module DynamoDbEventStore.GlobalFeedWriterSpec where
 
+import           Debug.Trace
 import           Data.List
 import           Data.Maybe
 import           Test.Tasty
@@ -249,7 +250,7 @@ globalFeedFromTestDynamoTable testTable =
       let
         feedEntryToTuple (GlobalFeedWriter.FeedEntry stream number) = (stream, number)
         readPageValues :: (DynamoKey, (Int, DynamoValues)) -> [GlobalFeedWriter.FeedEntry]
-        readPageValues (_, (_, values)) = fromMaybe [] $
+        readPageValues (_, (_, values)) = fromMaybe [] $ 
           view (ix Constants.pageBodyKey . avB) values >>= Aeson.decodeStrict
         pageEntries = Map.toList dynamoTable &
                       filter (\(DynamoKey stream _, _) -> T.isPrefixOf Constants.pageDynamoKeyPrefix stream) &

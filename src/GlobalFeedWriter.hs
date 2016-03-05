@@ -93,18 +93,8 @@ markKeyDone key = do
                      DynamoWriteFailure -> fatalError' "Too many failures writing to dynamo"
 
 readPageBody :: DynamoValues -> [FeedEntry]
-readPageBody values = 
-  fromMaybe [] $ do -- todo don't ignore errors
-    body <- HM.lookup Constants.pageBodyKey values
-    (bodyString :: T.Text) <- view avS body
-    Aeson.decode (BL.fromStrict (T.encodeUtf8 bodyString))
-
-{-
-  def readPageBody(values : EventStoreDsl.DynamoValue) : List[FeedEntry] = 
-    values.get(Constants.PageBodyKey).flatMap { case DynamoString(body) => body.decodeOption[List[FeedEntry]]}.getOrElse(List.empty) // todo don't ignore errors
-
--}
-
+readPageBody values = -- todo don't ignore errors 
+  fromMaybe [] $ view (ix Constants.pageBodyKey . avB) values >>= Aeson.decodeStrict
 
 nextVersion :: DynamoReadResult -> Maybe Int
 nextVersion readResult = Just $ dynamoReadResultVersion readResult + 1
@@ -161,10 +151,10 @@ updateGlobalFeed item@DynamoKey { dynamoKeyKey = itemKey, dynamoKeyEventNumber =
   itemIsPaged <- checkItemPaged item
   logIf itemIsPaged Debug ("itemIsPaged" <> toText item)
   unless itemIsPaged $ do
-    let feedEntry = asJsonText [FeedEntry  itemKey itemEventNumber]
+    let feedEntry = (BL.toStrict . Aeson.encode . Aeson.toJSON) [FeedEntry  itemKey itemEventNumber]
     let nextPage = mostRecentPage + 1
     when (dynamoKeyEventNumber item > 0) (updateGlobalFeed item { dynamoKeyEventNumber = itemEventNumber - 1 })
-    pageResult <- dynamoWriteWithRetry (getPageDynamoKey nextPage) (HM.singleton Constants.pageBodyKey (set avS (Just feedEntry) attributeValue)) Nothing
+    pageResult <- dynamoWriteWithRetry (getPageDynamoKey nextPage) (HM.singleton Constants.pageBodyKey (set avB (Just feedEntry) attributeValue)) Nothing
     onPageResult nextPage pageResult
     return ()
   return ()
