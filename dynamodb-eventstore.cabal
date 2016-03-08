@@ -23,7 +23,8 @@ library
                        EventStoreActions,
                        GlobalFeedWriter,
                        DynamoDbEventStore.Constants,
-                       DynamoDbEventStore.AmazonkaInterpreter
+                       DynamoDbEventStore.AmazonkaInterpreter,
+                       DynamoDbEventStore.AmazonkaInterpreterNew
   -- other-extensions:    
   build-depends:       base >=4.8 && <4.9,
                        scotty >= 0.9,
