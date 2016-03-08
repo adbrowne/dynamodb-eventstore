@@ -35,7 +35,7 @@ instance Aeson.ToJSON FeedEntry where
     toJSON (FeedEntry stream number) =
         Aeson.object ["s" Aeson..= stream, "n" Aeson..= number]
 
-dynamoWriteWithRetry :: DynamoKey -> DynamoValues -> Maybe Int -> DynamoCmdM DynamoWriteResult
+dynamoWriteWithRetry :: DynamoKey -> DynamoValues -> Int -> DynamoCmdM DynamoWriteResult
 dynamoWriteWithRetry key value version = loop 0 DynamoWriteFailure
   where 
     loop :: Int -> DynamoWriteResult -> DynamoCmdM DynamoWriteResult
@@ -75,8 +75,8 @@ readPageBody :: DynamoValues -> [FeedEntry]
 readPageBody values = -- todo don't ignore errors 
   fromMaybe [] $ view (ix Constants.pageBodyKey . avB) values >>= Aeson.decodeStrict
 
-nextVersion :: DynamoReadResult -> Maybe Int
-nextVersion readResult = Just $ dynamoReadResultVersion readResult + 1
+nextVersion :: DynamoReadResult -> Int
+nextVersion readResult = dynamoReadResultVersion readResult + 1
 
 setPageEntryPageNumber :: Int -> FeedEntry -> DynamoCmdM ()
 setPageEntryPageNumber pageNumber feedEntry = do
@@ -107,7 +107,7 @@ verifyPage pageNumber = do
     log' Debug ("setPageEntry for " <> toText entries)
     void $ traverse (setPageEntryPageNumber pageNumber) entries
     let newValues = HM.insert Constants.pageIsVerifiedKey (stringAttributeValue "Verified") pageValues
-    void $ dynamoWriteWithRetry pageDynamoKey newValues (Just (pageVersion + 1))
+    void $ dynamoWriteWithRetry pageDynamoKey newValues (pageVersion + 1)
 
 logIf :: Bool -> LogLevel -> T.Text -> DynamoCmdM ()
 logIf True logLevel t = log' logLevel t
@@ -130,7 +130,7 @@ updateGlobalFeed item@DynamoKey { dynamoKeyKey = itemKey, dynamoKeyEventNumber =
     let feedEntry = (BL.toStrict . Aeson.encode . Aeson.toJSON) [FeedEntry  itemKey itemEventNumber]
     let nextPage = mostRecentPage + 1
     when (dynamoKeyEventNumber item > 0) (updateGlobalFeed item { dynamoKeyEventNumber = itemEventNumber - 1 })
-    pageResult <- dynamoWriteWithRetry (getPageDynamoKey nextPage) (HM.singleton Constants.pageBodyKey (set avB (Just feedEntry) attributeValue)) Nothing
+    pageResult <- dynamoWriteWithRetry (getPageDynamoKey nextPage) (HM.singleton Constants.pageBodyKey (set avB (Just feedEntry) attributeValue)) 0
     onPageResult nextPage pageResult
     return ()
   return ()
@@ -144,7 +144,7 @@ updateGlobalFeed item@DynamoKey { dynamoKeyKey = itemKey, dynamoKeyEventNumber =
       let values = dynamoReadResultValue eventEntry
       let version = dynamoReadResultVersion eventEntry
       let values' = (HM.delete Constants.needsPagingKey . HM.insert Constants.eventPageNumberKey (set avS (Just (toText nextPage)) attributeValue)) values
-      itemUpdateResult <- dynamoWriteWithRetry item values' (Just (version + 1))
+      itemUpdateResult <- dynamoWriteWithRetry item values' (version + 1)
       when (itemUpdateResult == DynamoWriteSuccess) (verifyPage nextPage)
     onPageResult _ DynamoWriteFailure = undefined
 

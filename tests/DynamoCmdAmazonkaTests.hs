@@ -33,7 +33,7 @@ tests evalProgram =
     testCase "Can read event" $
         let
           actions = do
-            _ <- sampleWrite Nothing
+            _ <- sampleWrite 0
             sampleRead
           evt = evalProgram actions
           expected :: Maybe DynamoReadResult
@@ -44,8 +44,8 @@ tests evalProgram =
     , testCase "Write event returns WriteExists when event already exists" $
         let
           actions = do
-            _ <- sampleWrite Nothing
-            sampleWrite Nothing -- duplicate
+            _ <- sampleWrite 0
+            sampleWrite 0 -- duplicate
           writeResult = evalProgram actions
         in do
           r <- writeResult
@@ -53,8 +53,8 @@ tests evalProgram =
     , testCase "With correct version you can write a subsequent event" $
         let
           actions = do
-            _ <- sampleWrite Nothing
-            sampleWrite (Just 1)
+            _ <- sampleWrite 0
+            sampleWrite 1
           writeResult = evalProgram actions
         in do
           r <- writeResult

@@ -65,7 +65,7 @@ dynamoWriteWithRetry (stream, eventNumber, body) = loop DynamoWriteFailure
         (Constants.needsPagingKey, set avS (Just "True") attributeValue) ]
     loop :: DynamoWriteResult -> DynamoCmdM DynamoWriteResult
     loop DynamoWriteFailure =
-      writeToDynamo' (DynamoKey stream eventNumber) values Nothing >>= loop
+      writeToDynamo' (DynamoKey stream eventNumber) values 0 >>= loop
     loop r = return r
 
 type TestDynamoTable = Map.Map DynamoKey (Int, DynamoValues)
@@ -143,11 +143,11 @@ writeToDynamo key values version next =
       currentEntry <- Map.lookup key <$> use (loopStateTestState . testStateDynamo)
       let currentVersion = fst <$> currentEntry
       writeVersion version currentVersion
-    writeVersion Nothing Nothing = performWrite 0
-    writeVersion (Just v) (Just cv)
+    writeVersion 0 Nothing = performWrite 0
+    writeVersion newVersion Nothing = versionFailure newVersion Nothing
+    writeVersion v (Just cv)
       | cv == v - 1 = performWrite v
-      | otherwise = versionFailure (Just v) (Just cv)
-    writeVersion newVersion currentVersion = versionFailure newVersion currentVersion
+      | otherwise = versionFailure v (Just cv)
     versionFailure newVersion currentVersion = do
        _ <- addLogS $ "Wrong version writing: " ++ show newVersion ++ " current: " ++ show currentVersion
        return $ next DynamoWriteWrongVersion

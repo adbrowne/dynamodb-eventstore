@@ -126,7 +126,7 @@ data DynamoReadResult = DynamoReadResult {
   dynamoReadResultValue :: DynamoValues
 } deriving (Show, Eq)
 
-type DynamoVersion = Maybe Int
+type DynamoVersion = Int
 
 data DynamoWriteResult =
   DynamoWriteSuccess |

@@ -132,18 +132,18 @@ runCmd tn (ReadFromDynamo' eventKey n) = do
 runCmd tn (WriteToDynamo' DynamoKey { dynamoKeyKey = streamId, dynamoKeyEventNumber = eventNumber } values version n) = 
   catches writeItem [handler _ConditionalCheckFailedException (\_ -> n DynamoWriteWrongVersion)] 
   where
-    addVersionChecks Nothing req = 
+    addVersionChecks 0 req = 
         req & set piConditionExpression (Just $ "attribute_not_exists(" <> fieldEventNumber <> ")")
-    addVersionChecks (Just v) req = 
+    addVersionChecks _ req = 
         req & set piConditionExpression (Just $ fieldVersion <> " = :itemVersion")
-        & set piExpressionAttributeValues (HM.singleton ":itemVersion" (set avN (Just (showt (v - 1))) attributeValue))
+        & set piExpressionAttributeValues (HM.singleton ":itemVersion" (set avN (Just (showt (version - 1))) attributeValue))
         
     writeItem = do
         time <- getCurrentTime
         let item = HM.fromList [
                   itemAttribute fieldStreamId avS streamId,
                   itemAttribute fieldEventNumber avN (showt eventNumber),
-                  itemAttribute fieldVersion avN (showt (fromMaybe 0 version))]
+                  itemAttribute fieldVersion avN (showt version)]
                   <> values 
         let req0 =
               putItem tn
