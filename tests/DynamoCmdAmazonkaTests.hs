@@ -22,7 +22,7 @@ sampleValues :: DynamoValues
 sampleValues = HM.singleton "Body" (set avS (Just "Andrew") attributeValue)
 
 sampleWrite :: DynamoVersion -> DynamoCmdM DynamoWriteResult
-sampleWrite version = writeToDynamo' testKey sampleValues version
+sampleWrite = writeToDynamo' testKey sampleValues
 
 sampleRead :: DynamoCmdM (Maybe DynamoReadResult)
 sampleRead = readFromDynamo' testKey
@@ -41,27 +41,25 @@ tests evalProgram =
         in do
           r <- evt
           assertEqual "Event is read" expected r
-  {-
-    testCase "Write event returns WriteExists when event already exists" $
+    , testCase "Write event returns WriteExists when event already exists" $
         let
           actions = do
-            _ <- sampleWrite
-            sampleWrite -- duplicate
+            _ <- sampleWrite Nothing
+            sampleWrite Nothing -- duplicate
           writeResult = evalProgram actions
         in do
           r <- writeResult
-          assertEqual "Second write has error" EventExists r
-    , testCase "Can read event" $
+          assertEqual "Second write has error" DynamoWriteWrongVersion r
+    , testCase "With correct version you can write a subsequent event" $
         let
           actions = do
-            _ <- sampleWrite
-            sampleRead
-          evt = evalProgram actions
-          expected :: Maybe (EventType, BS.ByteString, Maybe a)
-          expected = Just ("FooCreatedEvent", sampleBody, Nothing)
+            _ <- sampleWrite Nothing
+            sampleWrite (Just 1)
+          writeResult = evalProgram actions
         in do
-          r <- evt
-          assertEqual "Event is read" expected r
+          r <- writeResult
+          assertEqual "Second write should succeed" DynamoWriteSuccess r
+  {-
     , testCase "Can read events backward" $
         let
           actions = do

@@ -117,28 +117,38 @@ runCmd tn (ReadFromDynamo' eventKey n) = do
   where
     getResult :: GetItemResponse -> Maybe DynamoReadResult
     getResult r = do
-      let i = view girsItem r
-      let values = i & HM.delete fieldVersion & HM.delete fieldStreamId & HM.delete fieldEventNumber
+      let allValues = view girsItem r
+      let 
+        values = 
+          allValues 
+            & HM.delete fieldVersion 
+            & HM.delete fieldStreamId 
+            & HM.delete fieldEventNumber
       --et <- view (ix fieldEventType . avS) i
       -- b <- view (ix fieldBody . avB) i >>= Aeson.decodeStrict
-      version <- view (ix fieldVersion . avN) i >>= readMay
+      version <- view (ix fieldVersion . avN) allValues >>= readMay
       --let pageKey = readItemJson fieldPageKey i
       return DynamoReadResult { dynamoReadResultKey = eventKey, dynamoReadResultVersion = version, dynamoReadResultValue = values }
 runCmd tn (WriteToDynamo' DynamoKey { dynamoKeyKey = streamId, dynamoKeyEventNumber = eventNumber } values version n) = 
   catches writeItem [handler _ConditionalCheckFailedException (\_ -> n DynamoWriteWrongVersion)] 
   where
-      writeItem = do
+    addVersionChecks Nothing req = 
+        req & set piConditionExpression (Just $ "attribute_not_exists(" <> fieldEventNumber <> ")")
+    addVersionChecks (Just v) req = 
+        req & set piConditionExpression (Just $ fieldVersion <> " = :itemVersion")
+        & set piExpressionAttributeValues (HM.singleton ":itemVersion" (set avN (Just (showt (v - 1))) attributeValue))
+        
+    writeItem = do
         time <- getCurrentTime
         let item = HM.fromList [
                   itemAttribute fieldStreamId avS streamId,
                   itemAttribute fieldEventNumber avN (showt eventNumber),
                   itemAttribute fieldVersion avN (showt (fromMaybe 0 version))]
                   <> values 
-        let conditionExpression = Just $ "attribute_not_exists(" <> fieldEventNumber <> ")"
         let req0 =
               putItem tn
               & set piItem item
-              & set piConditionExpression conditionExpression
+              & addVersionChecks version
         _ <- runCommand req0
         n DynamoWriteSuccess
 {- runCmd tn (WriteEvent' (EventKey (StreamId streamId, evtNumber)) t d n) =
