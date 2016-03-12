@@ -18,11 +18,14 @@ testStreamId  = "Brownie"
 testKey :: DynamoKey
 testKey = DynamoKey testStreamId 0
 
-sampleValues :: DynamoValues
-sampleValues = HM.singleton "Body" (set avS (Just "Andrew") attributeValue)
+sampleValuesNeedsPaging :: DynamoValues
+sampleValuesNeedsPaging = HM.singleton "Body" (set avS (Just "Andrew") attributeValue) & HM.insert "NeedsPaging" (set avS (Just "True") attributeValue)
 
-sampleWrite :: DynamoVersion -> DynamoCmdM DynamoWriteResult
-sampleWrite = writeToDynamo' testKey sampleValues
+sampleValuesNoPaging :: DynamoValues
+sampleValuesNoPaging = HM.singleton "Body" (set avS (Just "Andrew") attributeValue)
+
+testWrite :: DynamoValues -> DynamoVersion -> DynamoCmdM DynamoWriteResult
+testWrite = writeToDynamo' testKey
 
 sampleRead :: DynamoCmdM (Maybe DynamoReadResult)
 sampleRead = readFromDynamo' testKey
@@ -33,19 +36,19 @@ tests evalProgram =
     testCase "Can read event" $
         let
           actions = do
-            _ <- sampleWrite 0
+            _ <- testWrite sampleValuesNeedsPaging 0
             sampleRead
           evt = evalProgram actions
           expected :: Maybe DynamoReadResult
-          expected = Just $ DynamoReadResult testKey 0 sampleValues
+          expected = Just $ DynamoReadResult testKey 0 sampleValuesNeedsPaging
         in do
           r <- evt
           assertEqual "Event is read" expected r
     , testCase "Write event returns WriteExists when event already exists" $
         let
           actions = do
-            _ <- sampleWrite 0
-            sampleWrite 0 -- duplicate
+            _ <- testWrite sampleValuesNeedsPaging 0
+            testWrite sampleValuesNeedsPaging 0 -- duplicate
           writeResult = evalProgram actions
         in do
           r <- writeResult
@@ -53,12 +56,31 @@ tests evalProgram =
     , testCase "With correct version you can write a subsequent event" $
         let
           actions = do
-            _ <- sampleWrite 0
-            sampleWrite 1
+            _ <- testWrite sampleValuesNeedsPaging 0
+            testWrite sampleValuesNeedsPaging 1
           writeResult = evalProgram actions
         in do
           r <- writeResult
           assertEqual "Second write should succeed" DynamoWriteSuccess r
+    , testCase "Scan unpaged events returns written event" $
+      let
+        actions = do
+          _ <- testWrite sampleValuesNeedsPaging 0
+          scanNeedsPaging'
+        evtList = evalProgram actions
+      in do
+        r <- evtList
+        assertEqual "Should should have single item" [testKey] r
+    , testCase "Scan unpaged events does not returned paged event" $
+      let
+        actions = do
+          _ <- testWrite sampleValuesNeedsPaging 0
+          _ <- testWrite sampleValuesNoPaging 1
+          scanNeedsPaging'
+        evtList = evalProgram actions
+      in do
+        r <- evtList
+        assertEqual "Should have no items" [] r
   {-
     , testCase "Can read events backward" $
         let
@@ -91,25 +113,6 @@ tests evalProgram =
       in do
         r <- evtList
         assertEqual "No items" [] r
-    , testCase "Scan unpaged events returns written event" $
-      let
-        actions = do
-          _ <- sampleWrite
-          scanUnpagedEvents'
-        evtList = evalProgram actions
-      in do
-        r <- evtList
-        assertEqual "Should should have single item" [testKey] r
-    , testCase "Scan unpaged events does not returned paged event" $
-      let
-        actions = do
-          _ <- sampleWrite
-          _ <- setEventPage' testKey (0,0)
-          scanUnpagedEvents'
-        evtList = evalProgram actions
-      in do
-        r <- evtList
-        assertEqual "Should have no items" [] r
     , testCase "Writing page entry with wrong version should return error" $
       let
         pageKey = (0,0)
