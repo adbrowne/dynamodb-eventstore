@@ -151,43 +151,18 @@ runCmd tn (WriteToDynamo' DynamoKey { dynamoKeyKey = streamId, dynamoKeyEventNum
               & addVersionChecks version
         _ <- runCommand req0
         n DynamoWriteSuccess
-{- runCmd tn (WriteEvent' (EventKey (StreamId streamId, evtNumber)) t d n) =
-  catches writeItem [handler _ConditionalCheckFailedException (\_ -> n EventExists)] 
-    where
-      writeItem = do
-        time <- getCurrentTime
-        let item = HM.fromList [
-                  itemAttribute fieldStreamId avS streamId,
-                  itemAttribute fieldEventNumber avN (showt evtNumber),
-                  itemAttribute fieldEventType avS t,
-                  itemAttribute fieldPagingRequired avS (T.pack $ show time),
-                  itemAttribute fieldBody avB d
-                ]
-        let conditionExpression = Just $ "attribute_not_exists(" <> fieldEventNumber <> ")"
-        let req0 =
-              putItem tn
-              & (set piItem item)
-              & (set piConditionExpression conditionExpression)
-        _ <- runCommand req0
-        n WriteSuccess
-runCmd tn (GetEventsBackward' (StreamId streamId) _ _ n) =
-  getBackward
-    where
-      toRecordedEvent :: HM.HashMap T.Text AttributeValue -> RecordedEvent
-      toRecordedEvent i = fromJust $ do -- todo: remove fromJust
-        sId <- view (ix fieldStreamId . avS) i
-        eventNumber <- view (ix fieldEventNumber . avN) i >>= readMay
-        et <- view (ix fieldEventType . avS) i
-        b <- view (ix fieldBody . avB) i
-        return $ RecordedEvent sId eventNumber b et
-      getBackward = do
-        resp <- runCommand $
-                query tn
-                & (set qScanIndexForward (Just False))
-                & (set qExpressionAttributeValues (HM.fromList [(":streamId",set avS (Just streamId) attributeValue)]))
-                & (set qKeyConditionExpression (Just $ fieldStreamId <> " = :streamId"))
-        let items :: [HM.HashMap T.Text AttributeValue] = view qrsItems resp
-        n $ (fmap toRecordedEvent) items
+{-
+ - ScanNeedsPaging' _)
+ -             _ (FatalError' _)
+ -                         _ (SetPulseStatus' _ _)
+ -                                     _ (Log
+ -}
+runCmd tn (ScanNeedsPaging' n) = error "ScanNeedsPaging' unimplemented"
+runCmd tn (FatalError' n) = error "FatalError' unimplemented"
+runCmd tn (SetPulseStatus' _ n) = error "SetPulseStatus' unimplemented"
+runCmd tn (Log' _ _ n) = error "Log' unimplemented"
+
+{-
 runCmd tn (ScanUnpagedEvents' n) =
   scanUnpaged
     where
@@ -201,61 +176,8 @@ runCmd tn (ScanUnpagedEvents' n) =
              scan tn
              & (set sIndexName $ Just unpagedIndexName)
         n $ fmap toEntry (view srsItems resp)
-runCmd tn (SetEventPage' eventKey pk n) =
-  setEventPage
-    where
-      setEventPage = do
-        let conditionExpression = Just $ "attribute_not_exists(" <> fieldPageKey <> ")"
-        let key = getDynamoKeyForEvent eventKey
-        let updateExpression = Just $ "SET " <> fieldPageKey <> "=:pageKey REMOVE " <> fieldPagingRequired
-        let expressionAttributeValues = HM.fromList [(":pageKey", attrJson pk)]
-        let req0 =
-              updateItem tn
-              & (set uiKey key)
-              & (set uiExpressionAttributeValues expressionAttributeValues)
-              & (set uiUpdateExpression updateExpression)
-              & (set uiConditionExpression conditionExpression)
-        _ <- runCommand req0
-        n SetEventPageSuccess
-runCmd tn (GetPageEntry' pageKey n) = do
-  let key = getDynamoKeyForPage pageKey
-  let req0 = getItem tn & (set giKey key)
-  resp0 <- runCommand req0
-  n $ getResult resp0
-  where
-    getResult :: GetItemResponse -> Maybe (PageStatus, [EventKey])
-    getResult r = do
-      let i = view girsItem r
-      pageStatus <- readItemJson fieldPageStatus i
-      eventKeys <- readItemJson fieldEventKeys i
-      return (pageStatus, eventKeys)
-runCmd tn (WritePageEntry' (partition, page)
-           PageWriteRequest {..} n) =
-  catches writePageEntry [handler _ConditionalCheckFailedException (\_ -> n Nothing)]
-    where
-      addConditions Nothing req =
-            req
-            & (set piConditionExpression (Just $ "attribute_not_exists(" <> fieldEventNumber <> ")"))
-      addConditions (Just expectedStatus') req =
-        let
-            attributeValues = HM.fromList [(":expectedStatus", attrJson expectedStatus')]
-            conditionExpression = fieldPageStatus <> "= :expectedStatus"
-        in
-            req
-            & (set piConditionExpression (Just conditionExpression))
-            & (set piExpressionAttributeValues attributeValues)
-      writePageEntry = do
-        let item = HM.fromList [
-                  itemAttribute fieldStreamId avS (getPagePartitionStreamId partition page),
-                  itemAttribute fieldEventNumber avN "1",
-                  (fieldPageStatus, attrJson newStatus),
-                  (fieldEventKeys, attrJson entries)
-                ]
-        let req0 = putItem tn
-                   & (set piItem item)
-        let req1 = addConditions expectedStatus req0
-        _ <- runCommand req1
-        n $ Just newStatus -}
+        -}
+
 runTest :: T.Text -> DynamoCmdM a -> IO a
 runTest tableName = iterM $ runCmd tableName
 
