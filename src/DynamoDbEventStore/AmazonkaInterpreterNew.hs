@@ -1,23 +1,19 @@
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE RecordWildCards           #-}
 {-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE RankNTypes               #-}
 
 module DynamoDbEventStore.AmazonkaInterpreterNew where
 
 import           Data.Aeson
-import qualified Data.Aeson as Aeson
-import           Data.Time.Clock
 import           Control.Exception.Lens
 import           Data.Monoid
 import           Control.Monad.Free.Church
 import           Control.Monad.Catch
-import           Data.Int
 import qualified Data.HashMap.Strict     as HM
 import           Control.Lens
-import           Data.Maybe              (fromJust, fromMaybe)
+import           Data.Maybe              (fromJust)
 import           Data.List.NonEmpty      (NonEmpty (..))
 import qualified Data.ByteString         as BS
 import qualified Data.ByteString.Lazy    as BL
@@ -140,7 +136,6 @@ runCmd tn (WriteToDynamo' DynamoKey { dynamoKeyKey = streamId, dynamoKeyEventNum
         & set piExpressionAttributeValues (HM.singleton ":itemVersion" (set avN (Just (showt (version - 1))) attributeValue))
         
     writeItem = do
-        time <- getCurrentTime
         let item = HM.fromList [
                   itemAttribute fieldStreamId avS streamId,
                   itemAttribute fieldEventNumber avN (showt eventNumber),
@@ -165,9 +160,9 @@ runCmd tn (ScanNeedsPaging' n) =
              scan tn
              & set sIndexName (Just unpagedIndexName)
         n $ fmap toEntry (view srsItems resp)
-runCmd tn (FatalError' n) = error "FatalError' unimplemented"
-runCmd _ (SetPulseStatus' _ n) = n
-runCmd tn (Log' _ _ n) = error "Log' unimplemented"
+runCmd _tn (FatalError' _n) = error "FatalError' unimplemented"
+runCmd _tn (SetPulseStatus' _ n) = n
+runCmd _tn (Log' _ _ _n) = error "Log' unimplemented"
 
 runTest :: T.Text -> DynamoCmdM a -> IO a
 runTest tableName = iterM $ runCmd tableName
