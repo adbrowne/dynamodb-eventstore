@@ -11,6 +11,7 @@ import           EventStoreCommands
 import           Control.Lens
 import           Test.Tasty.HUnit
 import           Test.Tasty
+import qualified DynamoDbEventStore.Constants as Constants
 
 testStreamId :: T.Text
 testStreamId  = "Brownie"
@@ -19,7 +20,7 @@ testKey :: DynamoKey
 testKey = DynamoKey testStreamId 0
 
 sampleValuesNeedsPaging :: DynamoValues
-sampleValuesNeedsPaging = HM.singleton "Body" (set avS (Just "Andrew") attributeValue) & HM.insert "NeedsPaging" (set avS (Just "True") attributeValue)
+sampleValuesNeedsPaging = HM.singleton "Body" (set avS (Just "Andrew") attributeValue) & HM.insert Constants.needsPagingKey (set avS (Just "True") attributeValue)
 
 sampleValuesNoPaging :: DynamoValues
 sampleValuesNoPaging = HM.singleton "Body" (set avS (Just "Andrew") attributeValue)

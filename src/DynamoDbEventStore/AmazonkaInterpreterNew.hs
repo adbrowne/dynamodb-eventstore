@@ -23,6 +23,7 @@ import qualified Data.ByteString         as BS
 import qualified Data.ByteString.Lazy    as BL
 import qualified Data.Text               as T
 import           TextShow
+import qualified DynamoDbEventStore.Constants as Constants
 import           System.Random
 import           EventStoreCommands
 import qualified Safe
@@ -45,7 +46,7 @@ fieldBody = "body"
 fieldPageKey :: T.Text
 fieldPageKey = "pageKey"
 fieldPagingRequired :: T.Text
-fieldPagingRequired = "pagingRequired"
+fieldPagingRequired = Constants.needsPagingKey
 fieldEventKeys :: T.Text
 fieldEventKeys = "eventKeys"
 unpagedIndexName :: T.Text
@@ -151,32 +152,22 @@ runCmd tn (WriteToDynamo' DynamoKey { dynamoKeyKey = streamId, dynamoKeyEventNum
               & addVersionChecks version
         _ <- runCommand req0
         n DynamoWriteSuccess
-{-
- - ScanNeedsPaging' _)
- -             _ (FatalError' _)
- -                         _ (SetPulseStatus' _ _)
- -                                     _ (Log
- -}
-runCmd tn (ScanNeedsPaging' n) = error "ScanNeedsPaging' unimplemented"
-runCmd tn (FatalError' n) = error "FatalError' unimplemented"
-runCmd tn (SetPulseStatus' _ n) = error "SetPulseStatus' unimplemented"
-runCmd tn (Log' _ _ n) = error "Log' unimplemented"
-
-{-
-runCmd tn (ScanUnpagedEvents' n) =
+runCmd tn (ScanNeedsPaging' n) =
   scanUnpaged
     where
-      toEntry :: HM.HashMap T.Text AttributeValue -> EventKey
+      toEntry :: HM.HashMap T.Text AttributeValue -> DynamoKey
       toEntry i = fromJust $ do
         streamId <- view (ix fieldStreamId . avS) i
         eventNumber <- view (ix fieldEventNumber . avN) i >>= readMay
-        return (EventKey (StreamId streamId, eventNumber))
+        return (DynamoKey streamId eventNumber)
       scanUnpaged = do
         resp <- runCommand $
              scan tn
-             & (set sIndexName $ Just unpagedIndexName)
+             & set sIndexName (Just unpagedIndexName)
         n $ fmap toEntry (view srsItems resp)
-        -}
+runCmd tn (FatalError' n) = error "FatalError' unimplemented"
+runCmd tn (SetPulseStatus' _ n) = error "SetPulseStatus' unimplemented"
+runCmd tn (Log' _ _ n) = error "Log' unimplemented"
 
 runTest :: T.Text -> DynamoCmdM a -> IO a
 runTest tableName = iterM $ runCmd tableName
