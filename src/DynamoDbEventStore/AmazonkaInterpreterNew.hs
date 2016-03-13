@@ -166,7 +166,7 @@ runCmd tn (ScanNeedsPaging' n) =
              & set sIndexName (Just unpagedIndexName)
         n $ fmap toEntry (view srsItems resp)
 runCmd tn (FatalError' n) = error "FatalError' unimplemented"
-runCmd tn (SetPulseStatus' _ n) = error "SetPulseStatus' unimplemented"
+runCmd _ (SetPulseStatus' _ n) = n
 runCmd tn (Log' _ _ n) = error "Log' unimplemented"
 
 runTest :: T.Text -> DynamoCmdM a -> IO a
