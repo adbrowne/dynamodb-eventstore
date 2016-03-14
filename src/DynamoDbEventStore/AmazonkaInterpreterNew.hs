@@ -177,7 +177,9 @@ runCmd tn (ScanNeedsPaging' n) =
         n $ fmap toEntry (view srsItems resp)
 runCmd _tn (FatalError' _n) = error "FatalError' unimplemented"
 runCmd _tn (SetPulseStatus' _ n) = n
-runCmd _tn (Log' _ _ _n) = error "Log' unimplemented"
+runCmd _tn (Log' _level msg n) = do
+  print msg
+  n -- todo: error "Log' unimplemented"
 
 runTest :: T.Text -> DynamoCmdM a -> IO a
 runTest tableName = iterM $ runCmd tableName
