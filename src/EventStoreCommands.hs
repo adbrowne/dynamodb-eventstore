@@ -148,6 +148,11 @@ data DynamoCmd next =
     DynamoValues
     DynamoVersion
     (DynamoWriteResult -> next) |
+  QueryBackward'
+    T.Text -- Hash Key
+    Int -- max events to retrieve
+    (Maybe Int64) -- starting event, Nothing means start at head
+    ([DynamoReadResult] -> next) |
   ScanNeedsPaging'
     ([DynamoKey] -> next) |
   FatalError'

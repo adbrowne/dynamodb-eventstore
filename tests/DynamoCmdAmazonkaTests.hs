@@ -82,21 +82,21 @@ tests evalProgram =
       in do
         r <- evtList
         assertEqual "Should have no items" [] r
-  {-
     , testCase "Can read events backward" $
         let
           actions = do
-            _ <- writeEvent' (EventKey (testStreamId, 0)) "EventType1" sampleBody
-            _ <- writeEvent' (EventKey (testStreamId, 1)) "EventType2" sampleBody
-            getEventsBackward' testStreamId 10 Nothing
+            _ <- writeToDynamo' (DynamoKey testStreamId 0) sampleValuesNeedsPaging 0
+            _ <- writeToDynamo' (DynamoKey testStreamId 1) sampleValuesNeedsPaging 0
+            queryBackward' testStreamId 10 Nothing
           evt = evalProgram actions
-          expected :: [RecordedEvent]
+          expected :: [DynamoReadResult]
           expected = [
-            RecordedEvent "Brownie" 1 sampleBody "EventType2",
-            RecordedEvent "Brownie" 0 sampleBody "EventType1" ]
+            DynamoReadResult (DynamoKey testStreamId 1) 0 sampleValuesNeedsPaging,
+            DynamoReadResult (DynamoKey testStreamId 0) 0 sampleValuesNeedsPaging ]
         in do
           r <- evt
           assertEqual "Events are returned in reverse order" expected r
+  {-
     , testCase "Set event page" $
       let
         actions = do

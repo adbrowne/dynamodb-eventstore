@@ -105,6 +105,20 @@ encodeStrictJson :: ToJSON s => s -> BS.ByteString
 encodeStrictJson value =
   BL.toStrict . encode $ value
 
+toDynamoReadResult :: HM.HashMap T.Text AttributeValue -> Maybe DynamoReadResult
+toDynamoReadResult allValues = do
+  let 
+    values = 
+      allValues 
+        & HM.delete fieldVersion 
+        & HM.delete fieldStreamId 
+        & HM.delete fieldEventNumber
+  streamId <- view (ix fieldStreamId . avS) allValues 
+  eventNumber <- view (ix fieldEventNumber . avN) allValues >>= readMay
+  let eventKey = DynamoKey streamId eventNumber
+  version <- view (ix fieldVersion . avN) allValues >>= readMay
+  return DynamoReadResult { dynamoReadResultKey = eventKey, dynamoReadResultVersion = version, dynamoReadResultValue = values }
+
 runCmd :: T.Text -> DynamoCmd (IO a) -> IO a
 --runCmd _ (Wait' n) = n ()
 runCmd tn (ReadFromDynamo' eventKey n) = do
@@ -114,19 +128,19 @@ runCmd tn (ReadFromDynamo' eventKey n) = do
   n $ getResult resp
   where
     getResult :: GetItemResponse -> Maybe DynamoReadResult
-    getResult r = do
-      let allValues = view girsItem r
-      let 
-        values = 
-          allValues 
-            & HM.delete fieldVersion 
-            & HM.delete fieldStreamId 
-            & HM.delete fieldEventNumber
-      --et <- view (ix fieldEventType . avS) i
-      -- b <- view (ix fieldBody . avB) i >>= Aeson.decodeStrict
-      version <- view (ix fieldVersion . avN) allValues >>= readMay
-      --let pageKey = readItemJson fieldPageKey i
-      return DynamoReadResult { dynamoReadResultKey = eventKey, dynamoReadResultVersion = version, dynamoReadResultValue = values }
+    getResult r = 
+      toDynamoReadResult $ view girsItem r
+runCmd tn (QueryBackward' streamId _ _ n) =
+  getBackward
+    where
+      getBackward = do
+        resp <- runCommand $
+                query tn
+                & (set qScanIndexForward (Just False))
+                & (set qExpressionAttributeValues (HM.fromList [(":streamId",set avS (Just streamId) attributeValue)]))
+                & (set qKeyConditionExpression (Just $ fieldStreamId <> " = :streamId"))
+        let items :: [HM.HashMap T.Text AttributeValue] = view qrsItems resp
+        n $ (fmap (fromJust . toDynamoReadResult)) items -- todo remove fromJust
 runCmd tn (WriteToDynamo' DynamoKey { dynamoKeyKey = streamId, dynamoKeyEventNumber = eventNumber } values version n) = 
   catches writeItem [handler _ConditionalCheckFailedException (\_ -> n DynamoWriteWrongVersion)] 
   where
