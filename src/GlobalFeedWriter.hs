@@ -4,6 +4,7 @@
 module GlobalFeedWriter (main, FeedEntry(FeedEntry)) where
 
 import           Control.Monad
+import           Data.Int
 import qualified Data.Text             as T
 import qualified Data.ByteString.Lazy  as BL
 import qualified Data.HashMap.Lazy as HM
@@ -22,7 +23,7 @@ toText = T.pack . show
 
 data FeedEntry = FeedEntry {
   feedEntryStream :: T.Text,
-  feedEntryNumber :: Int
+  feedEntryNumber :: Int64
 } deriving (Eq, Show)
 
 instance Aeson.FromJSON FeedEntry where

@@ -7,6 +7,7 @@
 module DynamoDbEventStore.GlobalFeedWriterSpec where
 
 import           Data.List
+import           Data.Int
 import           Data.Maybe
 import           Test.Tasty
 import           Test.Tasty.QuickCheck((===),testProperty)
@@ -29,7 +30,7 @@ import           GlobalFeedWriter (FeedEntry())
 import qualified DynamoDbEventStore.Constants as Constants
 
 type DynamoCmdMFree = Free.Free DynamoCmd
-type UploadItem = (T.Text,Int,T.Text)
+type UploadItem = (T.Text,Int64,T.Text)
 newtype UploadList = UploadList [UploadItem] deriving (Show)
 
 -- Generateds a list of length between 1 and maxLength
@@ -57,7 +58,7 @@ instance QC.Arbitrary UploadList where
         (event, number) <- zip events [0..]
         return (stream, number, event)
 
-dynamoWriteWithRetry :: (T.Text, Int, T.Text) -> DynamoCmdM DynamoWriteResult
+dynamoWriteWithRetry :: (T.Text, Int64, T.Text) -> DynamoCmdM DynamoWriteResult
 dynamoWriteWithRetry (stream, eventNumber, body) = loop DynamoWriteFailure
   where
     values = HM.fromList
@@ -236,14 +237,14 @@ runPrograms programs =
              then return []
              else iterateApp >> incrimentIterations >> loop
 
-publisher :: [(T.Text,Int,T.Text)] -> DynamoCmdM ()
+publisher :: [(T.Text,Int64,T.Text)] -> DynamoCmdM ()
 publisher xs = forM_ xs dynamoWriteWithRetry
 
-globalFeedFromTestDynamoTable :: TestDynamoTable -> Map.Map T.Text (V.Vector Int)
+globalFeedFromTestDynamoTable :: TestDynamoTable -> Map.Map T.Text (V.Vector Int64)
 globalFeedFromTestDynamoTable testTable =
   foldl' acc Map.empty (getPagedEventOrder testTable)
   where
-    getPagedEventOrder :: TestDynamoTable -> [(T.Text, Int)]
+    getPagedEventOrder :: TestDynamoTable -> [(T.Text, Int64)]
     getPagedEventOrder dynamoTable =
       let
         feedEntryToTuple (GlobalFeedWriter.FeedEntry stream number) = (stream, number)
@@ -255,16 +256,16 @@ globalFeedFromTestDynamoTable testTable =
                       sortOn fst >>=
                       readPageValues
       in feedEntryToTuple <$> pageEntries
-    acc :: Map.Map T.Text (V.Vector Int) -> (T.Text, Int) -> Map.Map T.Text (V.Vector Int)
+    acc :: Map.Map T.Text (V.Vector Int64) -> (T.Text, Int64) -> Map.Map T.Text (V.Vector Int64)
     acc s (stream, number) =
       let newValue = maybe (V.singleton number) (`V.snoc` number) $ Map.lookup stream s
       in Map.insert stream newValue s
 
-globalFeedFromUploadList :: [UploadItem] -> Map.Map T.Text (V.Vector Int)
+globalFeedFromUploadList :: [UploadItem] -> Map.Map T.Text (V.Vector Int64)
 globalFeedFromUploadList =
   foldl' acc Map.empty
   where
-    acc :: Map.Map T.Text (V.Vector Int) -> UploadItem -> Map.Map T.Text (V.Vector Int)
+    acc :: Map.Map T.Text (V.Vector Int64) -> UploadItem -> Map.Map T.Text (V.Vector Int64)
     acc s (stream, number, _) =
       let newValue = maybe (V.singleton number) (`V.snoc` number) $ Map.lookup stream s
       in Map.insert stream newValue s

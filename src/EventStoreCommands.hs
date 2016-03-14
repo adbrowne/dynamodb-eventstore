@@ -116,7 +116,7 @@ makeFree ''EventStoreCmd
 
 data DynamoKey = DynamoKey {
   dynamoKeyKey :: T.Text,
-  dynamoKeyEventNumber :: Int
+  dynamoKeyEventNumber :: Int64
 } deriving (Show, Eq, Ord)
 
 type DynamoValues = HM.HashMap T.Text AttributeValue

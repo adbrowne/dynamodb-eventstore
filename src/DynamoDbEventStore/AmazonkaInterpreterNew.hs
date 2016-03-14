@@ -6,6 +6,7 @@
 
 module DynamoDbEventStore.AmazonkaInterpreterNew where
 
+import           Data.Int
 import           Data.Aeson
 import           Control.Exception.Lens
 import           Data.Monoid
@@ -48,7 +49,7 @@ fieldEventKeys = "eventKeys"
 unpagedIndexName :: T.Text
 unpagedIndexName = "unpagedIndex"
 
-getDynamoKey :: T.Text -> Int -> HM.HashMap T.Text AttributeValue
+getDynamoKey :: T.Text -> Int64 -> HM.HashMap T.Text AttributeValue
 getDynamoKey hashKey rangeKey =
     HM.fromList [
         (fieldStreamId, set avS (Just hashKey) attributeValue),
