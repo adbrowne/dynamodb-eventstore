@@ -3,6 +3,7 @@ module EventStoreActions where
 
 import           Control.Monad
 import           Control.Lens
+import           Data.Maybe              (fromJust)
 import qualified Data.ByteString.Lazy as BL
 import           Data.Function
 import           Data.Int
@@ -44,6 +45,12 @@ data ReadStreamRequest = ReadStreamRequest {
 
 data ReadAllRequest = ReadAllRequest deriving (Show)
 
+fieldEventType :: T.Text
+fieldEventType = "EventType"
+
+fieldBody :: T.Text
+fieldBody = "Body"
+
 postEventRequestProgram :: PostEventRequest -> EventStoreCmdM EventWriteResult
 postEventRequestProgram (PostEventRequest sId ev ed et) = do
   let eventKey = EventKey (StreamId sId,ev)
@@ -53,7 +60,7 @@ postEventRequestProgram (PostEventRequest sId ev ed et) = do
 postEventRequestProgramNew :: PostEventRequest -> DynamoCmdM EventWriteResult
 postEventRequestProgramNew (PostEventRequest sId ev ed et) = do
   let eventKey = DynamoKey sId ev
-  let values = HM.singleton "Body" (set avB (Just (BL.toStrict ed)) attributeValue) & HM.insert "EventType" (set avS (Just et) attributeValue)
+  let values = HM.singleton fieldBody (set avB (Just (BL.toStrict ed)) attributeValue) & HM.insert fieldEventType (set avS (Just et) attributeValue)
   writeResult <- writeToDynamo' eventKey values 0 
   return $ toEventResult writeResult
   where
@@ -65,6 +72,17 @@ postEventRequestProgramNew (PostEventRequest sId ev ed et) = do
 getReadStreamRequestProgram :: ReadStreamRequest -> EventStoreCmdM [RecordedEvent]
 getReadStreamRequestProgram (ReadStreamRequest sId) = do
   getEventsBackward' (StreamId sId) 10 Nothing
+
+getReadStreamRequestProgramNew :: ReadStreamRequest -> DynamoCmdM [RecordedEvent]
+getReadStreamRequestProgramNew (ReadStreamRequest sId) = do
+  readResults <- queryBackward' sId 10 Nothing
+  return $ fmap toRecordedEvent readResults
+  where 
+    toRecordedEvent :: DynamoReadResult -> RecordedEvent
+    toRecordedEvent (DynamoReadResult key version values) = fromJust $ do
+      eventType <- view (ix fieldEventType . avS) values 
+      eventBody <- view (ix fieldBody . avB) values 
+      return $ RecordedEvent (dynamoKeyKey key) (dynamoKeyEventNumber key) eventBody eventType
 
 getReadAllRequestProgram :: ReadAllRequest -> EventStoreCmdM [EventKey]
 getReadAllRequestProgram ReadAllRequest = do
