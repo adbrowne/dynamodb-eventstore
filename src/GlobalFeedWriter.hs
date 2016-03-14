@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module GlobalFeedWriter (main, FeedEntry(FeedEntry)) where
+module GlobalFeedWriter (main, FeedEntry(FeedEntry), feedEntryStream, feedEntryNumber) where
 
 import           Control.Monad
 import           Data.Int

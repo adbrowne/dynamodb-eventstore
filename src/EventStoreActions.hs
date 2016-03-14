@@ -3,17 +3,22 @@ module EventStoreActions where
 
 import           Control.Monad
 import           Control.Lens
-import           Data.Maybe              (fromJust)
 import qualified Data.ByteString.Lazy as BL
 import           Data.Function
 import           Data.Int
+import           Data.Monoid
 import qualified Data.List as L
-import           Data.Maybe (fromMaybe)
+import           Data.Maybe (fromMaybe, fromJust)
 import qualified Data.Text as T
 import qualified Data.Text.Lazy as TL
 import           EventStoreCommands
 import qualified Data.HashMap.Strict     as HM
 import           Network.AWS.DynamoDB
+import           Text.Printf (printf)
+import qualified DynamoDbEventStore.Constants as Constants
+import qualified GlobalFeedWriter
+import           GlobalFeedWriter (FeedEntry())
+import qualified Data.Aeson as Aeson
 
 -- High level event store actions
 -- should map almost one to one with http interface
@@ -88,6 +93,26 @@ getReadAllRequestProgram :: ReadAllRequest -> EventStoreCmdM [EventKey]
 getReadAllRequestProgram ReadAllRequest = do
   result <- getPageEntry' (0,0)
   return $ fromMaybe [] $ fmap snd result
+
+getPageDynamoKey :: Int -> DynamoKey 
+getPageDynamoKey pageNumber =
+  let paddedPageNumber = T.pack (printf "%08d" pageNumber)
+  in DynamoKey (Constants.pageDynamoKeyPrefix <> paddedPageNumber) 0
+
+feedEntryToEventKey :: GlobalFeedWriter.FeedEntry -> EventKey
+feedEntryToEventKey GlobalFeedWriter.FeedEntry { GlobalFeedWriter.feedEntryStream = streamId, GlobalFeedWriter.feedEntryNumber = eventNumber } = 
+  EventKey (StreamId streamId, eventNumber)
+
+readPageKeys :: DynamoReadResult -> [EventKey]
+readPageKeys (DynamoReadResult _key _version values) = fromJust $ do
+   body <- view (ix Constants.pageBodyKey . avB) values 
+   feedEntries <- Aeson.decodeStrict body
+   return $ fmap feedEntryToEventKey feedEntries
+
+getReadAllRequestProgramNew :: ReadAllRequest -> DynamoCmdM [EventKey]
+getReadAllRequestProgramNew ReadAllRequest = do
+  result <- readFromDynamo' (getPageDynamoKey 0)
+  return $ maybe [] readPageKeys result
 
 writeEventToPage :: EventKey -> EventStoreCmdM ()
 writeEventToPage key = do
