@@ -2,6 +2,7 @@
 module EventStoreActions where
 
 import           Control.Monad
+import           Control.Lens
 import qualified Data.ByteString.Lazy as BL
 import           Data.Function
 import           Data.Int
@@ -10,6 +11,8 @@ import           Data.Maybe (fromMaybe)
 import qualified Data.Text as T
 import qualified Data.Text.Lazy as TL
 import           EventStoreCommands
+import qualified Data.HashMap.Strict     as HM
+import           Network.AWS.DynamoDB
 
 -- High level event store actions
 -- should map almost one to one with http interface
@@ -46,6 +49,18 @@ postEventRequestProgram (PostEventRequest sId ev ed et) = do
   let eventKey = EventKey (StreamId sId,ev)
   let strictED = BL.toStrict ed
   writeEvent' eventKey et strictED
+
+postEventRequestProgramNew :: PostEventRequest -> DynamoCmdM EventWriteResult
+postEventRequestProgramNew (PostEventRequest sId ev ed et) = do
+  let eventKey = DynamoKey sId ev
+  let values = HM.singleton "Body" (set avB (Just (BL.toStrict ed)) attributeValue) & HM.insert "EventType" (set avS (Just et) attributeValue)
+  writeResult <- writeToDynamo' eventKey values 0 
+  return $ toEventResult writeResult
+  where
+    toEventResult :: DynamoWriteResult -> EventWriteResult
+    toEventResult DynamoWriteSuccess = WriteSuccess
+    toEventResult DynamoWriteFailure = WriteError
+    toEventResult DynamoWriteWrongVersion = EventExists
 
 getReadStreamRequestProgram :: ReadStreamRequest -> EventStoreCmdM [RecordedEvent]
 getReadStreamRequestProgram (ReadStreamRequest sId) = do

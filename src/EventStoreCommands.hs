@@ -21,7 +21,7 @@ import           GHC.Generics
 import           TextShow.TH
 import qualified Data.HashMap.Strict     as HM
 
-import Network.AWS.DynamoDB
+import           Network.AWS.DynamoDB
 
 newtype StreamId = StreamId T.Text deriving (Ord, Eq, Show)
 deriveTextShow ''StreamId
