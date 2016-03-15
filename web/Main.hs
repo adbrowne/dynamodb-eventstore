@@ -15,15 +15,15 @@ import qualified Data.Text               as T
 
 showEvent :: T.Text -> EventStoreAction -> ActionM ()
 showEvent tableName (PostEvent req) = do
-  let program = postEventRequestProgramNew req
+  let program = postEventRequestProgram req
   a <- liftIO $ runProgram tableName program
   (html . TL.pack . show) a
 showEvent tableName (ReadStream req) = do
-  let program = getReadStreamRequestProgramNew req
+  let program = getReadStreamRequestProgram req
   a <- liftIO $ runProgram tableName program
   json a
 showEvent tableName (ReadAll req) = do
-  let program = getReadAllRequestProgramNew req
+  let program = getReadAllRequestProgram req
   a <- liftIO $ runProgram tableName program
   json a
 showEvent _ a = 
