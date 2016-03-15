@@ -7,7 +7,6 @@ import           Network.Wai
 import qualified Webserver as W
 import qualified Web.Scotty as S
 import qualified Network.HTTP.Types as H
-import           Control.Applicative (pure)
 import qualified Data.Text            as T
 
 addEventPost :: [H.Header] -> Session SResponse

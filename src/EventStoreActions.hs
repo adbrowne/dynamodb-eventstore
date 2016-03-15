@@ -1,14 +1,11 @@
 {-# LANGUAGE OverloadedStrings   #-}
 module EventStoreActions where
 
-import           Control.Monad
 import           Control.Lens
 import qualified Data.ByteString.Lazy as BL
-import           Data.Function
 import           Data.Int
 import           Data.Monoid
-import qualified Data.List as L
-import           Data.Maybe (fromMaybe, fromJust)
+import           Data.Maybe (fromJust)
 import qualified Data.Text as T
 import qualified Data.Text.Lazy as TL
 import           EventStoreCommands
@@ -17,7 +14,6 @@ import           Network.AWS.DynamoDB
 import           Text.Printf (printf)
 import qualified DynamoDbEventStore.Constants as Constants
 import qualified GlobalFeedWriter
-import           GlobalFeedWriter (FeedEntry())
 import qualified Data.Aeson as Aeson
 
 -- High level event store actions
@@ -75,7 +71,7 @@ getReadStreamRequestProgram (ReadStreamRequest sId) = do
   return $ fmap toRecordedEvent readResults
   where 
     toRecordedEvent :: DynamoReadResult -> RecordedEvent
-    toRecordedEvent (DynamoReadResult key version values) = fromJust $ do
+    toRecordedEvent (DynamoReadResult key _version values) = fromJust $ do
       eventType <- view (ix fieldEventType . avS) values 
       eventBody <- view (ix fieldBody . avB) values 
       return $ RecordedEvent (dynamoKeyKey key) (dynamoKeyEventNumber key) eventBody eventType
@@ -87,7 +83,7 @@ getPageDynamoKey pageNumber =
 
 feedEntryToEventKey :: GlobalFeedWriter.FeedEntry -> EventKey
 feedEntryToEventKey GlobalFeedWriter.FeedEntry { GlobalFeedWriter.feedEntryStream = streamId, GlobalFeedWriter.feedEntryNumber = eventNumber } = 
-  EventKey (StreamId streamId, eventNumber)
+  EventKey (streamId, eventNumber)
 
 readPageKeys :: DynamoReadResult -> [EventKey]
 readPageKeys (DynamoReadResult _key _version values) = fromJust $ do

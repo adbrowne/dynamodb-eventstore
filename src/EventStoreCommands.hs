@@ -4,6 +4,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE TemplateHaskell   #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module EventStoreCommands where
 
@@ -20,11 +21,18 @@ import           GHC.Generics
 
 import           TextShow.TH
 import qualified Data.HashMap.Strict     as HM
+import qualified Test.QuickCheck as QC
+import           Data.Hashable
 
 import           Network.AWS.DynamoDB
 
-newtype StreamId = StreamId T.Text deriving (Ord, Eq, Show)
+newtype StreamId = StreamId T.Text deriving (Ord, Eq, Show, Hashable)
 deriveTextShow ''StreamId
+
+instance QC.Arbitrary StreamId where
+  arbitrary = StreamId . T.pack <$> QC.arbitrary
+  shrink (StreamId xs) = StreamId . T.pack <$> QC.shrink (T.unpack xs)
+
 newtype EventKey = EventKey (StreamId, Int64) deriving (Ord, Eq, Show)
 deriveTextShow ''EventKey
 type EventType = T.Text
@@ -70,12 +78,6 @@ instance ToJSON EventKey where
     object [ "streamId"    .= streamId
            , "eventNumber" .= eventNumber
            ]
-
-data PageWriteRequest = PageWriteRequest {
-      expectedStatus :: Maybe PageStatus
-      , newStatus    :: PageStatus
-      , entries      :: [EventKey]
-}
 
 data DynamoKey = DynamoKey {
   dynamoKeyKey :: T.Text,

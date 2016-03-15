@@ -37,9 +37,10 @@ newtype UploadList = UploadList [UploadItem] deriving (Show)
 cappedList :: QC.Arbitrary a => Int -> QC.Gen [a]
 cappedList maxLength = QC.listOf1 QC.arbitrary `QC.suchThat` ((< maxLength) . length)
 
-instance QC.Arbitrary T.Text where
-  arbitrary = T.pack <$> QC.arbitrary
-  shrink xs = T.pack <$> QC.shrink (T.unpack xs)
+newtype EventData = EventData T.Text
+instance QC.Arbitrary EventData where
+  arbitrary = EventData . T.pack <$> QC.arbitrary
+  shrink (EventData xs) = EventData . T.pack <$> QC.shrink (T.unpack xs)
 
 instance QC.Arbitrary UploadList where
   arbitrary = do
@@ -52,10 +53,10 @@ instance QC.Arbitrary UploadList where
         stream <- QC.elements streams
         return (stream, event)
       groupTuple xs = HM.toList $ HM.fromListWith (++) ((\(a,b) -> (a,[b])) <$> xs)
-      numberEvents :: [(T.Text, T.Text)] -> [UploadItem]
+      numberEvents :: [(StreamId, EventData)] -> [UploadItem]
       numberEvents xs = do
-        (stream, events) <- groupTuple xs
-        (event, number) <- zip events [0..]
+        (StreamId stream, events) <- groupTuple xs
+        (EventData event, number) <- zip events [0..]
         return (stream, number, event)
 
 dynamoWriteWithRetry :: (T.Text, Int64, T.Text) -> DynamoCmdM DynamoWriteResult
@@ -70,12 +71,6 @@ dynamoWriteWithRetry (stream, eventNumber, body) = loop DynamoWriteFailure
     loop r = return r
 
 type TestDynamoTable = Map.Map DynamoKey (Int, DynamoValues)
-
-instance QC.Arbitrary GlobalFeedWriter.FeedEntry where
-  arbitrary = do
-    stream <- QC.arbitrary
-    number <- QC.arbitrary
-    return $ GlobalFeedWriter.FeedEntry stream number
 
 data RunningProgramState r = RunningProgramState {
   runningProgramStateNext :: DynamoCmdMFree r,
@@ -170,22 +165,18 @@ scanNeedsPaging =
 
 setPulseStatus :: T.Text -> Bool -> InterpreterApp a ()
 setPulseStatus programName isActive = do
-  allInactive <- uses loopStatePrograms initialAllInactive
-  loopStateActivity %= updatePulseStatus (LoopAllIdle allInactive) isActive
+  allInactiveState <- uses loopStatePrograms initialAllInactive
+  loopStateActivity %= updatePulseStatus (LoopAllIdle allInactiveState) isActive
   where 
     allInactive :: Map.Map T.Text Bool -> Bool
     allInactive m = Map.filter id m == Map.empty
     initialAllInactive :: Map.Map T.Text (RunningProgramState a) -> Map.Map T.Text Int
     initialAllInactive = fmap runningProgramStateMaxIdle
-    alterIdleCount :: Bool -> Maybe Int -> Maybe Int
-    alterIdleCount True _ = Just 0
-    alterIdleCount False Nothing = Just 1
-    alterIdleCount False (Just idleCount) = Just $ idleCount + 1
     updatePulseStatus :: LoopActivity -> Bool -> LoopActivity -> LoopActivity
     updatePulseStatus allInactiveState _ LoopActive { _loopActiveIdleCount = idleCount } =
       let updated = Map.alter (const (Just isActive)) programName idleCount
       in if allInactive updated then allInactiveState else LoopActive updated
-    updatePulseStatus _ True LoopAllIdle { _loopAllIdleIterationsRemaining = idleRemaining } = LoopActive Map.empty
+    updatePulseStatus _ True LoopAllIdle { _loopAllIdleIterationsRemaining = _idleRemaining } = LoopActive Map.empty
     updatePulseStatus _ False LoopAllIdle { _loopAllIdleIterationsRemaining = idleRemaining } = LoopAllIdle $ Map.adjust (\x -> x - 1) programName idleRemaining
 
 stepProgram :: T.Text -> RunningProgramState r -> InterpreterApp r () 
@@ -202,6 +193,7 @@ stepProgram programId ps = do
     runCmd :: DynamoCmdMFree r -> InterpreterApp r (Either () (DynamoCmdMFree r))
     runCmd (Free.Pure _) = return $ Left ()
     runCmd (Free.Free (FatalError' msg)) = Left <$> addLog (T.append "Fatal Error" msg)
+    runCmd (Free.Free QueryBackward'{}) = error "todo: implement QueryBackward'"
     runCmd (Free.Free (WriteToDynamo' key values version r)) = Right <$> writeToDynamo key values version r
     runCmd (Free.Free (ReadFromDynamo' key r)) = Right <$> uses (loopStateTestState . testStateDynamo) (r . getReadResult key)
     runCmd (Free.Free (Log' _ msg r)) = Right <$> (addLog msg >> return r)
@@ -247,7 +239,7 @@ globalFeedFromTestDynamoTable testTable =
     getPagedEventOrder :: TestDynamoTable -> [(T.Text, Int64)]
     getPagedEventOrder dynamoTable =
       let
-        feedEntryToTuple (GlobalFeedWriter.FeedEntry stream number) = (stream, number)
+        feedEntryToTuple (GlobalFeedWriter.FeedEntry (StreamId stream) number) = (stream, number)
         readPageValues :: (DynamoKey, (Int, DynamoValues)) -> [GlobalFeedWriter.FeedEntry]
         readPageValues (_, (_, values)) = fromMaybe [] $ 
           view (ix Constants.pageBodyKey . avB) values >>= Aeson.decodeStrict

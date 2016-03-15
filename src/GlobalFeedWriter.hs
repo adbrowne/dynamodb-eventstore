@@ -17,14 +17,21 @@ import           Network.AWS.DynamoDB
 import qualified Data.Aeson as Aeson
 import           Control.Applicative
 import           Text.Printf (printf)
+import qualified Test.QuickCheck as QC
 
 toText :: Show s => s -> T.Text
 toText = T.pack . show
 
 data FeedEntry = FeedEntry {
-  feedEntryStream :: T.Text,
+  feedEntryStream :: StreamId,
   feedEntryNumber :: Int64
 } deriving (Eq, Show)
+
+instance QC.Arbitrary FeedEntry where
+  arbitrary = do
+    stream <- QC.arbitrary
+    number <- QC.arbitrary
+    return $ GlobalFeedWriter.FeedEntry stream number
 
 instance Aeson.FromJSON FeedEntry where
     parseJSON (Aeson.Object v) = FeedEntry <$>
@@ -81,7 +88,8 @@ nextVersion readResult = dynamoReadResultVersion readResult + 1
 
 setPageEntryPageNumber :: Int -> FeedEntry -> DynamoCmdM ()
 setPageEntryPageNumber pageNumber feedEntry = do
-  let dynamoKey = DynamoKey (feedEntryStream feedEntry) (feedEntryNumber feedEntry)
+  let (StreamId streamId) = feedEntryStream feedEntry
+  let dynamoKey = DynamoKey streamId (feedEntryNumber feedEntry)
   eventEntry <- readFromDynamoMustExist dynamoKey
   let newValue = (HM.delete Constants.needsPagingKey . HM.insert Constants.eventPageNumberKey (stringAttributeValue (toText pageNumber)) . dynamoReadResultValue) eventEntry
   void $ dynamoWriteWithRetry dynamoKey newValue (nextVersion eventEntry)
@@ -128,7 +136,7 @@ updateGlobalFeed item@DynamoKey { dynamoKeyKey = itemKey, dynamoKeyEventNumber =
   itemIsPaged <- checkItemPaged item
   logIf itemIsPaged Debug ("itemIsPaged" <> toText item)
   unless itemIsPaged $ do
-    let feedEntry = (BL.toStrict . Aeson.encode . Aeson.toJSON) [FeedEntry  itemKey itemEventNumber]
+    let feedEntry = (BL.toStrict . Aeson.encode . Aeson.toJSON) [FeedEntry  (StreamId itemKey) itemEventNumber]
     let nextPage = mostRecentPage + 1
     when (dynamoKeyEventNumber item > 0) (updateGlobalFeed item { dynamoKeyEventNumber = itemEventNumber - 1 })
     pageResult <- dynamoWriteWithRetry (getPageDynamoKey nextPage) (HM.singleton Constants.pageBodyKey (set avB (Just feedEntry) attributeValue)) 0
