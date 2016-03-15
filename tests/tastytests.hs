@@ -2,7 +2,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 module Main where
 
-import qualified BasicOperationTests     as CommandTests
 import qualified DynamoCmdAmazonkaTests
 import           DynamoDbEventStore.Testing
 import           DynamoDbEventStore.GlobalFeedWriterSpec as GlobalFeedWriterSpec
@@ -21,8 +20,7 @@ main = do
   webserverInternalTests' <- testSpec "Webserver Internal Tests" WebserverInternalSpec.spec
   defaultMain $
     testGroup "Tests"
-      [ testGroup "Command Unit Tests" (CommandTests.tests evalProgram),
-        testGroup "DynamoCmd Tests against Dynamo - Amazonka" (DynamoCmdAmazonkaTests.tests Ain.evalProgram),
+      [ testGroup "DynamoCmd Tests against Dynamo - Amazonka" (DynamoCmdAmazonkaTests.tests Ain.evalProgram),
         testGroup "Global Feed Writer" GlobalFeedWriterSpec.tests,
         postEventSpec',
         getStreamSpec',
