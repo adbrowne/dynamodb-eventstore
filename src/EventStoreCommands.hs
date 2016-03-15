@@ -77,43 +77,6 @@ data PageWriteRequest = PageWriteRequest {
       , entries      :: [EventKey]
 }
 
--- Low level event store commands
--- should map almost one to one with dynamodb operations
-data EventStoreCmd next =
-  GetEvent'
-    EventKey
-    (EventReadResult -> next) |
-  GetEventsBackward'
-    StreamId
-    Int -- max events to retrieve
-    (Maybe Int64) -- starting event, Nothing means start at head
-    ([RecordedEvent] -> next) |
-  WriteEvent'
-    EventKey
-    EventType
-    BS.ByteString
-    (EventWriteResult -> next) |
-  Wait'
-    (() -> next) |
-  SetEventPage'
-    EventKey
-    PageKey
-    (SetEventPageResult -> next) |
-  WritePageEntry'
-    PageKey
-    PageWriteRequest
-    (Maybe PageStatus -> next) |
-  GetPageEntry'
-    PageKey
-    (Maybe (PageStatus, [EventKey]) -> next) |
-  ScanUnpagedEvents'
-    ([EventKey] -> next)
-  deriving (Functor) -- todo support paging
-
-type EventStoreCmdM = F EventStoreCmd
-
-makeFree ''EventStoreCmd
-
 data DynamoKey = DynamoKey {
   dynamoKeyKey :: T.Text,
   dynamoKeyEventNumber :: Int64

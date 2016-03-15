@@ -3,7 +3,6 @@
 module Main where
 
 import qualified DynamoCmdAmazonkaTests
-import           DynamoDbEventStore.Testing
 import           DynamoDbEventStore.GlobalFeedWriterSpec as GlobalFeedWriterSpec
 import qualified DynamoDbEventStore.AmazonkaInterpreterNew as Ain
 
