@@ -21,7 +21,7 @@ before_install:
 before_script:
 - ./scripts/run-dynamodb-local.sh &
 
-script: stack $ARGS --no-terminal --install-ghc test
+script: stack $ARGS --no-terminal --install-ghc test --pedantic
 
 deploy:
   provider: releases
