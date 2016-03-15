@@ -5,7 +5,7 @@ module WebserverInternalSpec (spec) where
 import           Test.Tasty.Hspec
 import           Test.Tasty.QuickCheck
 import           Data.Int
-import qualified Webserver as W
+import qualified DynamoDbEventStore.Webserver as W
 import qualified Data.Text.Lazy as TL
 import           Text.Read (readMaybe)
 

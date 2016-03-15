@@ -18,10 +18,10 @@ cabal-version:       >=1.10
 
 library
   GHC-Options: -Wall
-  exposed-modules:     Webserver,
-                       EventStoreCommands,
-                       EventStoreActions,
-                       GlobalFeedWriter,
+  exposed-modules:     DynamoDbEventStore.Webserver,
+                       DynamoDbEventStore.EventStoreCommands,
+                       DynamoDbEventStore.EventStoreActions,
+                       DynamoDbEventStore.GlobalFeedWriter,
                        DynamoDbEventStore.Constants,
                        DynamoDbEventStore.AmazonkaInterpreterNew
   -- other-extensions:    

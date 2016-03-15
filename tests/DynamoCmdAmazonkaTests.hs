@@ -6,7 +6,7 @@ module DynamoCmdAmazonkaTests where
 import qualified Data.HashMap.Lazy       as HM
 import qualified Data.Text               as T
 import           Network.AWS.DynamoDB
-import           EventStoreCommands
+import           DynamoDbEventStore.EventStoreCommands
 import           Control.Lens
 import           Test.Tasty.HUnit
 import           Test.Tasty

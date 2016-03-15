@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings   #-}
-module EventStoreActions where
+module DynamoDbEventStore.EventStoreActions where
 
 import           Control.Lens
 import qualified Data.ByteString.Lazy as BL
@@ -8,12 +8,12 @@ import           Data.Monoid
 import           Data.Maybe (fromJust)
 import qualified Data.Text as T
 import qualified Data.Text.Lazy as TL
-import           EventStoreCommands
+import           DynamoDbEventStore.EventStoreCommands
 import qualified Data.HashMap.Strict     as HM
 import           Network.AWS.DynamoDB
 import           Text.Printf (printf)
 import qualified DynamoDbEventStore.Constants as Constants
-import qualified GlobalFeedWriter
+import qualified DynamoDbEventStore.GlobalFeedWriter as GlobalFeedWriter
 import qualified Data.Aeson as Aeson
 
 -- High level event store actions

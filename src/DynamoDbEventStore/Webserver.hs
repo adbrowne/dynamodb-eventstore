@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings, ScopedTypeVariables #-}
 
-module Webserver where
+module DynamoDbEventStore.Webserver where
 
 import           Web.Scotty
 
@@ -14,7 +14,7 @@ import qualified Data.Text                 as T
 import           Data.Text.Lazy            (Text, pack)
 import qualified Data.Text.Lazy            as TL
 import           Network.HTTP.Types        (mkStatus)
-import           EventStoreActions
+import           DynamoDbEventStore.EventStoreActions
 
 data ExpectedVersion = ExpectedVersion Int
   deriving (Show)

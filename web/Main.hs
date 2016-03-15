@@ -4,12 +4,12 @@ module Main where
 
 import qualified Data.Text.Lazy as TL
 import           Web.Scotty
-import           Webserver      (app)
+import           DynamoDbEventStore.Webserver (app)
 import           Control.Monad.IO.Class (liftIO)
 import           Control.Concurrent
 import           DynamoDbEventStore.AmazonkaInterpreterNew
-import           EventStoreActions
-import qualified GlobalFeedWriter
+import           DynamoDbEventStore.EventStoreActions
+import qualified DynamoDbEventStore.GlobalFeedWriter as GlobalFeedWriter
 import           System.Random
 import qualified Data.Text               as T
 
@@ -35,5 +35,5 @@ main = do
   let tableName = T.pack $ "testtable-" ++ show tableNameId
   print tableName
   buildTable tableName
-  _ <- forkIO $ runProgram tableName (GlobalFeedWriter.main)
+  _ <- forkIO $ runProgram tableName GlobalFeedWriter.main
   scotty 3000 (app (showEvent tableName))

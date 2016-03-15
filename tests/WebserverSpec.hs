@@ -4,7 +4,7 @@ module WebserverSpec (postEventSpec, getStreamSpec) where
 import           Test.Tasty.Hspec
 import           Network.Wai.Test
 import           Network.Wai
-import qualified Webserver as W
+import qualified DynamoDbEventStore.Webserver as W
 import qualified Web.Scotty as S
 import qualified Network.HTTP.Types as H
 import qualified Data.Text            as T

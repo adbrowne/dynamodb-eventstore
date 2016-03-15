@@ -22,7 +22,7 @@ import qualified Data.Text               as T
 import           TextShow
 import qualified DynamoDbEventStore.Constants as Constants
 import           System.Random
-import           EventStoreCommands
+import           DynamoDbEventStore.EventStoreCommands
 import qualified Safe
 
 import Network.AWS

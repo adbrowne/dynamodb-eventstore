@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module GlobalFeedWriter (main, FeedEntry(FeedEntry), feedEntryStream, feedEntryNumber) where
+module DynamoDbEventStore.GlobalFeedWriter (main, FeedEntry(FeedEntry), feedEntryStream, feedEntryNumber) where
 
 import           Control.Monad
 import           Data.Int
@@ -9,7 +9,7 @@ import qualified Data.Text             as T
 import qualified Data.ByteString.Lazy  as BL
 import qualified Data.HashMap.Lazy as HM
 import qualified DynamoDbEventStore.Constants as Constants
-import           EventStoreCommands
+import           DynamoDbEventStore.EventStoreCommands
 import           Data.Maybe
 import           Data.Monoid
 import           Control.Lens
@@ -31,7 +31,7 @@ instance QC.Arbitrary FeedEntry where
   arbitrary = do
     stream <- QC.arbitrary
     number <- QC.arbitrary
-    return $ GlobalFeedWriter.FeedEntry stream number
+    return $ FeedEntry stream number
 
 instance Aeson.FromJSON FeedEntry where
     parseJSON (Aeson.Object v) = FeedEntry <$>

@@ -24,9 +24,9 @@ import qualified Data.Vector as V
 import qualified Data.Aeson as Aeson
 import           Network.AWS.DynamoDB
 
-import           EventStoreCommands
-import qualified GlobalFeedWriter
-import           GlobalFeedWriter (FeedEntry())
+import           DynamoDbEventStore.EventStoreCommands
+import qualified DynamoDbEventStore.GlobalFeedWriter as GlobalFeedWriter
+import           DynamoDbEventStore.GlobalFeedWriter (FeedEntry())
 import qualified DynamoDbEventStore.Constants as Constants
 
 type DynamoCmdMFree = Free.Free DynamoCmd

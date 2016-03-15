@@ -6,7 +6,7 @@
 {-# LANGUAGE TemplateHaskell   #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
-module EventStoreCommands where
+module DynamoDbEventStore.EventStoreCommands where
 
 import           Control.Monad
 import           Control.Monad.Free.Church
