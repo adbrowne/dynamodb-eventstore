@@ -50,7 +50,7 @@ data RecordedEvent = RecordedEvent {
 } deriving (Show, Eq, Ord)
 
 instance ToJSON RecordedEvent where
-  toJSON (RecordedEvent{..}) =
+  toJSON RecordedEvent{..} =
     object [ "streamId"    .= recordedEventStreamId
            , "eventNumber" .= recordedEventNumber
            , "eventData" .= T.decodeUtf8 recordedEventData
