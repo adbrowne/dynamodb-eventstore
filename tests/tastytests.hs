@@ -4,7 +4,7 @@ module Main where
 
 import qualified DynamoCmdAmazonkaTests
 import           DynamoDbEventStore.GlobalFeedWriterSpec as GlobalFeedWriterSpec
-import qualified DynamoDbEventStore.AmazonkaInterpreterNew as Ain
+import qualified DynamoDbEventStore.AmazonkaInterpreter as Ai
 
 import           Test.Tasty
 import           Test.Tasty.Hspec
@@ -19,7 +19,7 @@ main = do
   webserverInternalTests' <- testSpec "Webserver Internal Tests" WebserverInternalSpec.spec
   defaultMain $
     testGroup "Tests"
-      [ testGroup "DynamoCmd Tests against Dynamo - Amazonka" (DynamoCmdAmazonkaTests.tests Ain.evalProgram),
+      [ testGroup "DynamoCmd Tests against Dynamo - Amazonka" (DynamoCmdAmazonkaTests.tests Ai.evalProgram),
         testGroup "Global Feed Writer" GlobalFeedWriterSpec.tests,
         postEventSpec',
         getStreamSpec',

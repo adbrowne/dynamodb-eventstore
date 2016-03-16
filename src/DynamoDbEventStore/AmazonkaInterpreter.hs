@@ -4,7 +4,7 @@
 {-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE RankNTypes               #-}
 
-module DynamoDbEventStore.AmazonkaInterpreterNew where
+module DynamoDbEventStore.AmazonkaInterpreter where
 
 import           Data.Int
 import           Data.Aeson
