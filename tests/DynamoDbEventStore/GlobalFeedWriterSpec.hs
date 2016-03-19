@@ -8,7 +8,6 @@ module DynamoDbEventStore.GlobalFeedWriterSpec where
 
 import           Data.List
 import           Data.Int
-import           Data.Maybe
 import           Test.Tasty
 import           Test.Tasty.QuickCheck((===),testProperty)
 import qualified Test.Tasty.QuickCheck as QC
@@ -25,6 +24,7 @@ import qualified Data.Aeson as Aeson
 import           Network.AWS.DynamoDB
 
 import           DynamoDbEventStore.EventStoreCommands
+import           DynamoDbEventStore.EventStoreActions
 import qualified DynamoDbEventStore.GlobalFeedWriter as GlobalFeedWriter
 import           DynamoDbEventStore.GlobalFeedWriter (FeedEntry())
 import qualified DynamoDbEventStore.Constants as Constants
@@ -243,33 +243,21 @@ runProgram programId program testState =
 publisher :: [(T.Text,Int64,T.Text)] -> DynamoCmdM ()
 publisher xs = forM_ xs dynamoWriteWithRetry
 
-globalFeedFromTestDynamoTable :: TestDynamoTable -> Map.Map T.Text (V.Vector Int64)
-globalFeedFromTestDynamoTable testTable =
-  foldl' acc Map.empty (getPagedEventOrder testTable)
-  where
-    getPagedEventOrder :: TestDynamoTable -> [(T.Text, Int64)]
-    getPagedEventOrder dynamoTable =
-      let
-        feedEntryToTuple (GlobalFeedWriter.FeedEntry (StreamId stream) number) = (stream, number)
-        readPageValues :: (DynamoKey, (Int, DynamoValues)) -> [GlobalFeedWriter.FeedEntry]
-        readPageValues (_, (_, values)) = fromMaybe [] $ 
-          view (ix Constants.pageBodyKey . avB) values >>= Aeson.decodeStrict
-        pageEntries = Map.toList dynamoTable &
-                      filter (\(DynamoKey stream _, _) -> T.isPrefixOf Constants.pageDynamoKeyPrefix stream) &
-                      sortOn fst >>=
-                      readPageValues
-      in feedEntryToTuple <$> pageEntries
-    acc :: Map.Map T.Text (V.Vector Int64) -> (T.Text, Int64) -> Map.Map T.Text (V.Vector Int64)
-    acc s (stream, number) =
-      let newValue = maybe (V.singleton number) (`V.snoc` number) $ Map.lookup stream s
-      in Map.insert stream newValue s
-
 globalFeedFromUploadList :: [UploadItem] -> Map.Map T.Text (V.Vector Int64)
 globalFeedFromUploadList =
   foldl' acc Map.empty
   where
     acc :: Map.Map T.Text (V.Vector Int64) -> UploadItem -> Map.Map T.Text (V.Vector Int64)
     acc s (stream, number, _) =
+      let newValue = maybe (V.singleton number) (`V.snoc` number) $ Map.lookup stream s
+      in Map.insert stream newValue s
+
+globalRecordedEventListToMap :: [EventKey] -> Map.Map T.Text (V.Vector Int64)
+globalRecordedEventListToMap = 
+  foldl' acc Map.empty
+  where
+    acc :: Map.Map T.Text (V.Vector Int64) -> EventKey -> Map.Map T.Text (V.Vector Int64)
+    acc s (EventKey (StreamId stream, number)) =
       let newValue = maybe (V.singleton number) (`V.snoc` number) $ Map.lookup stream s
       in Map.insert stream newValue s
 
@@ -281,7 +269,8 @@ prop_EventShouldAppearInGlobalFeedInStreamOrder (UploadList uploadList) =
       ("GlobalFeedWriter1", (GlobalFeedWriter.main, 100)) ]
   in QC.forAll (runPrograms programs) check
      where
-       check (_, testState) = globalFeedFromTestDynamoTable (testState ^. testStateDynamo) === globalFeedFromUploadList uploadList
+       check (_, testState) = QC.forAll (runReadAllProgram testState) (\feedItems -> (globalRecordedEventListToMap <$> feedItems) === (Just $ globalFeedFromUploadList uploadList))
+       runReadAllProgram = runProgram "readAllRequestProgram" (Church.fromF (getReadAllRequestProgram ReadAllRequest))
 
 tests :: [TestTree]
 tests = [
