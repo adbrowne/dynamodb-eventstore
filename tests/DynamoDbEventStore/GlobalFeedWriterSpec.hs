@@ -179,32 +179,33 @@ setPulseStatus programName isActive = do
     updatePulseStatus _ True LoopAllIdle { _loopAllIdleIterationsRemaining = _idleRemaining } = LoopActive Map.empty
     updatePulseStatus _ False LoopAllIdle { _loopAllIdleIterationsRemaining = idleRemaining } = LoopAllIdle $ Map.adjust (\x -> x - 1) programName idleRemaining
 
+runCmd :: T.Text -> DynamoCmdMFree r -> InterpreterApp r (Either (Maybe r) (DynamoCmdMFree r))
+runCmd _ (Free.Pure r) = return $ Left (Just r)
+runCmd _ (Free.Free (FatalError' msg)) = const (Left Nothing) <$> addLog (T.append "Fatal Error" msg)
+runCmd _ (Free.Free QueryBackward'{}) = error "todo: implement QueryBackward'"
+runCmd _ (Free.Free (WriteToDynamo' key values version r)) = Right <$> writeToDynamo key values version r
+runCmd _ (Free.Free (ReadFromDynamo' key r)) = Right <$> uses (loopStateTestState . testStateDynamo) (r . getReadResult key)
+runCmd _ (Free.Free (Log' _ msg r)) = Right <$> (addLog msg >> return r)
+runCmd programId (Free.Free (SetPulseStatus' isActive r)) = Right <$> (setPulseStatus programId isActive >> return r)
+runCmd _ (Free.Free (ScanNeedsPaging' r)) = Right <$> uses (loopStateTestState . testStateDynamo) (r . scanNeedsPaging)
+
 stepProgram :: T.Text -> RunningProgramState r -> InterpreterApp r () 
 stepProgram programId ps = do
-  cmdResult <- runCmd $ runningProgramStateNext ps
+  cmdResult <- runCmd programId $ runningProgramStateNext ps
   bigBanana cmdResult
   where
-    bigBanana :: Either () (DynamoCmdMFree r) -> InterpreterApp r ()
+    bigBanana :: Either (Maybe r) (DynamoCmdMFree r) -> InterpreterApp r ()
     bigBanana next = do 
       let result = fmap setNextProgram next
       updateLoopState programId result
     setNextProgram :: DynamoCmdMFree r -> RunningProgramState r
     setNextProgram n = ps { runningProgramStateNext = n }
-    runCmd :: DynamoCmdMFree r -> InterpreterApp r (Either () (DynamoCmdMFree r))
-    runCmd (Free.Pure _) = return $ Left ()
-    runCmd (Free.Free (FatalError' msg)) = Left <$> addLog (T.append "Fatal Error" msg)
-    runCmd (Free.Free QueryBackward'{}) = error "todo: implement QueryBackward'"
-    runCmd (Free.Free (WriteToDynamo' key values version r)) = Right <$> writeToDynamo key values version r
-    runCmd (Free.Free (ReadFromDynamo' key r)) = Right <$> uses (loopStateTestState . testStateDynamo) (r . getReadResult key)
-    runCmd (Free.Free (Log' _ msg r)) = Right <$> (addLog msg >> return r)
-    runCmd (Free.Free (SetPulseStatus' isActive r)) = Right <$> (setPulseStatus programId isActive >> return r)
-    runCmd (Free.Free (ScanNeedsPaging' r)) = Right <$> uses (loopStateTestState . testStateDynamo) (r . scanNeedsPaging)
 
-updateLoopState :: T.Text -> Either () (RunningProgramState r) -> InterpreterApp r ()
+updateLoopState :: T.Text -> Either (Maybe r) (RunningProgramState r) -> InterpreterApp r ()
 updateLoopState programName result =
   loopStatePrograms %= updateProgramEntry result
   where
-    updateProgramEntry (Left ())        = Map.delete programName
+    updateProgramEntry (Left _)        = Map.delete programName
     updateProgramEntry (Right newState) = Map.adjust (const newState) programName
 
 iterateApp :: InterpreterApp a ()
@@ -228,6 +229,16 @@ runPrograms programs =
           if complete
              then return []
              else iterateApp >> incrimentIterations >> loop
+
+runProgram :: T.Text -> DynamoCmdMFree a -> TestState -> QC.Gen (Maybe a)
+runProgram programId program testState =
+  evalStateT (loop $ Right program) initialState
+  where
+        runningPrograms = Map.singleton programId (RunningProgramState program 0)
+        initialState = LoopState 0 (LoopActive Map.empty) testState runningPrograms
+        loop :: Either (Maybe r) (DynamoCmdMFree r) -> InterpreterApp r (Maybe r)
+        loop (Left x) = return x
+        loop (Right n) = runCmd programId n >>= loop
 
 publisher :: [(T.Text,Int64,T.Text)] -> DynamoCmdM ()
 publisher xs = forM_ xs dynamoWriteWithRetry
@@ -276,5 +287,4 @@ tests :: [TestTree]
 tests = [
       testProperty "Global Feed preserves stream order" prop_EventShouldAppearInGlobalFeedInStreamOrder,
       testProperty "Can round trip FeedEntry via JSON" (\(a :: FeedEntry) -> (Aeson.decode . Aeson.encode) a === Just a)
-
   ]
