@@ -6,7 +6,9 @@
 
 module DynamoDbEventStore.AmazonkaInterpreter where
 
+import           Control.Monad.IO.Class
 import           Data.Int
+import           Data.Typeable
 import           Data.Aeson
 import           Control.Exception.Lens
 import           Data.Monoid
@@ -119,12 +121,12 @@ toDynamoReadResult allValues = do
   version <- view (ix fieldVersion . avN) allValues >>= readMay
   return DynamoReadResult { dynamoReadResultKey = eventKey, dynamoReadResultVersion = version, dynamoReadResultValue = values }
 
-runCmd :: T.Text -> DynamoCmd (IO a) -> IO a
+runCmd :: (Typeable m, MonadCatch m, MonadAWS m, MonadIO m) => T.Text -> DynamoCmd (m a) -> m a
 --runCmd _ (Wait' n) = n ()
 runCmd tn (ReadFromDynamo' eventKey n) = do
   let key = getDynamoKeyForEvent eventKey
   let req = getItem tn & set giKey key
-  resp <- runCommand req
+  resp <- send req
   n $ getResult resp
   where
     getResult :: GetItemResponse -> Maybe DynamoReadResult
@@ -134,7 +136,7 @@ runCmd tn (QueryBackward' streamId _ _ n) =
   getBackward
     where
       getBackward = do
-        resp <- runCommand $
+        resp <- send $
                 query tn
                 & (set qScanIndexForward (Just False))
                 & (set qExpressionAttributeValues (HM.fromList [(":streamId",set avS (Just streamId) attributeValue)]))
@@ -160,7 +162,7 @@ runCmd tn (WriteToDynamo' DynamoKey { dynamoKeyKey = streamId, dynamoKeyEventNum
               putItem tn
               & set piItem item
               & addVersionChecks version
-        _ <- runCommand req0
+        _ <- send req0
         n DynamoWriteSuccess
 runCmd tn (ScanNeedsPaging' n) =
   scanUnpaged
@@ -171,18 +173,15 @@ runCmd tn (ScanNeedsPaging' n) =
         eventNumber <- view (ix fieldEventNumber . avN) i >>= readMay
         return (DynamoKey streamId eventNumber)
       scanUnpaged = do
-        resp <- runCommand $
+        resp <- send $
              scan tn
              & set sIndexName (Just unpagedIndexName)
         n $ fmap toEntry (view srsItems resp)
 runCmd _tn (FatalError' _n) = error "FatalError' unimplemented"
 runCmd _tn (SetPulseStatus' _ n) = n
 runCmd _tn (Log' _level msg n) = do
-  print msg
+  liftIO $ print msg
   n -- todo: error "Log' unimplemented"
-
-runTest :: T.Text -> DynamoCmdM a -> IO a
-runTest tableName = iterM $ runCmd tableName
 
 buildTable :: T.Text -> IO ()
 buildTable tableName = do
@@ -201,7 +200,7 @@ buildTable tableName = do
          (provisionedThroughput 1 1)
          & (set ctAttributeDefinitions attributeDefinitions)
          & (set ctGlobalSecondaryIndexes [unpagedGlobalSecondary])
-  _ <- runCommand req0
+  _ <- runLocalDynamo (send req0)
   return ()
 
 evalProgram :: DynamoCmdM a -> IO a
@@ -209,10 +208,16 @@ evalProgram program = do
   tableNameId :: Int <- getStdRandom (randomR (1,9999999999))
   let tableName = T.pack $ "testtable-" ++ show tableNameId
   buildTable tableName
-  runTest tableName program
+  runLocalDynamo $ runProgram tableName program
 
-runProgram :: T.Text -> DynamoCmdM a -> IO a
-runProgram = runTest
+runLocalDynamo :: AWS b -> IO b
+runLocalDynamo x = do
+  let dynamo = setEndpoint False "localhost" 8000 dynamoDB
+  env <- newEnv Sydney (FromEnv "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" Nothing)
+  runResourceT $ runAWS env $ reconfigure dynamo x
+
+runProgram :: T.Text -> DynamoCmdM a -> AWS a
+runProgram tableName = iterM (runCmd tableName)
 
 redirect :: Maybe (BS.ByteString, Int) -> Endpoint -> Endpoint
 redirect Nothing       = id
@@ -220,11 +225,3 @@ redirect (Just (h, p)) =
       (endpointHost   .~ h)
     . (endpointPort   .~ p)
     . (endpointSecure .~ (p == 443))
-
-runCommand :: forall a. (AWSRequest a) => a -> IO (Rs a)
-runCommand req = do
-    let dynamo = setEndpoint False "localhost" 8000 dynamoDB
-    env <- newEnv Sydney (FromEnv "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" Nothing)
-    runResourceT $ runAWS (env) $ do
-      reconfigure dynamo $ do
-        send req

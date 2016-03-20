@@ -48,6 +48,7 @@ library
                        semigroups,
                        pipes,
                        exceptions,
+                       monad-control,
                        lens,
                        amazonka >= 1.0,
                        amazonka-core >= 1.0,
@@ -62,6 +63,8 @@ executable web
                        scotty >= 0.9,
                        text >= 1.2,
                        dynamodb-eventstore,
+                       amazonka >= 1.0,
+                       amazonka-core >= 1.0,
                        random >= 1.1,
                        transformers >= 0.4
   default-language:    Haskell2010
