@@ -16,10 +16,9 @@ import           System.Random
 import qualified Data.Text               as T
 import Network.AWS
 
-runMyAws :: T.Text -> DynamoCmdM a -> IO a
-runMyAws tableName program = do
-  e <- newEnv Sydney Discover
-  runResourceT $ runAWS e $ runProgram tableName program
+runMyAws :: Env -> T.Text -> DynamoCmdM a -> IO a
+runMyAws env tableName program = 
+  runResourceT $ runAWS env $ runProgram tableName program
 
 showEvent :: (forall a. DynamoCmdM a -> IO a) -> EventStoreAction -> ActionM ()
 showEvent run (PostEvent req) = do
@@ -43,5 +42,6 @@ main = do
   let tableName = T.pack $ "testtable-" ++ show tableNameId
   print tableName
   buildTable tableName
-  _ <- forkIO $ runMyAws tableName GlobalFeedWriter.main
-  scotty 3000 (app (showEvent (runMyAws tableName)))
+  env <- newEnv Sydney Discover
+  _ <- forkIO $ runMyAws env tableName GlobalFeedWriter.main
+  scotty 3000 (app (showEvent (runMyAws env tableName)))
