@@ -2,6 +2,9 @@
 module DynamoDbEventStore.EventStoreActions where
 
 import           Control.Lens
+import           Control.Monad (join)
+import           Pipes
+import qualified Pipes.Prelude as P
 import qualified Data.ByteString.Lazy as BL
 import           Data.Int
 import           Data.Monoid
@@ -91,11 +94,11 @@ readPageKeys (DynamoReadResult _key _version values) = fromJust $ do
    feedEntries <- Aeson.decodeStrict body
    return $ fmap feedEntryToEventKey feedEntries
 
+getPagesAfter :: Int -> Producer [EventKey] DynamoCmdM ()
+getPagesAfter startPage = do
+  result <- lift $ readFromDynamo' (getPageDynamoKey startPage)
+  case result of (Just entries) -> yield (readPageKeys entries) >> getPagesAfter (startPage + 1)
+                 Nothing        -> return ()
+
 getReadAllRequestProgram :: ReadAllRequest -> DynamoCmdM [EventKey]
-getReadAllRequestProgram ReadAllRequest = loop 0
-  where 
-    loop :: Int -> DynamoCmdM[EventKey]
-    loop page = do
-      result <- readFromDynamo' (getPageDynamoKey page)
-      case result of (Just entries) -> (\next -> readPageKeys entries ++ next) <$> loop (page + 1)
-                     Nothing -> return []
+getReadAllRequestProgram ReadAllRequest = join <$> P.toListM (getPagesAfter 0)
