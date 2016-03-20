@@ -7,27 +7,22 @@ addons:
   apt:
     packages:
     - libgmp-dev
-
 before_install:
-# Download and unpack the stack executable
 - mkdir -p ~/.local/bin
 - export PATH=$HOME/.local/bin:$PATH
-- travis_retry curl -L https://www.stackage.org/stack/linux-x86_64 | tar xz --wildcards --strip-components=1 -C ~/.local/bin '*/stack'
-
+- travis_retry curl -L https://www.stackage.org/stack/linux-x86_64 | tar xz --wildcards
+  --strip-components=1 -C ~/.local/bin '*/stack'
 before_script:
-- ./scripts/run-dynamodb-local.sh &
-
+- "./scripts/run-dynamodb-local.sh &"
 script: stack $ARGS --no-terminal --install-ghc test --pedantic
-
 deploy:
   provider: releases
-  user: adbrowne
-  api-key:
-    secure: Uhjc0cPR4NMqmVOyzk1Gpc6ZIX/w92Td0PhA2je2GRepNTWow1xvJ2pll25pYZzffCWj5fWUL3KEEw0RnkVZTDzgXV47QXo/y4kzbkBJrDYFTN2DHjPVLyl7mobKeVAhYk2ndId9Dnb4ea+uZwOkVFvB2K1l/LbdnN3t6RegfnE=
-  file: dist/build/web/web
-  skip_cleanup: true
+  api_key:
+    secure: Wk2Z/jislfOnyJg9BlFtJCX2CDgjiTM2XtU9EcFCksEtXhVtYAY/IaQYXuyusRm/cXOE3x3FQQvcWH2uazQCpZAfWFETEA88g+CRT/N3H0YJcL7ciQdN6huAuqxOT/XA5Wkmj1kspNM2mknE1alzRysyrkfmnkP4j3JcC2cDE9g=
+  file: ".stack-work/dist/x86_64-osx/Cabal-1.22.5.0/build/web/web"
   on:
     tags: true
+    repo: adbrowne/dynamodb-eventstore
 cache:
   directories:
-    - $HOME/.stack
+  - "$HOME/.stack"
