@@ -15,11 +15,14 @@ before_install:
 before_script:
 - "./scripts/run-dynamodb-local.sh &"
 script: stack $ARGS --no-terminal --install-ghc test --pedantic
+before_deploy:
+  - mkdir release
+  - cp `stack path --dist-dir`/build/web/web release/
 deploy:
   provider: releases
   api_key:
     secure: Wk2Z/jislfOnyJg9BlFtJCX2CDgjiTM2XtU9EcFCksEtXhVtYAY/IaQYXuyusRm/cXOE3x3FQQvcWH2uazQCpZAfWFETEA88g+CRT/N3H0YJcL7ciQdN6huAuqxOT/XA5Wkmj1kspNM2mknE1alzRysyrkfmnkP4j3JcC2cDE9g=
-  file: ".stack-work/dist/x86_64-osx/Cabal-1.22.5.0/build/web/web"
+  file: "release/web"
   on:
     tags: true
     repo: adbrowne/dynamodb-eventstore

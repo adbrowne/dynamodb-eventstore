@@ -46,6 +46,7 @@ library
                        aeson,
                        unordered-containers,
                        semigroups,
+                       pipes,
                        exceptions,
                        lens,
                        amazonka >= 1.0,
