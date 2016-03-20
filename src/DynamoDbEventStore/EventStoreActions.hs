@@ -58,8 +58,9 @@ fieldBody = "Body"
 postEventRequestProgram :: PostEventRequest -> DynamoCmdM EventWriteResult
 postEventRequestProgram (PostEventRequest sId ev ed et) = do
   let eventKey = DynamoKey sId ev
-  let values = HM.singleton fieldBody (set avB (Just (BL.toStrict ed)) attributeValue) & HM.insert fieldEventType (set avS (Just et) attributeValue) & HM.insert Constants.needsPagingKey (set avS (Just "True") attributeValue)
-
+  let values = HM.singleton fieldBody (set avB (Just (BL.toStrict ed)) attributeValue) & 
+               HM.insert fieldEventType (set avS (Just et) attributeValue) & 
+               HM.insert Constants.needsPagingKey (set avS (Just "True") attributeValue)
   writeResult <- writeToDynamo' eventKey values 0 
   return $ toEventResult writeResult
   where
