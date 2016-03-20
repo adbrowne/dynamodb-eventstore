@@ -41,7 +41,8 @@ main = do
   tableNameId :: Int <- getStdRandom (randomR (1,9999999999))
   let tableName = T.pack $ "testtable-" ++ show tableNameId
   print tableName
-  buildTable tableName
   env <- newEnv Sydney Discover
-  _ <- forkIO $ runMyAws env tableName GlobalFeedWriter.main
-  scotty 3000 (app (showEvent (runMyAws env tableName)))
+  runResourceT $ runAWS env $ buildTable tableName
+  let runner = runMyAws env tableName 
+  _ <- forkIO $ runner GlobalFeedWriter.main
+  scotty 3000 (app (showEvent runner))

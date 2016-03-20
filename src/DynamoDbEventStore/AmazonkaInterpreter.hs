@@ -183,7 +183,7 @@ runCmd _tn (Log' _level msg n) = do
   liftIO $ print msg
   n -- todo: error "Log' unimplemented"
 
-buildTable :: T.Text -> IO ()
+buildTable :: T.Text -> AWS ()
 buildTable tableName = do
   let unpagedGlobalSecondary = globalSecondaryIndex
           unpagedIndexName
@@ -200,14 +200,14 @@ buildTable tableName = do
          (provisionedThroughput 1 1)
          & (set ctAttributeDefinitions attributeDefinitions)
          & (set ctGlobalSecondaryIndexes [unpagedGlobalSecondary])
-  _ <- runLocalDynamo (send req0)
+  _ <- send req0
   return ()
 
 evalProgram :: DynamoCmdM a -> IO a
 evalProgram program = do
   tableNameId :: Int <- getStdRandom (randomR (1,9999999999))
   let tableName = T.pack $ "testtable-" ++ show tableNameId
-  buildTable tableName
+  runLocalDynamo $ buildTable tableName
   runLocalDynamo $ runProgram tableName program
 
 runLocalDynamo :: AWS b -> IO b
