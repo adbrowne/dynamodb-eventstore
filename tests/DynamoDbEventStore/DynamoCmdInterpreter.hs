@@ -83,7 +83,7 @@ potentialFailure failurePercent onFailure onSuccess = do
 
 writeToDynamo :: DynamoKey -> DynamoValues -> DynamoVersion -> (DynamoWriteResult -> n)  -> InterpreterApp a n
 writeToDynamo key values version next =
-  potentialFailure 0 onFailure onSuccess -- todo: reinstate failure
+  potentialFailure 25 onFailure onSuccess
   where
     onFailure =
       addLog "Random write failure" $> next DynamoWriteFailure
