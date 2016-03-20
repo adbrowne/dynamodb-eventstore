@@ -92,6 +92,10 @@ readPageKeys (DynamoReadResult _key _version values) = fromJust $ do
    return $ fmap feedEntryToEventKey feedEntries
 
 getReadAllRequestProgram :: ReadAllRequest -> DynamoCmdM [EventKey]
-getReadAllRequestProgram ReadAllRequest = do
-  result <- readFromDynamo' (getPageDynamoKey 0)
-  return $ maybe [] readPageKeys result
+getReadAllRequestProgram ReadAllRequest = loop 0
+  where 
+    loop :: Int -> DynamoCmdM[EventKey]
+    loop page = do
+      result <- readFromDynamo' (getPageDynamoKey page)
+      case result of (Just entries) -> (\next -> readPageKeys entries ++ next) <$> loop (page + 1)
+                     Nothing -> return []
