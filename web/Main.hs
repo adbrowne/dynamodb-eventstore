@@ -69,10 +69,19 @@ start parsedConfig = do
   let tableName = (T.pack . configTableName) parsedConfig
   env <- newEnv Sydney Discover
   let runner = (if configLocalDynamoDB parsedConfig then runDynamoLocal else runDynamoCloud) env
-  _ <- when (configCreateTable parsedConfig) (runner $ buildTable tableName)
-  let runner' = runMyAws runner tableName
-  _ <- forkIO $ runner' GlobalFeedWriter.main
-  scotty 3000 (app (showEvent runner'))
+  tableAlreadyExists <- runner $ doesTableExist tableName
+  let shouldCreateTable = configCreateTable parsedConfig
+  when (not tableAlreadyExists && shouldCreateTable) 
+    (putStrLn "Creating table..." >> runner (buildTable tableName))
+  if tableAlreadyExists || shouldCreateTable then runApp runner tableName else failNoTable
+  where
+   runApp :: (forall a. AWS a -> IO a) -> T.Text -> IO ()
+   runApp runner tableName = do
+     let runner' = runMyAws runner tableName
+     _ <- forkIO $ runner' GlobalFeedWriter.main
+     scotty 3000 (app (showEvent runner'))
+     return ()
+   failNoTable = putStrLn "Table does not exist"
 
 main :: IO ()
 main = Opt.execParser opts >>= start

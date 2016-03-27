@@ -16,7 +16,7 @@ import           Control.Monad.Free.Church
 import           Control.Monad.Catch
 import qualified Data.HashMap.Strict     as HM
 import           Control.Lens
-import           Data.Maybe              (fromJust)
+import           Data.Maybe              (fromJust, isJust)
 import           Data.List.NonEmpty      (NonEmpty (..))
 import qualified Data.ByteString         as BS
 import qualified Data.ByteString.Lazy    as BL
@@ -28,6 +28,7 @@ import           DynamoDbEventStore.EventStoreCommands
 import qualified Safe
 
 import Network.AWS
+import Network.AWS.Waiter
 import Network.AWS.DynamoDB
 
 fieldStreamId :: T.Text
@@ -201,7 +202,17 @@ buildTable tableName = do
          & (set ctAttributeDefinitions attributeDefinitions)
          & (set ctGlobalSecondaryIndexes [unpagedGlobalSecondary])
   _ <- send req0
+  _ <- await (tableExists { _waitDelay = 4 }) (describeTable tableName)
   return ()
+
+doesTableExist :: T.Text -> AWS Bool
+doesTableExist tableName =
+  catches describe [handler _ResourceNotFoundException (const $ return False)] 
+  where 
+    describe = do
+      (resp :: DescribeTableResponse) <- send $ describeTable tableName
+      let tableDesc = view drsTable resp
+      return $ isJust tableDesc
 
 evalProgram :: DynamoCmdM a -> IO a
 evalProgram program = do
