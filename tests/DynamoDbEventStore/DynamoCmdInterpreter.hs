@@ -111,15 +111,24 @@ getReadResult key table = do
   (version, values) <- Map.lookup key table
   return $ DynamoReadResult key version values
 
+getUptoItem :: (a -> Bool) -> [a] -> [a]
+getUptoItem p =
+  unfoldr f 
+  where f [] = Nothing
+        f (x:xs) 
+          | p x = Just (x,[])
+          | otherwise = Just (x, xs)
 queryBackward :: T.Text -> Int -> Maybe Int64 -> TestDynamoTable -> [DynamoReadResult]
-queryBackward key maxEvents Nothing table = 
-  take maxEvents $ reverse $ unfoldr getEvent 0
+queryBackward key maxEvents startEvent table = 
+  take maxEvents $ reverse $ eventsBeforeStart startEvent
   where 
+    dynamoReadResultToEventNumber (DynamoReadResult (DynamoKey _key eventNumber) _version _values) = eventNumber
+    eventsBeforeStart Nothing = allEvents
+    eventsBeforeStart (Just start) = getUptoItem (\a -> dynamoReadResultToEventNumber a == start) allEvents
+    allEvents = unfoldr getEvent 0
     getEvent :: Int64 -> Maybe (DynamoReadResult, Int64)
     getEvent eventNumber = 
       (\result -> (result, eventNumber + 1)) <$> getReadResult (DynamoKey key eventNumber) table 
-
-queryBackward key maxEvents (Just _start) table = undefined
 
 scanNeedsPaging :: TestDynamoTable -> [DynamoKey]
 scanNeedsPaging = 

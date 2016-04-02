@@ -11,6 +11,7 @@ import           Test.Tasty
 import           Test.Tasty.QuickCheck((===),testProperty)
 import qualified Test.Tasty.QuickCheck as QC
 import           Control.Monad.State
+import           Control.Monad.Loops
 import qualified Control.Monad.Free.Church as Church
 import qualified Data.HashMap.Lazy as HM
 import qualified Data.Text             as T
@@ -98,9 +99,19 @@ readEachStream uploadItems =
     readStream m streamId = do
       eventIds <- getEventIds streamId
       return $ Map.insert streamId eventIds m
+    getEventSet :: T.Text -> Maybe Int64 -> DynamoCmdM (Maybe ([RecordedEvent], Maybe Int64)) 
+    getEventSet streamId startEvent = 
+      if startEvent == Just (-1) then
+        return Nothing
+      else do
+        recordedEvents <- getReadStreamRequestProgram (ReadStreamRequest streamId startEvent)
+        if null recordedEvents then
+          return Nothing
+        else 
+          return $ Just (recordedEvents, (Just . (\x -> x - 1) . recordedEventNumber . last) recordedEvents)
     getEventIds :: T.Text -> DynamoCmdM (V.Vector Int64)
     getEventIds streamId = do
-       recordedEvents <- getReadStreamRequestProgram (ReadStreamRequest streamId Nothing)
+       recordedEvents <- concat <$> unfoldrM (getEventSet streamId) Nothing 
        return $ V.fromList $ recordedEventNumber <$> reverse recordedEvents
     streams :: [T.Text]
     streams = (\(stream, _, _) -> stream) <$> uploadItems

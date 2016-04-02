@@ -109,6 +109,7 @@ Test-Suite tasty
                        http-types >= 0.8,
                        mtl >= 2.1,
                        transformers,
+                       monad-loops,
                        wai >= 3.0,
                        wai-extra >= 3.0,
                        scotty >= 0.9,
