@@ -31,7 +31,7 @@ deriveTextShow ''StreamId
 
 instance QC.Arbitrary StreamId where
   arbitrary = StreamId . T.pack <$> QC.arbitrary
-  shrink (StreamId xs) = StreamId . T.pack <$> QC.shrink (T.unpack xs)
+  shrink (StreamId xs) = StreamId . T.pack <$> filter (not . null)  (QC.shrink (T.unpack xs))
 
 newtype EventKey = EventKey (StreamId, Int64) deriving (Ord, Eq, Show)
 deriveTextShow ''EventKey
