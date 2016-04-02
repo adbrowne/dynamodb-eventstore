@@ -10,22 +10,20 @@ import           Data.Int
 import           Test.Tasty
 import           Test.Tasty.QuickCheck((===),testProperty)
 import qualified Test.Tasty.QuickCheck as QC
-import           Data.Monoid
-import           Control.Lens
 import           Control.Monad.State
 import qualified Control.Monad.Free.Church as Church
 import qualified Data.HashMap.Lazy as HM
 import qualified Data.Text             as T
+import qualified Data.Text.Lazy        as TL
+import qualified Data.Text.Lazy.Encoding    as TL
 import qualified Data.Map.Strict as Map
 import qualified Data.Vector as V
 import qualified Data.Aeson as Aeson
-import           Network.AWS.DynamoDB
 
 import           DynamoDbEventStore.EventStoreCommands
 import           DynamoDbEventStore.EventStoreActions
 import qualified DynamoDbEventStore.GlobalFeedWriter as GlobalFeedWriter
 import           DynamoDbEventStore.GlobalFeedWriter (FeedEntry())
-import qualified DynamoDbEventStore.Constants as Constants
 import           DynamoDbEventStore.DynamoCmdInterpreter
 
 type UploadItem = (T.Text,Int64,T.Text)
@@ -57,20 +55,11 @@ instance QC.Arbitrary UploadList where
         (EventData event, number) <- zip events [0..]
         return (stream, number, event)
 
-dynamoWriteWithRetry :: (T.Text, Int64, T.Text) -> DynamoCmdM DynamoWriteResult
-dynamoWriteWithRetry (stream, eventNumber, body) = loop DynamoWriteFailure
-  where
-    values = HM.fromList
-      [ ("Body", set avS (Just body) attributeValue),
-        (Constants.needsPagingKey, set avS (Just "True") attributeValue) ]
-    loop :: DynamoWriteResult -> DynamoCmdM DynamoWriteResult
-    loop DynamoWriteFailure =
-      writeToDynamo' (DynamoKey (Constants.streamDynamoKeyPrefix <> stream) eventNumber) values 0 >>= loop
-    loop r = return r
-
+writeEvent :: (T.Text, Int64, T.Text) -> DynamoCmdM EventWriteResult
+writeEvent (stream, eventNumber, body) = postEventRequestProgram (PostEventRequest stream eventNumber (TL.encodeUtf8 . TL.fromStrict $ body) "")
 
 publisher :: [(T.Text,Int64,T.Text)] -> DynamoCmdM ()
-publisher xs = forM_ xs dynamoWriteWithRetry
+publisher xs = forM_ xs writeEvent
 
 globalFeedFromUploadList :: [UploadItem] -> Map.Map T.Text (V.Vector Int64)
 globalFeedFromUploadList =
