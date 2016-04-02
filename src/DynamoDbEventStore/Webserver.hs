@@ -112,4 +112,4 @@ app process = do
           <$> mStreamId
   get "/all" $ do
     toResult . fmap (process . ReadAll) $
-          (pure ReadAllRequest)
+          pure ReadAllRequest

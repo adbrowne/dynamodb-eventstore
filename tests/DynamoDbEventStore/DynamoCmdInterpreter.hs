@@ -134,6 +134,7 @@ setPulseStatus programName isActive = do
 runCmd :: T.Text -> DynamoCmdMFree r -> InterpreterApp r (Either (Maybe r) (DynamoCmdMFree r))
 runCmd _ (Free.Pure r) = return $ Left (Just r)
 runCmd _ (Free.Free (FatalError' msg)) = const (Left Nothing) <$> addLog (T.append "Fatal Error" msg)
+runCmd _ (Free.Free (Wait' _ r)) = Right <$> return r
 runCmd _ (Free.Free QueryBackward'{}) = error "todo: implement QueryBackward'"
 runCmd _ (Free.Free (WriteToDynamo' key values version r)) = Right <$> writeToDynamo key values version r
 runCmd _ (Free.Free (ReadFromDynamo' key r)) = Right <$> uses (loopStateTestState . testStateDynamo) (r . getReadResult key)

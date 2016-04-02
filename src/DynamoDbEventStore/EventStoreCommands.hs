@@ -120,6 +120,9 @@ data DynamoCmd next =
     ([DynamoReadResult] -> next) |
   ScanNeedsPaging'
     ([DynamoKey] -> next) |
+  Wait'
+    Int
+    next |
   FatalError'
     T.Text |
   SetPulseStatus'

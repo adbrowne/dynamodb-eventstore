@@ -173,5 +173,6 @@ main = forever $ do
   scanResult <- scanNeedsPaging'
   forM_ scanResult writeItemToGlobalFeed
   log' Debug $ (toText . length) scanResult
+  when (null scanResult) (wait' 1000)
   setPulseStatus' $ case scanResult of [] -> False
                                        _  -> True

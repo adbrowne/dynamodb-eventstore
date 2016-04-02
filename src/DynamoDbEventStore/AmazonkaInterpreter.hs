@@ -6,6 +6,7 @@
 
 module DynamoDbEventStore.AmazonkaInterpreter where
 
+import           Control.Concurrent (threadDelay)
 import           Control.Monad.IO.Class
 import           Data.Int
 import           Data.Typeable
@@ -123,7 +124,9 @@ toDynamoReadResult allValues = do
   return DynamoReadResult { dynamoReadResultKey = eventKey, dynamoReadResultVersion = version, dynamoReadResultValue = values }
 
 runCmd :: (Typeable m, MonadCatch m, MonadAWS m, MonadIO m) => T.Text -> DynamoCmd (m a) -> m a
---runCmd _ (Wait' n) = n ()
+runCmd _ (Wait' milliseconds n) = do
+  liftIO $ threadDelay (milliseconds * 1000)
+  n
 runCmd tn (ReadFromDynamo' eventKey n) = do
   let key = getDynamoKeyForEvent eventKey
   let req = getItem tn & set giKey key
