@@ -110,6 +110,6 @@ app process = do
     toResult . fmap (process . ReadStream) $
           ReadStreamRequest
           <$> mStreamId
-  get "/all" $ do
+  get "/all" $ 
     toResult . fmap (process . ReadAll) $
           pure ReadAllRequest
