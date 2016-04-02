@@ -71,7 +71,7 @@ postEventRequestProgram (PostEventRequest sId ev ed et) = do
 
 getReadStreamRequestProgram :: ReadStreamRequest -> DynamoCmdM [RecordedEvent]
 getReadStreamRequestProgram (ReadStreamRequest sId) = do
-  readResults <- queryBackward' sId 10 Nothing
+  readResults <- queryBackward' (Constants.streamDynamoKeyPrefix <> sId) 10 Nothing
   return $ fmap toRecordedEvent readResults
   where 
     toRecordedEvent :: DynamoReadResult -> RecordedEvent

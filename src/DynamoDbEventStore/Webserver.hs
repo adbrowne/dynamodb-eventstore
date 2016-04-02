@@ -66,7 +66,7 @@ positiveIntegerParser =
 
 textParser :: Parser T.Text
 textParser =
-  fmap T.pack $ many1 (satisfy (\_ -> True)) <* endOfInput
+  fmap T.pack $ many1 (satisfy (const True)) <* endOfInput
 
 positiveInt64Parser :: Parser Int64
 positiveInt64Parser =

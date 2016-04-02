@@ -90,8 +90,35 @@ prop_EventShouldAppearInGlobalFeedInStreamOrder (UploadList uploadList) =
        check (_, testState) = QC.forAll (runReadAllProgram testState) (\feedItems -> (globalRecordedEventListToMap <$> feedItems) === (Just $ globalFeedFromUploadList uploadList))
        runReadAllProgram = runProgram "readAllRequestProgram" (Church.fromF (getReadAllRequestProgram ReadAllRequest))
 
+readEachStream :: [UploadItem] -> DynamoCmdM (Map.Map T.Text (V.Vector Int64))
+readEachStream uploadItems = 
+  foldM readStream Map.empty streams
+  where 
+    readStream :: Map.Map T.Text (V.Vector Int64) -> T.Text -> DynamoCmdM (Map.Map T.Text (V.Vector Int64))
+    readStream m streamId = do
+      eventIds <- getEventIds streamId
+      return $ Map.insert streamId eventIds m
+    getEventIds :: T.Text -> DynamoCmdM (V.Vector Int64)
+    getEventIds streamId = do
+       recordedEvents <- getReadStreamRequestProgram (ReadStreamRequest streamId)
+       return $ V.fromList $ recordedEventNumber <$> reverse recordedEvents
+    streams :: [T.Text]
+    streams = (\(stream, _, _) -> stream) <$> uploadItems
+
+prop_EventsShouldAppearInTheirSteamsInOrder :: UploadList -> QC.Property
+prop_EventsShouldAppearInTheirSteamsInOrder (UploadList uploadList) =
+  let
+    programs = Map.fromList [
+      ("Publisher", (publisher uploadList,100)),
+      ("GlobalFeedWriter1", (GlobalFeedWriter.main, 100)) ]
+  in QC.forAll (runPrograms programs) check
+     where
+       check (_, testState) = QC.forAll (runReadEachStream testState) (\streamItems -> streamItems === (Just $ globalFeedFromUploadList uploadList))
+       runReadEachStream = runProgram "readEachStream" (Church.fromF (readEachStream uploadList))
+
 tests :: [TestTree]
 tests = [
       testProperty "Global Feed preserves stream order" prop_EventShouldAppearInGlobalFeedInStreamOrder,
+      testProperty "Each event appears in it's correct stream" prop_EventsShouldAppearInTheirSteamsInOrder,
       testProperty "Can round trip FeedEntry via JSON" (\(a :: FeedEntry) -> (Aeson.decode . Aeson.encode) a === Just a)
   ]

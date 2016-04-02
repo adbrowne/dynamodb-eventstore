@@ -7,6 +7,8 @@
 module DynamoDbEventStore.DynamoCmdInterpreter where
 
 import           Control.Lens
+import           Data.Int
+import           Data.List (unfoldr)
 import           Control.Monad.State
 import           Data.Functor (($>))
 import qualified Data.HashMap.Lazy as HM
@@ -109,6 +111,16 @@ getReadResult key table = do
   (version, values) <- Map.lookup key table
   return $ DynamoReadResult key version values
 
+queryBackward :: T.Text -> Int -> Maybe Int64 -> TestDynamoTable -> [DynamoReadResult]
+queryBackward key maxEvents Nothing table = 
+  take maxEvents $ reverse $ unfoldr getEvent 0
+  where 
+    getEvent :: Int64 -> Maybe (DynamoReadResult, Int64)
+    getEvent eventNumber = 
+      (\result -> (result, eventNumber + 1)) <$> getReadResult (DynamoKey key eventNumber) table 
+
+queryBackward key maxEvents (Just _start) table = undefined
+
 scanNeedsPaging :: TestDynamoTable -> [DynamoKey]
 scanNeedsPaging = 
    let 
@@ -135,7 +147,7 @@ runCmd :: T.Text -> DynamoCmdMFree r -> InterpreterApp r (Either (Maybe r) (Dyna
 runCmd _ (Free.Pure r) = return $ Left (Just r)
 runCmd _ (Free.Free (FatalError' msg)) = const (Left Nothing) <$> addLog (T.append "Fatal Error" msg)
 runCmd _ (Free.Free (Wait' _ r)) = Right <$> return r
-runCmd _ (Free.Free QueryBackward'{}) = error "todo: implement QueryBackward'"
+runCmd _ (Free.Free (QueryBackward' key maxEvents start r)) = Right <$> uses (loopStateTestState . testStateDynamo) (r . queryBackward key maxEvents start) 
 runCmd _ (Free.Free (WriteToDynamo' key values version r)) = Right <$> writeToDynamo key values version r
 runCmd _ (Free.Free (ReadFromDynamo' key r)) = Right <$> uses (loopStateTestState . testStateDynamo) (r . getReadResult key)
 runCmd _ (Free.Free (Log' _ msg r)) = Right <$> (addLog msg >> return r)
