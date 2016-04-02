@@ -44,7 +44,8 @@ data PostEventRequest = PostEventRequest {
 } deriving (Show)
 
 data ReadStreamRequest = ReadStreamRequest {
-   rsrStreamId        :: T.Text
+   rsrStreamId         :: T.Text,
+   rsrStartEventNumber :: Maybe Int64
 } deriving (Show)
 
 data ReadAllRequest = ReadAllRequest deriving (Show)
@@ -70,7 +71,7 @@ postEventRequestProgram (PostEventRequest sId ev ed et) = do
     toEventResult DynamoWriteWrongVersion = EventExists
 
 getReadStreamRequestProgram :: ReadStreamRequest -> DynamoCmdM [RecordedEvent]
-getReadStreamRequestProgram (ReadStreamRequest sId) = do
+getReadStreamRequestProgram (ReadStreamRequest sId startEventNumber) = do
   readResults <- queryBackward' (Constants.streamDynamoKeyPrefix <> sId) 10 Nothing
   return $ fmap toRecordedEvent readResults
   where 

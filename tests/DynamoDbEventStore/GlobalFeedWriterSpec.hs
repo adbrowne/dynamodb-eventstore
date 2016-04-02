@@ -100,7 +100,7 @@ readEachStream uploadItems =
       return $ Map.insert streamId eventIds m
     getEventIds :: T.Text -> DynamoCmdM (V.Vector Int64)
     getEventIds streamId = do
-       recordedEvents <- getReadStreamRequestProgram (ReadStreamRequest streamId)
+       recordedEvents <- getReadStreamRequestProgram (ReadStreamRequest streamId Nothing)
        return $ V.fromList $ recordedEventNumber <$> reverse recordedEvents
     streams :: [T.Text]
     streams = (\(stream, _, _) -> stream) <$> uploadItems
