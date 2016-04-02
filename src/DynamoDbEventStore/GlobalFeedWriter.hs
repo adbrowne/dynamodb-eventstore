@@ -45,13 +45,13 @@ instance Aeson.ToJSON FeedEntry where
 
 dynamoWriteWithRetry :: DynamoKey -> DynamoValues -> Int -> DynamoCmdM DynamoWriteResult
 dynamoWriteWithRetry key value version = loop 0 DynamoWriteFailure
-  where 
+  where
     loop :: Int -> DynamoWriteResult -> DynamoCmdM DynamoWriteResult
     loop 100 previousResult = return previousResult
     loop count DynamoWriteFailure = writeToDynamo' key value version >>= loop (count  + 1)
     loop _ previousResult = return previousResult
 
-getPageDynamoKey :: Int -> DynamoKey 
+getPageDynamoKey :: Int -> DynamoKey
 getPageDynamoKey pageNumber =
   let paddedPageNumber = T.pack (printf "%08d" pageNumber)
   in DynamoKey (Constants.pageDynamoKeyPrefix <> paddedPageNumber) 0
@@ -66,12 +66,12 @@ entryIsPaged :: DynamoKey -> DynamoCmdM Bool
 entryIsPaged item = do
   dynamoItem <- readFromDynamoMustExist item
   return ((not . containsNeedsPagingKey) dynamoItem)
-  where 
+  where
     containsNeedsPagingKey :: DynamoReadResult -> Bool
     containsNeedsPagingKey = HM.member Constants.needsPagingKey . dynamoReadResultValue
-  
+
 previousEntryIsPaged :: DynamoKey -> DynamoCmdM Bool
-previousEntryIsPaged item = 
+previousEntryIsPaged item =
   let itemEventNumber = dynamoKeyEventNumber item
   in
     if itemEventNumber == 0 then
@@ -80,31 +80,34 @@ previousEntryIsPaged item =
       entryIsPaged (item { dynamoKeyEventNumber = itemEventNumber - 1})
 
 readPageBody :: DynamoValues -> [FeedEntry]
-readPageBody values = -- todo don't ignore errors 
+readPageBody values = -- todo don't ignore errors
   fromMaybe [] $ view (ix Constants.pageBodyKey . avB) values >>= Aeson.decodeStrict
 
 nextVersion :: DynamoReadResult -> Int
 nextVersion readResult = dynamoReadResultVersion readResult + 1
 
+toDynamoKey :: StreamId -> Int64 -> DynamoKey
+toDynamoKey (StreamId streamId) = DynamoKey (Constants.streamDynamoKeyPrefix <> streamId)
+
 setPageEntryPageNumber :: Int -> FeedEntry -> DynamoCmdM ()
 setPageEntryPageNumber pageNumber feedEntry = do
-  let (StreamId streamId) = feedEntryStream feedEntry
-  let dynamoKey = DynamoKey streamId (feedEntryNumber feedEntry)
+  let streamId = feedEntryStream feedEntry
+  let dynamoKey = toDynamoKey streamId  (feedEntryNumber feedEntry)
   eventEntry <- readFromDynamoMustExist dynamoKey
   let newValue = (HM.delete Constants.needsPagingKey . HM.insert Constants.eventPageNumberKey (stringAttributeValue (toText pageNumber)) . dynamoReadResultValue) eventEntry
   void $ dynamoWriteWithRetry dynamoKey newValue (nextVersion eventEntry)
 
-checkItemPaged :: DynamoKey -> DynamoCmdM Bool 
+checkItemPaged :: DynamoKey -> DynamoCmdM Bool
 checkItemPaged item = do
   eventEntry <- readFromDynamoMustExist item
   log' Debug ("checkItemPaged " <> toText eventEntry)
   return $ (HM.member Constants.eventPageNumberKey . dynamoReadResultValue ) eventEntry
-  
+
 stringAttributeValue :: T.Text -> AttributeValue
 stringAttributeValue t = set avS (Just t) attributeValue
 
 verifyPage :: Int -> DynamoCmdM ()
-verifyPage (-1)       = return () 
+verifyPage (-1)       = return ()
 verifyPage pageNumber = do
   let pageDynamoKey = getPageDynamoKey pageNumber
   page <- readFromDynamoMustExist pageDynamoKey
@@ -124,32 +127,33 @@ logIf False _ _ = return ()
 
 readFromDynamoMustExist :: DynamoKey -> DynamoCmdM DynamoReadResult
 readFromDynamoMustExist key = do
-  r <- readFromDynamo' key 
+  r <- readFromDynamo' key
   case r of Just x -> return x
             Nothing -> fatalError' ("Could not find item: " <> toText key)
 
 updateGlobalFeed :: DynamoKey -> DynamoCmdM ()
 updateGlobalFeed item@DynamoKey { dynamoKeyKey = itemKey, dynamoKeyEventNumber = itemEventNumber } = do
   log' Debug ("updateGlobalFeed" <> toText item)
+  let streamId = StreamId $ T.drop (T.length Constants.streamDynamoKeyPrefix) itemKey
   mostRecentPage <- getMostRecentPage 0
   verifyPage mostRecentPage
   itemIsPaged <- checkItemPaged item
   logIf itemIsPaged Debug ("itemIsPaged" <> toText item)
   unless itemIsPaged $ do
-    let feedEntry = (BL.toStrict . Aeson.encode . Aeson.toJSON) [FeedEntry  (StreamId itemKey) itemEventNumber]
+    let feedEntry = (BL.toStrict . Aeson.encode . Aeson.toJSON) [FeedEntry streamId itemEventNumber]
     let nextPage = mostRecentPage + 1
     when (dynamoKeyEventNumber item > 0) (updateGlobalFeed item { dynamoKeyEventNumber = itemEventNumber - 1 })
     pageResult <- dynamoWriteWithRetry (getPageDynamoKey nextPage) (HM.singleton Constants.pageBodyKey (set avB (Just feedEntry) attributeValue)) 0
     onPageResult nextPage pageResult
     return ()
   return ()
-  where 
+  where
     onPageResult :: Int -> DynamoWriteResult -> DynamoCmdM ()
     onPageResult _ DynamoWriteWrongVersion = do
       log' Debug "Got wrong version writing page"
       updateGlobalFeed item
     onPageResult nextPage DynamoWriteSuccess = do
-      eventEntry <- readFromDynamoMustExist item 
+      eventEntry <- readFromDynamoMustExist item
       let values = dynamoReadResultValue eventEntry
       let version = dynamoReadResultVersion eventEntry
       let values' = (HM.delete Constants.needsPagingKey . HM.insert Constants.eventPageNumberKey (set avS (Just (toText nextPage)) attributeValue)) values

@@ -10,6 +10,7 @@ import           Data.Int
 import           Test.Tasty
 import           Test.Tasty.QuickCheck((===),testProperty)
 import qualified Test.Tasty.QuickCheck as QC
+import           Data.Monoid
 import           Control.Lens
 import           Control.Monad.State
 import qualified Control.Monad.Free.Church as Church
@@ -64,7 +65,7 @@ dynamoWriteWithRetry (stream, eventNumber, body) = loop DynamoWriteFailure
         (Constants.needsPagingKey, set avS (Just "True") attributeValue) ]
     loop :: DynamoWriteResult -> DynamoCmdM DynamoWriteResult
     loop DynamoWriteFailure =
-      writeToDynamo' (DynamoKey stream eventNumber) values 0 >>= loop
+      writeToDynamo' (DynamoKey (Constants.streamDynamoKeyPrefix <> stream) eventNumber) values 0 >>= loop
     loop r = return r
 
 

@@ -10,7 +10,10 @@ pageIsVerifiedKey :: T.Text
 pageIsVerifiedKey = "Verified"
 
 pageDynamoKeyPrefix :: T.Text
-pageDynamoKeyPrefix = "$page"
+pageDynamoKeyPrefix = "page$"
+
+streamDynamoKeyPrefix :: T.Text
+streamDynamoKeyPrefix = "stream$"
 
 pageBodyKey :: T.Text
 pageBodyKey = "Body"
