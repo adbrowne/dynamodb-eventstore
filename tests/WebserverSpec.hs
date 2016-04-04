@@ -73,7 +73,7 @@ getStreamSpec = do
       waiCase getExample $ assertStatus 200
 
     it "responds with body" $
-      waiCase getExample $ assertBody "ReadStream (ReadStreamRequest {rsrStreamId = \"myStreamId\"})"
+      waiCase getExample $ assertBody "ReadStream (ReadStreamRequest {rsrStreamId = \"myStreamId\", rsrStartEventNumber = Nothing})"
 
   describe "Get stream with missing stream name" $ do
     let getExample = getStream ""
