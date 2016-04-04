@@ -79,7 +79,7 @@ getReadStreamRequestProgram (ReadStreamRequest sId startEventNumber) = do
     toRecordedEvent (DynamoReadResult key _version values) = fromJust $ do
       eventType <- view (ix fieldEventType . avS) values 
       eventBody <- view (ix fieldBody . avB) values 
-      return $ RecordedEvent (dynamoKeyKey key) (dynamoKeyEventNumber key) eventBody eventType
+      return $ RecordedEvent sId (dynamoKeyEventNumber key) eventBody eventType
 
 getPageDynamoKey :: Int -> DynamoKey 
 getPageDynamoKey pageNumber =

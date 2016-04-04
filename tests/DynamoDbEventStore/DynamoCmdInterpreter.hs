@@ -51,6 +51,9 @@ $(makeLenses ''LoopState)
 
 $(makeLenses ''TestState)
 
+emptyTestState :: TestState
+emptyTestState = TestState Map.empty V.empty
+
 type InterpreterApp a = (StateT (LoopState a) QC.Gen)
 
 maxIterations :: Int
@@ -196,7 +199,7 @@ runPrograms programs =
   over _2 (view loopStateTestState) <$> runStateT loop initialState
   where
         runningPrograms = fmap (\(p,maxIdleIterations) -> RunningProgramState (Church.fromF p) maxIdleIterations) programs
-        initialState = LoopState 0 (LoopActive Map.empty) (TestState Map.empty V.empty) runningPrograms
+        initialState = LoopState 0 (LoopActive Map.empty) emptyTestState runningPrograms
         loop :: InterpreterApp a [a]
         loop = do
           complete <- isComplete
