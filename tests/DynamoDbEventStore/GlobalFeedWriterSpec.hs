@@ -16,6 +16,7 @@ import           Control.Monad.Loops
 import qualified Control.Monad.Free.Church as Church
 import qualified Data.HashMap.Lazy as HM
 import qualified Data.Text             as T
+import qualified Data.Text.Encoding             as T
 import qualified Data.Text.Lazy        as TL
 import qualified Data.ByteString.Lazy        as BL
 import qualified Data.Text.Lazy.Encoding    as TL
@@ -138,11 +139,10 @@ prop_EventsShouldAppearInTheirSteamsInOrder (UploadList uploadList) =
 eventDataToByteString :: EventData -> BL.ByteString
 eventDataToByteString (EventData ed) = (TL.encodeUtf8 . TL.fromStrict) ed
 
-writeThenRead :: StreamId -> [(T.Text, BL.ByteString)] -> DynamoCmdM [(StreamId, T.Text, BL.ByteString)]
+writeThenRead :: StreamId -> [(T.Text, BL.ByteString)] -> DynamoCmdM [RecordedEvent]
 writeThenRead (StreamId streamId) events = do
   evalStateT (forM_ events writeSingleEvent) 0
-  streamEvents <- getStreamRecordedEvents streamId
-  return $ (\ev -> (StreamId . recordedEventStreamId $ ev,recordedEventType ev, BL.fromStrict $ recordedEventData ev)) <$> streamEvents
+  getStreamRecordedEvents streamId
   where 
     writeSingleEvent (et, ed) = do
       eventNumber <- get
@@ -153,10 +153,21 @@ writtenEventsAppearInReadStream :: Assertion
 writtenEventsAppearInReadStream = 
   let 
     streamId = StreamId "MyStream"
-    eventDatas = [("MyEvent", TL.encodeUtf8 "My Content")]
-    expectedResult = (\(a,b) -> (streamId, a, b)) <$> eventDatas
-    returnedEventDatas = runProgram "writeThenRead" (Church.fromF $ writeThenRead streamId eventDatas) emptyTestState
-  in assertEqual "Returned events should match input events" (Just expectedResult) returnedEventDatas
+    eventDatas = [("MyEvent", TL.encodeUtf8 "My Content"), ("MyEvent2", TL.encodeUtf8 "My Content2")]
+    expectedResult = [
+      RecordedEvent { 
+        recordedEventStreamId = "MyStream", 
+        recordedEventNumber = 0, 
+        recordedEventData = T.encodeUtf8 "My Content", 
+        recordedEventType = "MyEvent"
+      }, 
+      RecordedEvent { 
+        recordedEventStreamId = "MyStream", 
+        recordedEventNumber = 1, 
+        recordedEventData = T.encodeUtf8 "My Content2", 
+        recordedEventType = "MyEvent2"} ] 
+    result = runProgram "writeThenRead" (Church.fromF $ writeThenRead streamId eventDatas) emptyTestState
+  in assertEqual "Returned events should match input events" (Just expectedResult) result
 
 tests :: [TestTree]
 tests = [
