@@ -20,7 +20,7 @@ import qualified Test.Tasty.QuickCheck as QC
 import qualified Control.Monad.Free as Free
 import qualified Data.Map.Strict as Map
 import qualified Data.Text             as T
-import qualified Data.Vector as V
+import qualified Data.Sequence as Seq
 
 import qualified DynamoDbEventStore.Constants as Constants
 import           DynamoDbEventStore.EventStoreCommands
@@ -47,7 +47,7 @@ data LoopState r = LoopState {
 
 data TestState = TestState {
   _testStateDynamo :: TestDynamoTable,
-  _testStateLog :: V.Vector T.Text
+  _testStateLog :: Seq.Seq T.Text
 } deriving (Eq)
 
 instance Show TestState where
@@ -59,7 +59,7 @@ $(makeLenses ''LoopState)
 $(makeLenses ''TestState)
 
 emptyTestState :: TestState
-emptyTestState = TestState Map.empty V.empty
+emptyTestState = TestState Map.empty Seq.empty
 
 type InterpreterApp m a r = RandomFailure m => (StateT (LoopState a) m) r
 
@@ -80,7 +80,7 @@ isComplete = do
 addLog :: T.Text -> InterpreterApp m a ()
 addLog m =
   let
-    appendMessage = flip V.snoc m
+    appendMessage = flip (|>) m
   in (loopStateTestState . testStateLog) %= appendMessage
 
 addLogS :: String -> InterpreterApp m a ()

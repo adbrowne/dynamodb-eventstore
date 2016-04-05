@@ -20,7 +20,7 @@ import qualified Data.Text.Lazy        as TL
 import qualified Data.ByteString.Lazy        as BL
 import qualified Data.Text.Lazy.Encoding    as TL
 import qualified Data.Map.Strict as Map
-import qualified Data.Vector as V
+import qualified Data.Sequence as Seq
 import qualified Data.Aeson as Aeson
 
 import           DynamoDbEventStore.EventStoreCommands
@@ -64,22 +64,22 @@ writeEvent (stream, eventNumber, body) = postEventRequestProgram (PostEventReque
 publisher :: [(T.Text,Int64,T.Text)] -> DynamoCmdM ()
 publisher xs = forM_ xs writeEvent
 
-globalFeedFromUploadList :: [UploadItem] -> Map.Map T.Text (V.Vector Int64)
+globalFeedFromUploadList :: [UploadItem] -> Map.Map T.Text (Seq.Seq Int64)
 globalFeedFromUploadList =
   foldl' acc Map.empty
   where
-    acc :: Map.Map T.Text (V.Vector Int64) -> UploadItem -> Map.Map T.Text (V.Vector Int64)
+    acc :: Map.Map T.Text (Seq.Seq Int64) -> UploadItem -> Map.Map T.Text (Seq.Seq Int64)
     acc s (stream, number, _) =
-      let newValue = maybe (V.singleton number) (`V.snoc` number) $ Map.lookup stream s
+      let newValue = maybe (Seq.singleton number) (Seq.|> number) $ Map.lookup stream s
       in Map.insert stream newValue s
 
-globalRecordedEventListToMap :: [EventKey] -> Map.Map T.Text (V.Vector Int64)
+globalRecordedEventListToMap :: [EventKey] -> Map.Map T.Text (Seq.Seq Int64)
 globalRecordedEventListToMap = 
   foldl' acc Map.empty
   where
-    acc :: Map.Map T.Text (V.Vector Int64) -> EventKey -> Map.Map T.Text (V.Vector Int64)
+    acc :: Map.Map T.Text (Seq.Seq Int64) -> EventKey -> Map.Map T.Text (Seq.Seq Int64)
     acc s (EventKey (StreamId stream, number)) =
-      let newValue = maybe (V.singleton number) (`V.snoc` number) $ Map.lookup stream s
+      let newValue = maybe (Seq.singleton number) (Seq.|> number) $ Map.lookup stream s
       in Map.insert stream newValue s
 
 prop_EventShouldAppearInGlobalFeedInStreamOrder :: UploadList -> QC.Property
@@ -111,18 +111,18 @@ getStreamRecordedEvents streamId = do
         else 
           return $ Just (recordedEvents, (Just . (\x -> x - 1) . recordedEventNumber . last) recordedEvents)
 
-readEachStream :: [UploadItem] -> DynamoCmdM (Map.Map T.Text (V.Vector Int64))
+readEachStream :: [UploadItem] -> DynamoCmdM (Map.Map T.Text (Seq.Seq Int64))
 readEachStream uploadItems = 
   foldM readStream Map.empty streams
   where 
-    readStream :: Map.Map T.Text (V.Vector Int64) -> T.Text -> DynamoCmdM (Map.Map T.Text (V.Vector Int64))
+    readStream :: Map.Map T.Text (Seq.Seq Int64) -> T.Text -> DynamoCmdM (Map.Map T.Text (Seq.Seq Int64))
     readStream m streamId = do
       eventIds <- getEventIds streamId
       return $ Map.insert streamId eventIds m
-    getEventIds :: T.Text -> DynamoCmdM (V.Vector Int64)
+    getEventIds :: T.Text -> DynamoCmdM (Seq.Seq Int64)
     getEventIds streamId = do
        recordedEvents <- getStreamRecordedEvents streamId
-       return $ V.fromList $ recordedEventNumber <$> recordedEvents
+       return $ Seq.fromList $ recordedEventNumber <$> recordedEvents
     streams :: [T.Text]
     streams = (\(stream, _, _) -> stream) <$> uploadItems
 

@@ -5,7 +5,7 @@ module DynamoDbEventStore.GlobalFeedWriter (main, FeedEntry(FeedEntry), feedEntr
 
 import           Control.Monad
 import           Data.Int
-import qualified Data.Vector           as V
+import qualified Data.Sequence         as Seq
 import qualified Data.Text             as T
 import qualified Data.ByteString.Lazy  as BL
 import qualified Data.HashMap.Lazy as HM
@@ -46,7 +46,7 @@ instance Aeson.ToJSON FeedEntry where
 
 data FeedPage = FeedPage {
   feedPageNumber     :: Int,
-  feedPageEntries    :: V.Vector FeedEntry,
+  feedPageEntries    :: Seq.Seq FeedEntry,
   feedPageIsVerified :: Bool
 }
 
@@ -104,9 +104,9 @@ previousEntryIsPaged item =
     else
       entryIsPaged (item { dynamoKeyEventNumber = itemEventNumber - 1})
 
-readPageBody :: DynamoValues -> V.Vector FeedEntry
+readPageBody :: DynamoValues -> Seq.Seq FeedEntry
 readPageBody values = -- todo don't ignore errors
-  fromMaybe V.empty $ view (ix Constants.pageBodyKey . avB) values >>= Aeson.decodeStrict
+  fromMaybe Seq.empty $ view (ix Constants.pageBodyKey . avB) values >>= Aeson.decodeStrict
 
 nextVersion :: DynamoReadResult -> Int
 nextVersion readResult = dynamoReadResultVersion readResult + 1
@@ -161,7 +161,7 @@ getCurrentPage = do
   mostRecentPage <- getMostRecentPage 0
   let mostRecentPageNumber = maybe (-1) feedPageNumber mostRecentPage
   verifyPage mostRecentPageNumber
-  let currentPage = FeedPage { feedPageNumber = mostRecentPageNumber + 1, feedPageEntries = V.empty, feedPageIsVerified = False }
+  let currentPage = FeedPage { feedPageNumber = mostRecentPageNumber + 1, feedPageEntries = Seq.empty, feedPageIsVerified = False }
   return currentPage
 
 updateGlobalFeed :: DynamoKey -> DynamoCmdM ()
@@ -172,7 +172,7 @@ updateGlobalFeed item@DynamoKey { dynamoKeyKey = itemKey, dynamoKeyEventNumber =
   itemIsPaged <- checkItemPaged item
   logIf itemIsPaged Debug ("itemIsPaged" <> toText item)
   unless itemIsPaged $ do
-    let feedEntry = (BL.toStrict . Aeson.encode . Aeson.toJSON) (V.snoc (feedPageEntries currentPage) $ FeedEntry streamId itemEventNumber)
+    let feedEntry = (BL.toStrict . Aeson.encode . Aeson.toJSON) (feedPageEntries currentPage |> FeedEntry streamId itemEventNumber)
     when (dynamoKeyEventNumber item > 0) (updateGlobalFeed item { dynamoKeyEventNumber = itemEventNumber - 1 })
     pageResult <- dynamoWriteWithRetry (getPageDynamoKey (feedPageNumber currentPage)) (HM.singleton Constants.pageBodyKey (set avB (Just feedEntry) attributeValue)) 0
     onPageResult (feedPageNumber currentPage) pageResult
