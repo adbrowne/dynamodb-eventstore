@@ -8,6 +8,7 @@ import           Data.Int
 import qualified Data.Sequence         as Seq
 import qualified Data.Text             as T
 import qualified Data.ByteString.Lazy  as BL
+import qualified Data.ByteString       as BS
 import qualified Data.HashMap.Lazy as HM
 import qualified DynamoDbEventStore.Constants as Constants
 import           DynamoDbEventStore.EventStoreCommands
@@ -172,6 +173,9 @@ setEventEntryPage key pageNumber = do
     let values' = (HM.delete Constants.needsPagingKey . HM.insert Constants.eventPageNumberKey (set avS (Just (toText pageNumber)) attributeValue)) values
     dynamoWriteWithRetry key values' (version + 1)
 
+itemToJsonByteString :: Aeson.ToJSON a => a -> BS.ByteString
+itemToJsonByteString = BL.toStrict . Aeson.encode . Aeson.toJSON
+
 updateGlobalFeed :: DynamoKey -> DynamoCmdM ()
 updateGlobalFeed item@DynamoKey { dynamoKeyKey = itemKey, dynamoKeyEventNumber = itemEventNumber } = do
   log' Debug ("updateGlobalFeed" <> toText item)
@@ -180,7 +184,7 @@ updateGlobalFeed item@DynamoKey { dynamoKeyKey = itemKey, dynamoKeyEventNumber =
   itemIsPaged <- checkItemPaged item
   logIf itemIsPaged Debug ("itemIsPaged" <> toText item)
   unless itemIsPaged $ do
-    let feedEntry = (BL.toStrict . Aeson.encode . Aeson.toJSON) (feedPageEntries currentPage |> FeedEntry streamId itemEventNumber)
+    let feedEntry = itemToJsonByteString (feedPageEntries currentPage |> FeedEntry streamId itemEventNumber)
     when (dynamoKeyEventNumber item > 0) (updateGlobalFeed item { dynamoKeyEventNumber = itemEventNumber - 1 })
     pageResult <- dynamoWriteWithRetry (getPageDynamoKey (feedPageNumber currentPage)) (HM.singleton Constants.pageBodyKey (set avB (Just feedEntry) attributeValue)) 0
     onPageResult (feedPageNumber currentPage) pageResult
@@ -191,10 +195,9 @@ updateGlobalFeed item@DynamoKey { dynamoKeyKey = itemKey, dynamoKeyEventNumber =
     onPageResult _ DynamoWriteWrongVersion = do
       log' Debug "Got wrong version writing page"
       updateGlobalFeed item
-    onPageResult pageNumber DynamoWriteSuccess = do
-      itemUpdateResult <- setEventEntryPage item pageNumber
-      when (itemUpdateResult == DynamoWriteSuccess) (verifyPage pageNumber)
-    onPageResult pageNumber DynamoWriteFailure = fatalError' ("DynamoWriteFailure on writing page: " <> pageNumber)
+    onPageResult pageNumber DynamoWriteSuccess = 
+      void $ setEventEntryPage item pageNumber
+    onPageResult pageNumber DynamoWriteFailure = fatalError' ("DynamoWriteFailure on writing page: " <> toText pageNumber)
 
 writeItemToGlobalFeed :: DynamoKey -> DynamoCmdM ()
 writeItemToGlobalFeed item = do
