@@ -219,21 +219,21 @@ runPrograms programs =
              then return []
              else iterateApp >> incrimentIterations >> loop
 
-runProgramGenerator :: T.Text -> DynamoCmdMFree a -> TestState -> QC.Gen (Maybe a)
+runProgramGenerator :: T.Text -> DynamoCmdM a -> TestState -> QC.Gen (Maybe a)
 runProgramGenerator programId program testState =
-  evalStateT (loop $ Right program) initialState
+  evalStateT (loop $ Right (Church.fromF program)) initialState
   where
-        runningPrograms = Map.singleton programId (RunningProgramState program 0)
+        runningPrograms = Map.singleton programId (RunningProgramState (Church.fromF program) 0)
         initialState = LoopState 0 (LoopActive Map.empty) testState runningPrograms
         loop :: Either (Maybe r) (DynamoCmdMFree r) -> InterpreterApp QC.Gen r (Maybe r)
         loop (Left x) = return x
         loop (Right n) = runCmd programId n >>= loop
 
-runProgram :: T.Text -> DynamoCmdMFree a -> TestState -> Maybe a
+runProgram :: T.Text -> DynamoCmdM a -> TestState -> Maybe a
 runProgram programId program testState =
-  runIdentity $ evalStateT (loop $ Right program) initialState
+  runIdentity $ evalStateT (loop $ Right (Church.fromF program)) initialState
   where
-        runningPrograms = Map.singleton programId (RunningProgramState program 0)
+        runningPrograms = Map.singleton programId (RunningProgramState (Church.fromF program) 0)
         initialState = LoopState 0 (LoopActive Map.empty) testState runningPrograms
         loop :: Either (Maybe r) (DynamoCmdMFree r) -> InterpreterApp Identity r (Maybe r)
         loop (Left x) = return x

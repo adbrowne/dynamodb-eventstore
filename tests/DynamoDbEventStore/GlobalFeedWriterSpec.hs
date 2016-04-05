@@ -13,7 +13,6 @@ import qualified Test.Tasty.QuickCheck as QC
 import           Test.Tasty.HUnit
 import           Control.Monad.State
 import           Control.Monad.Loops
-import qualified Control.Monad.Free.Church as Church
 import qualified Data.HashMap.Lazy as HM
 import qualified Data.Text             as T
 import qualified Data.Text.Encoding             as T
@@ -92,7 +91,7 @@ prop_EventShouldAppearInGlobalFeedInStreamOrder (UploadList uploadList) =
   in QC.forAll (runPrograms programs) check
      where
        check (_, testState) = QC.forAll (runReadAllProgram testState) (\feedItems -> (globalRecordedEventListToMap <$> feedItems) === (Just $ globalFeedFromUploadList uploadList))
-       runReadAllProgram = runProgramGenerator "readAllRequestProgram" (Church.fromF (getReadAllRequestProgram ReadAllRequest))
+       runReadAllProgram = runProgramGenerator "readAllRequestProgram" (getReadAllRequestProgram ReadAllRequest)
 
 getStreamRecordedEvents :: T.Text -> DynamoCmdM [RecordedEvent]
 getStreamRecordedEvents streamId = do
@@ -134,7 +133,7 @@ prop_EventsShouldAppearInTheirSteamsInOrder (UploadList uploadList) =
   in QC.forAll (runPrograms programs) check
      where
        check (_, testState) = QC.forAll (runReadEachStream testState) (\streamItems -> streamItems === (Just $ globalFeedFromUploadList uploadList))
-       runReadEachStream = runProgramGenerator "readEachStream" (Church.fromF (readEachStream uploadList))
+       runReadEachStream = runProgramGenerator "readEachStream" (readEachStream uploadList)
 
 eventDataToByteString :: EventData -> BL.ByteString
 eventDataToByteString (EventData ed) = (TL.encodeUtf8 . TL.fromStrict) ed
@@ -166,7 +165,7 @@ writtenEventsAppearInReadStream =
         recordedEventNumber = 1, 
         recordedEventData = T.encodeUtf8 "My Content2", 
         recordedEventType = "MyEvent2"} ] 
-    result = runProgram "writeThenRead" (Church.fromF $ writeThenRead streamId eventDatas) emptyTestState
+    result = runProgram "writeThenRead" (writeThenRead streamId eventDatas) emptyTestState
   in assertEqual "Returned events should match input events" (Just expectedResult) result
 
 tests :: [TestTree]
