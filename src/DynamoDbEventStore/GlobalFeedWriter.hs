@@ -96,15 +96,6 @@ entryIsPaged item = do
     containsNeedsPagingKey :: DynamoReadResult -> Bool
     containsNeedsPagingKey = HM.member Constants.needsPagingKey . dynamoReadResultValue
 
-previousEntryIsPaged :: DynamoKey -> DynamoCmdM Bool
-previousEntryIsPaged item =
-  let itemEventNumber = dynamoKeyEventNumber item
-  in
-    if itemEventNumber == 0 then
-      return True
-    else
-      entryIsPaged (item { dynamoKeyEventNumber = itemEventNumber - 1})
-
 readPageBody :: DynamoValues -> Seq.Seq FeedEntry
 readPageBody values = -- todo don't ignore errors
   fromMaybe Seq.empty $ view (ix Constants.pageBodyKey . avB) values >>= Aeson.decodeStrict
@@ -122,12 +113,6 @@ setPageEntryPageNumber pageNumber feedEntry = do
   eventEntry <- readFromDynamoMustExist dynamoKey
   let newValue = (HM.delete Constants.needsPagingKey . HM.insert Constants.eventPageNumberKey (stringAttributeValue (toText pageNumber)) . dynamoReadResultValue) eventEntry
   void $ dynamoWriteWithRetry dynamoKey newValue (nextVersion eventEntry)
-
-checkItemPaged :: DynamoKey -> DynamoCmdM Bool
-checkItemPaged item = do
-  eventEntry <- readFromDynamoMustExist item
-  log' Debug ("checkItemPaged " <> toText eventEntry)
-  return $ (HM.member Constants.eventPageNumberKey . dynamoReadResultValue ) eventEntry
 
 stringAttributeValue :: T.Text -> AttributeValue
 stringAttributeValue t = set avS (Just t) attributeValue
@@ -181,7 +166,7 @@ updateGlobalFeed item@DynamoKey { dynamoKeyKey = itemKey, dynamoKeyEventNumber =
   log' Debug ("updateGlobalFeed" <> toText item)
   let streamId = StreamId $ T.drop (T.length Constants.streamDynamoKeyPrefix) itemKey
   currentPage <- getCurrentPage
-  itemIsPaged <- checkItemPaged item
+  itemIsPaged <- entryIsPaged item
   logIf itemIsPaged Debug ("itemIsPaged" <> toText item)
   unless itemIsPaged $ do
     let feedEntry = itemToJsonByteString (feedPageEntries currentPage |> FeedEntry streamId itemEventNumber)
@@ -199,17 +184,10 @@ updateGlobalFeed item@DynamoKey { dynamoKeyKey = itemKey, dynamoKeyEventNumber =
       void $ setEventEntryPage item pageNumber
     onPageResult pageNumber DynamoWriteFailure = fatalError' ("DynamoWriteFailure on writing page: " <> toText pageNumber)
 
-writeItemToGlobalFeed :: DynamoKey -> DynamoCmdM ()
-writeItemToGlobalFeed item = do
-  previousEntryOk <- previousEntryIsPaged item
-  entryPaged <- entryIsPaged item
-  log' Debug ("entryPaged: " <> toText entryPaged <> " previousEntryOk " <> toText previousEntryOk)
-  when (previousEntryOk && not entryPaged) (updateGlobalFeed item)
-
 main :: DynamoCmdM ()
 main = forever $ do
   scanResult <- scanNeedsPaging'
-  forM_ scanResult writeItemToGlobalFeed
+  forM_ scanResult updateGlobalFeed
   log' Debug $ (toText . length) scanResult
   when (null scanResult) (wait' 1000)
   setPulseStatus' $ case scanResult of [] -> False
