@@ -181,7 +181,7 @@ runCmd tn (ScanNeedsPaging' n) =
              scan tn
              & set sIndexName (Just unpagedIndexName)
         n $ fmap toEntry (view srsItems resp)
-runCmd _tn (FatalError' _n) = error "FatalError' unimplemented"
+runCmd _tn (FatalError' message) = error ("FatalError': " <> show message)
 runCmd _tn (SetPulseStatus' _ n) = n
 runCmd _tn (Log' _level msg n) = do
   liftIO $ print msg
