@@ -8,9 +8,9 @@ module DynamoDbEventStore.GlobalFeedWriterSpec where
 import           Data.List
 import           Data.Int
 import           Test.Tasty
-import           Control.Lens
 import           Test.Tasty.QuickCheck((===),testProperty)
 import qualified Test.Tasty.QuickCheck as QC
+import           Test.Tasty.HUnit
 import           Control.Monad.State
 import           Control.Monad.Loops
 import qualified Control.Monad.Free.Church as Church
@@ -91,7 +91,7 @@ prop_EventShouldAppearInGlobalFeedInStreamOrder (UploadList uploadList) =
   in QC.forAll (runPrograms programs) check
      where
        check (_, testState) = QC.forAll (runReadAllProgram testState) (\feedItems -> (globalRecordedEventListToMap <$> feedItems) === (Just $ globalFeedFromUploadList uploadList))
-       runReadAllProgram = runProgram "readAllRequestProgram" (Church.fromF (getReadAllRequestProgram ReadAllRequest))
+       runReadAllProgram = runProgramGenerator "readAllRequestProgram" (Church.fromF (getReadAllRequestProgram ReadAllRequest))
 
 getStreamRecordedEvents :: T.Text -> DynamoCmdM [RecordedEvent]
 getStreamRecordedEvents streamId = do
@@ -133,7 +133,7 @@ prop_EventsShouldAppearInTheirSteamsInOrder (UploadList uploadList) =
   in QC.forAll (runPrograms programs) check
      where
        check (_, testState) = QC.forAll (runReadEachStream testState) (\streamItems -> streamItems === (Just $ globalFeedFromUploadList uploadList))
-       runReadEachStream = runProgram "readEachStream" (Church.fromF (readEachStream uploadList))
+       runReadEachStream = runProgramGenerator "readEachStream" (Church.fromF (readEachStream uploadList))
 
 eventDataToByteString :: EventData -> BL.ByteString
 eventDataToByteString (EventData ed) = (TL.encodeUtf8 . TL.fromStrict) ed
@@ -149,17 +149,19 @@ writeThenRead (StreamId streamId) events = do
       _ <- lift $ postEventRequestProgram (PostEventRequest streamId eventNumber ed et)
       put (eventNumber + 1)
   
-prop_WrittenEventsAppearInReadStream :: StreamId -> [(String, EventData)] -> QC.Property
-prop_WrittenEventsAppearInReadStream streamId eventDatas = 
+writtenEventsAppearInReadStream :: Assertion
+writtenEventsAppearInReadStream = 
   let 
-    eventDatas' = over _1 T.pack . over _2 eventDataToByteString <$> eventDatas 
-    expectedResult = (\(a,b) -> (streamId, a, b)) <$> eventDatas'
-  in QC.forAll(runProgram "writeThenRead" (Church.fromF $ writeThenRead streamId eventDatas') emptyTestState) (\returnedEventDatas -> Just expectedResult === returnedEventDatas)
+    streamId = StreamId "MyStream"
+    eventDatas = [("MyEvent", TL.encodeUtf8 "My Content")]
+    expectedResult = (\(a,b) -> (streamId, a, b)) <$> eventDatas
+    returnedEventDatas = runProgram "writeThenRead" (Church.fromF $ writeThenRead streamId eventDatas) emptyTestState
+  in assertEqual "Returned events should match input events" (Just expectedResult) returnedEventDatas
 
 tests :: [TestTree]
 tests = [
       testProperty "Global Feed preserves stream order" prop_EventShouldAppearInGlobalFeedInStreamOrder,
       testProperty "Each event appears in it's correct stream" prop_EventsShouldAppearInTheirSteamsInOrder,
-      testProperty "Written Events Appear In Read Stream" prop_WrittenEventsAppearInReadStream,
+      testCase "Written Events Appear In Read Stream" writtenEventsAppearInReadStream,
       testProperty "Can round trip FeedEntry via JSON" (\(a :: FeedEntry) -> (Aeson.decode . Aeson.encode) a === Just a)
   ]
