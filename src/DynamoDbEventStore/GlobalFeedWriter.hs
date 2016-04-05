@@ -164,6 +164,14 @@ getCurrentPage = do
   let currentPage = FeedPage { feedPageNumber = mostRecentPageNumber + 1, feedPageEntries = Seq.empty, feedPageIsVerified = False }
   return currentPage
 
+setEventEntryPage :: DynamoKey -> Int -> DynamoCmdM DynamoWriteResult
+setEventEntryPage key pageNumber = do
+    eventEntry <- readFromDynamoMustExist key
+    let values = dynamoReadResultValue eventEntry
+    let version = dynamoReadResultVersion eventEntry
+    let values' = (HM.delete Constants.needsPagingKey . HM.insert Constants.eventPageNumberKey (set avS (Just (toText pageNumber)) attributeValue)) values
+    dynamoWriteWithRetry key values' (version + 1)
+
 updateGlobalFeed :: DynamoKey -> DynamoCmdM ()
 updateGlobalFeed item@DynamoKey { dynamoKeyKey = itemKey, dynamoKeyEventNumber = itemEventNumber } = do
   log' Debug ("updateGlobalFeed" <> toText item)
@@ -183,13 +191,9 @@ updateGlobalFeed item@DynamoKey { dynamoKeyKey = itemKey, dynamoKeyEventNumber =
     onPageResult _ DynamoWriteWrongVersion = do
       log' Debug "Got wrong version writing page"
       updateGlobalFeed item
-    onPageResult nextPage DynamoWriteSuccess = do
-      eventEntry <- readFromDynamoMustExist item
-      let values = dynamoReadResultValue eventEntry
-      let version = dynamoReadResultVersion eventEntry
-      let values' = (HM.delete Constants.needsPagingKey . HM.insert Constants.eventPageNumberKey (set avS (Just (toText nextPage)) attributeValue)) values
-      itemUpdateResult <- dynamoWriteWithRetry item values' (version + 1)
-      when (itemUpdateResult == DynamoWriteSuccess) (verifyPage nextPage)
+    onPageResult pageNumber DynamoWriteSuccess = do
+      itemUpdateResult <- setEventEntryPage item pageNumber
+      when (itemUpdateResult == DynamoWriteSuccess) (verifyPage pageNumber)
     onPageResult _ DynamoWriteFailure = undefined
 
 writeItemToGlobalFeed :: DynamoKey -> DynamoCmdM ()
