@@ -48,7 +48,8 @@ instance Aeson.ToJSON FeedEntry where
 data FeedPage = FeedPage {
   feedPageNumber     :: Int,
   feedPageEntries    :: Seq.Seq FeedEntry,
-  feedPageIsVerified :: Bool
+  feedPageIsVerified :: Bool,
+  feedPageVersion    :: Int
 }
 
 dynamoWriteWithRetry :: DynamoKey -> DynamoValues -> Int -> DynamoCmdM DynamoWriteResult
@@ -77,8 +78,9 @@ getMostRecentPage startPageNumber =
       let 
         pageValues = dynamoReadResultValue readResult
         isVerified = HM.member Constants.pageIsVerifiedKey pageValues
+        version = dynamoReadResultVersion readResult
         entries = readPageBody pageValues
-      in FeedPage { feedPageNumber = pageNumber, feedPageEntries = entries, feedPageIsVerified = isVerified }
+      in FeedPage { feedPageNumber = pageNumber, feedPageEntries = entries, feedPageIsVerified = isVerified, feedPageVersion = version }
     findPage :: Maybe FeedPage -> DynamoCmdM (Maybe FeedPage)
     findPage Nothing = return Nothing
     findPage (Just lastPage) = do
@@ -142,13 +144,19 @@ readFromDynamoMustExist key = do
   case r of Just x -> return x
             Nothing -> fatalError' ("Could not find item: " <> toText key)
 
+emptyFeedPage :: Int -> FeedPage 
+emptyFeedPage pageNumber = FeedPage { feedPageNumber = pageNumber, feedPageEntries = Seq.empty, feedPageIsVerified = False, feedPageVersion = -1 }
+
 getCurrentPage :: DynamoCmdM FeedPage
 getCurrentPage = do
   mostRecentPage <- getMostRecentPage 0
   let mostRecentPageNumber = maybe (-1) feedPageNumber mostRecentPage
-  verifyPage mostRecentPageNumber
-  let currentPage = FeedPage { feedPageNumber = mostRecentPageNumber + 1, feedPageEntries = Seq.empty, feedPageIsVerified = False }
-  return currentPage
+  let startNewPage = maybe True (\page -> (length . feedPageEntries) page >= 10) mostRecentPage
+  if startNewPage then do
+    verifyPage mostRecentPageNumber
+    return $ emptyFeedPage (mostRecentPageNumber + 1)
+  else
+    return $ fromMaybe (emptyFeedPage (mostRecentPageNumber + 1)) mostRecentPage
 
 setEventEntryPage :: DynamoKey -> Int -> DynamoCmdM DynamoWriteResult
 setEventEntryPage key pageNumber = do
@@ -171,7 +179,8 @@ updateGlobalFeed item@DynamoKey { dynamoKeyKey = itemKey, dynamoKeyEventNumber =
   unless itemIsPaged $ do
     let feedEntry = itemToJsonByteString (feedPageEntries currentPage |> FeedEntry streamId itemEventNumber)
     when (dynamoKeyEventNumber item > 0) (updateGlobalFeed item { dynamoKeyEventNumber = itemEventNumber - 1 })
-    pageResult <- dynamoWriteWithRetry (getPageDynamoKey (feedPageNumber currentPage)) (HM.singleton Constants.pageBodyKey (set avB (Just feedEntry) attributeValue)) 0
+    let version = feedPageVersion currentPage + 1
+    pageResult <- dynamoWriteWithRetry (getPageDynamoKey (feedPageNumber currentPage)) (HM.singleton Constants.pageBodyKey (set avB (Just feedEntry) attributeValue)) version
     onPageResult (feedPageNumber currentPage) pageResult
     return ()
   return ()
