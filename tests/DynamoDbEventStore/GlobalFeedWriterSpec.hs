@@ -87,7 +87,8 @@ prop_EventShouldAppearInGlobalFeedInStreamOrder (UploadList uploadList) =
   let
     programs = Map.fromList [
       ("Publisher", (publisher uploadList,100)),
-      ("GlobalFeedWriter1", (GlobalFeedWriter.main, 100)) ]
+      ("GlobalFeedWriter1", (GlobalFeedWriter.main, 100)),
+      ("GlobalFeedWriter2", (GlobalFeedWriter.main, 100)) ]
   in QC.forAll (runPrograms programs) check
      where
        check (_, testState) = QC.forAll (runReadAllProgram testState) (\feedItems -> (globalRecordedEventListToMap <$> feedItems) === (Just $ globalFeedFromUploadList uploadList))
