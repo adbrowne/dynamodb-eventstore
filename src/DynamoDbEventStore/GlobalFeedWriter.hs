@@ -194,7 +194,7 @@ updateGlobalFeed item@DynamoKey { dynamoKeyKey = itemKey, dynamoKeyEventNumber =
     onPageResult pageNumber DynamoWriteSuccess = do
       itemUpdateResult <- setEventEntryPage item pageNumber
       when (itemUpdateResult == DynamoWriteSuccess) (verifyPage pageNumber)
-    onPageResult _ DynamoWriteFailure = undefined
+    onPageResult pageNumber DynamoWriteFailure = fatalError' ("DynamoWriteFailure on writing page: " <> pageNumber)
 
 writeItemToGlobalFeed :: DynamoKey -> DynamoCmdM ()
 writeItemToGlobalFeed item = do
