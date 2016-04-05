@@ -9,6 +9,8 @@ module DynamoDbEventStore.DynamoCmdInterpreter where
 
 import           Control.Lens
 import           Data.Int
+import           Data.Monoid
+import           Data.Foldable
 import           Data.List (unfoldr)
 import           Control.Monad.State
 import           Data.Functor (($>))
@@ -46,7 +48,11 @@ data LoopState r = LoopState {
 data TestState = TestState {
   _testStateDynamo :: TestDynamoTable,
   _testStateLog :: V.Vector T.Text
-} deriving (Show, Eq)
+} deriving (Eq)
+
+instance Show TestState where
+  show a = 
+    "Dynamo: \n" <> show (_testStateDynamo a) <> "\n" <> "Log: \n" <> foldl' (\s l -> s <> "\n" <> show l) "" (_testStateLog a)
 
 $(makeLenses ''LoopState)
 
