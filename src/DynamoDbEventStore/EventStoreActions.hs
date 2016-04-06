@@ -11,6 +11,7 @@ import           Data.Monoid
 import           Data.Maybe (fromJust)
 import qualified Data.Text as T
 import qualified Data.Text.Lazy as TL
+import qualified Data.Text.Lazy.Encoding as TL
 import           DynamoDbEventStore.EventStoreCommands
 import qualified Data.HashMap.Strict     as HM
 import           Network.AWS.DynamoDB
@@ -18,6 +19,7 @@ import           Text.Printf (printf)
 import qualified DynamoDbEventStore.Constants as Constants
 import qualified DynamoDbEventStore.GlobalFeedWriter as GlobalFeedWriter
 import qualified Data.Aeson as Aeson
+import qualified Test.QuickCheck as QC
 
 -- High level event store actions
 -- should map almost one to one with http interface
@@ -42,6 +44,12 @@ data PostEventRequest = PostEventRequest {
    perEventData       :: BL.ByteString,
    perEventType       :: T.Text
 } deriving (Show)
+
+instance QC.Arbitrary PostEventRequest where
+  arbitrary = PostEventRequest <$> (T.pack <$> QC.arbitrary)
+                               <*> QC.arbitrary
+                               <*> (TL.encodeUtf8 .  TL.pack <$> QC.arbitrary)
+                               <*> (T.pack <$> QC.arbitrary)
 
 data ReadStreamRequest = ReadStreamRequest {
    rsrStreamId         :: T.Text,

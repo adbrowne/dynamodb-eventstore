@@ -5,7 +5,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE RankNTypes #-}
 
-module DynamoDbEventStore.DynamoCmdInterpreter where
+module DynamoDbEventStore.DynamoCmdInterpreter(ProgramError(FatalError), runPrograms, runProgramGenerator, runProgram, emptyTestState) where
 
 import           Control.Lens
 import           Data.Int
@@ -38,11 +38,14 @@ data LoopActivity =
   LoopActive { _loopActiveIdleCount :: Map.Map T.Text Bool } |
   LoopAllIdle { _loopAllIdleIterationsRemaining :: Map.Map T.Text Int }
 
+data ProgramError = FatalError deriving (Eq, Show)
+
 data LoopState r = LoopState {
   _loopStateIterations :: Int,
   _loopStateActivity :: LoopActivity,
   _loopStateTestState :: TestState,
-  _loopStatePrograms :: Map.Map T.Text (RunningProgramState r)
+  _loopStatePrograms :: Map.Map T.Text (RunningProgramState r),
+  _loopStateProgramResults :: Map.Map T.Text (Either ProgramError r)
 }
 
 data TestState = TestState {
@@ -173,9 +176,9 @@ setPulseStatus programName isActive = do
     updatePulseStatus _ True LoopAllIdle { _loopAllIdleIterationsRemaining = _idleRemaining } = LoopActive Map.empty
     updatePulseStatus _ False LoopAllIdle { _loopAllIdleIterationsRemaining = idleRemaining } = LoopAllIdle $ Map.adjust (\x -> x - 1) programName idleRemaining
 
-runCmd :: T.Text -> DynamoCmdMFree r -> InterpreterApp m r (Either (Maybe r) (DynamoCmdMFree r))
-runCmd _ (Free.Pure r) = return $ Left (Just r)
-runCmd _ (Free.Free (FatalError' msg)) = const (Left Nothing) <$> addLog (T.append "Fatal Error" msg)
+runCmd :: T.Text -> DynamoCmdMFree r -> InterpreterApp m r (Either (Either ProgramError r) (DynamoCmdMFree r))
+runCmd _ (Free.Pure r) = return $ Left (Right r)
+runCmd _ (Free.Free (FatalError' msg)) = const (Left $ Left FatalError) <$> addLog (T.append "Fatal Error" msg)
 runCmd _ (Free.Free (Wait' _ r)) = Right <$> return r
 runCmd _ (Free.Free (QueryBackward' key maxEvents start r)) = Right <$> uses (loopStateTestState . testStateDynamo) (r . queryBackward key maxEvents start) 
 runCmd _ (Free.Free (WriteToDynamo' key values version r)) = Right <$> writeToDynamo key values version r
@@ -189,19 +192,22 @@ stepProgram programId ps = do
   cmdResult <- runCmd programId $ runningProgramStateNext ps
   bigBanana cmdResult
   where
-    bigBanana :: Either (Maybe r) (DynamoCmdMFree r) -> InterpreterApp m r ()
+    bigBanana :: Either (Either ProgramError r) (DynamoCmdMFree r) -> InterpreterApp m r ()
     bigBanana next = do 
       let result = fmap setNextProgram next
       updateLoopState programId result
     setNextProgram :: DynamoCmdMFree r -> RunningProgramState r
     setNextProgram n = ps { runningProgramStateNext = n }
 
-updateLoopState :: T.Text -> Either (Maybe r) (RunningProgramState r) -> InterpreterApp m r ()
-updateLoopState programName result =
-  loopStatePrograms %= updateProgramEntry result
+updateLoopState :: T.Text -> Either (Either ProgramError r) (RunningProgramState r) -> InterpreterApp m r ()
+updateLoopState programName result = 
+  loopStatePrograms %= updateProgramEntry result >>
+  loopStateProgramResults %= updateProgramResults result
   where
-    updateProgramEntry (Left _)        = Map.delete programName
+    updateProgramEntry (Left _)         = Map.delete programName
     updateProgramEntry (Right newState) = Map.adjust (const newState) programName
+    updateProgramResults (Left r)       = Map.insert programName r
+    updateProgramResults (Right _)        = id
 
 iterateApp :: InterpreterApp QC.Gen a ()
 iterateApp = do
@@ -212,35 +218,35 @@ iterateApp = do
 incrimentIterations :: InterpreterApp m a ()
 incrimentIterations = loopStateIterations %= (+ 1)
 
-runPrograms :: Map.Map T.Text (DynamoCmdM a, Int) -> QC.Gen ([a],TestState)
+runPrograms :: Map.Map T.Text (DynamoCmdM a, Int) -> QC.Gen (Map.Map T.Text (Either ProgramError a), TestState)
 runPrograms programs =
   over _2 (view loopStateTestState) <$> runStateT loop initialState
   where
         runningPrograms = fmap (\(p,maxIdleIterations) -> RunningProgramState (Church.fromF p) maxIdleIterations) programs
-        initialState = LoopState 0 (LoopActive Map.empty) emptyTestState runningPrograms
-        loop :: InterpreterApp QC.Gen a [a]
+        initialState = LoopState 0 (LoopActive Map.empty) emptyTestState runningPrograms Map.empty
+        loop :: InterpreterApp QC.Gen a (Map.Map T.Text (Either ProgramError a))
         loop = do
           complete <- isComplete
           if complete
-             then return []
+             then use loopStateProgramResults
              else iterateApp >> incrimentIterations >> loop
 
-runProgramGenerator :: T.Text -> DynamoCmdM a -> TestState -> QC.Gen (Maybe a)
+runProgramGenerator :: T.Text -> DynamoCmdM a -> TestState -> QC.Gen (Either ProgramError a)
 runProgramGenerator programId program testState =
   evalStateT (loop $ Right (Church.fromF program)) initialState
   where
         runningPrograms = Map.singleton programId (RunningProgramState (Church.fromF program) 0)
-        initialState = LoopState 0 (LoopActive Map.empty) testState runningPrograms
-        loop :: Either (Maybe r) (DynamoCmdMFree r) -> InterpreterApp QC.Gen r (Maybe r)
+        initialState = LoopState 0 (LoopActive Map.empty) testState runningPrograms Map.empty
+        loop :: Either (Either ProgramError r) (DynamoCmdMFree r) -> InterpreterApp QC.Gen r (Either ProgramError r)
         loop (Left x) = return x
         loop (Right n) = runCmd programId n >>= loop
 
-runProgram :: T.Text -> DynamoCmdM a -> TestState -> Maybe a
+runProgram :: T.Text -> DynamoCmdM a -> TestState -> Either ProgramError a
 runProgram programId program testState =
   runIdentity $ evalStateT (loop $ Right (Church.fromF program)) initialState
   where
         runningPrograms = Map.singleton programId (RunningProgramState (Church.fromF program) 0)
-        initialState = LoopState 0 (LoopActive Map.empty) testState runningPrograms
-        loop :: Either (Maybe r) (DynamoCmdMFree r) -> InterpreterApp Identity r (Maybe r)
+        initialState = LoopState 0 (LoopActive Map.empty) testState runningPrograms Map.empty
+        loop :: Either (Either ProgramError r) (DynamoCmdMFree r) -> InterpreterApp Identity r (Either ProgramError r)
         loop (Left x) = return x
         loop (Right n) = runCmd programId n >>= loop

@@ -92,7 +92,7 @@ prop_EventShouldAppearInGlobalFeedInStreamOrder (UploadList uploadList) =
       ]
   in QC.forAll (runPrograms programs) check
      where
-       check (_, testState) = QC.forAll (runReadAllProgram testState) (\feedItems -> (globalRecordedEventListToMap <$> feedItems) === (Just $ globalFeedFromUploadList uploadList))
+       check (_, testState) = QC.forAll (runReadAllProgram testState) (\feedItems -> (globalRecordedEventListToMap <$> feedItems) === (Right $ globalFeedFromUploadList uploadList))
        runReadAllProgram = runProgramGenerator "readAllRequestProgram" (getReadAllRequestProgram ReadAllRequest)
 
 getStreamRecordedEvents :: T.Text -> DynamoCmdM [RecordedEvent]
@@ -134,7 +134,7 @@ prop_EventsShouldAppearInTheirSteamsInOrder (UploadList uploadList) =
       ("GlobalFeedWriter1", (GlobalFeedWriter.main, 100)) ]
   in QC.forAll (runPrograms programs) check
      where
-       check (_, testState) = QC.forAll (runReadEachStream testState) (\streamItems -> streamItems === (Just $ globalFeedFromUploadList uploadList))
+       check (_, testState) = QC.forAll (runReadEachStream testState) (\streamItems -> streamItems === (Right $ globalFeedFromUploadList uploadList))
        runReadEachStream = runProgramGenerator "readEachStream" (readEachStream uploadList)
 
 eventDataToByteString :: EventData -> BL.ByteString
@@ -168,12 +168,26 @@ writtenEventsAppearInReadStream =
         recordedEventData = T.encodeUtf8 "My Content2", 
         recordedEventType = "MyEvent2"} ] 
     result = runProgram "writeThenRead" (writeThenRead streamId eventDatas) emptyTestState
-  in assertEqual "Returned events should match input events" (Just expectedResult) result
+  in assertEqual "Returned events should match input events" (Right expectedResult) result
+
+prop_NoWriteRequestCanCausesAFatalErrorInGlobalFeedWriter :: [PostEventRequest] -> QC.Property
+prop_NoWriteRequestCanCausesAFatalErrorInGlobalFeedWriter events =
+  let
+    programs = Map.fromList [
+      ("Publisher", (forM_ events postEventRequestProgram, 100))
+      , ("GlobalFeedWriter1", (GlobalFeedWriter.main, 100))
+      ]
+  in QC.forAll (runPrograms programs) check
+     where
+       -- global feed writer runs forever unless there is an error so we don't
+       -- expect a result
+       check (results, _) = Map.lookup "GlobalFeedWriter1" results === Nothing 
 
 tests :: [TestTree]
 tests = [
       testProperty "Global Feed preserves stream order" prop_EventShouldAppearInGlobalFeedInStreamOrder,
       testProperty "Each event appears in it's correct stream" prop_EventsShouldAppearInTheirSteamsInOrder,
+      testProperty "No Write Request can cause a fatal error in global feed writer" prop_NoWriteRequestCanCausesAFatalErrorInGlobalFeedWriter,
       testCase "Written Events Appear In Read Stream" writtenEventsAppearInReadStream,
       testProperty "Can round trip FeedEntry via JSON" (\(a :: FeedEntry) -> (Aeson.decode . Aeson.encode) a === Just a)
   ]
