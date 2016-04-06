@@ -4,13 +4,12 @@
 {-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE RankNTypes               #-}
 
-module DynamoDbEventStore.AmazonkaInterpreter where
+module DynamoDbEventStore.AmazonkaInterpreter (runProgram, buildTable, runLocalDynamo, evalProgram, doesTableExist) where
 
 import           Control.Concurrent (threadDelay)
 import           Control.Monad.IO.Class
 import           Data.Int
 import           Data.Typeable
-import           Data.Aeson
 import           Control.Exception.Lens
 import           Data.Monoid
 import           Control.Monad.Free.Church
@@ -19,8 +18,6 @@ import qualified Data.HashMap.Strict     as HM
 import           Control.Lens
 import           Data.Maybe              (fromJust, isJust)
 import           Data.List.NonEmpty      (NonEmpty (..))
-import qualified Data.ByteString         as BS
-import qualified Data.ByteString.Lazy    as BL
 import qualified Data.Text               as T
 import           TextShow
 import qualified DynamoDbEventStore.Constants as Constants
@@ -38,18 +35,8 @@ fieldEventNumber :: T.Text
 fieldEventNumber = "eventNumber"
 fieldVersion :: T.Text
 fieldVersion = "version"
-fieldEventType :: T.Text
-fieldEventType = "eventType"
-fieldPageStatus :: T.Text
-fieldPageStatus = "pageStatus"
-fieldBody :: T.Text
-fieldBody = "body"
-fieldPageKey :: T.Text
-fieldPageKey = "pageKey"
 fieldPagingRequired :: T.Text
 fieldPagingRequired = Constants.needsPagingKey
-fieldEventKeys :: T.Text
-fieldEventKeys = "eventKeys"
 unpagedIndexName :: T.Text
 unpagedIndexName = "unpagedIndex"
 
@@ -64,50 +51,13 @@ getDynamoKeyForEvent :: DynamoKey -> HM.HashMap T.Text AttributeValue
 getDynamoKeyForEvent (DynamoKey streamId eventNumber) =
     getDynamoKey streamId eventNumber
 
-showText :: Int -> T.Text
-showText = T.pack . show
-
-getPagePartitionStreamId :: Int -> Int -> T.Text
-getPagePartitionStreamId partition page =
-  "$Page-" <> showText partition <> "-" <> showText page
-
-getDynamoKeyForPage :: PageKey -> HM.HashMap T.Text AttributeValue
-getDynamoKeyForPage (partition, pageNumber) =
-  let
-    hashKey = (getPagePartitionStreamId partition pageNumber)
-  in
-    getDynamoKey hashKey 1
-
 -- from http://haddock.stackage.org/lts-3.2/basic-prelude-0.5.0/src/BasicPrelude.html#readMay
 readMay :: Read a => T.Text -> Maybe a
 readMay = Safe.readMay . T.unpack
-{- 
-
-getItemField :: (DynVal b, Ord k) => k -> Map k DValue -> Maybe b
-getItemField fieldName i =
-  M.lookup fieldName i >>= fromValue
-
-
-attrJson :: ToJSON s => T.Text -> s -> Attribute
-attrJson name value =
-  attr name (encodeStrictJson value)
-
--}
 
 itemAttribute :: T.Text -> Lens' AttributeValue (Maybe v) -> v -> (T.Text, AttributeValue)
 itemAttribute key l value =
   (key, set l (Just value) attributeValue)
-
-readItemJson :: FromJSON b => T.Text -> HM.HashMap T.Text AttributeValue -> Maybe b
-readItemJson fieldName i =
-  view (ix fieldName . avB) i >>= decodeStrict
-
-attrJson :: ToJSON s => s -> AttributeValue
-attrJson value = set avB (Just (encodeStrictJson value)) attributeValue
-
-encodeStrictJson :: ToJSON s => s -> BS.ByteString
-encodeStrictJson value =
-  BL.toStrict . encode $ value
 
 toDynamoReadResult :: HM.HashMap T.Text AttributeValue -> Maybe DynamoReadResult
 toDynamoReadResult allValues = do
@@ -232,10 +182,3 @@ runLocalDynamo x = do
 
 runProgram :: T.Text -> DynamoCmdM a -> AWS a
 runProgram tableName = iterM (runCmd tableName)
-
-redirect :: Maybe (BS.ByteString, Int) -> Endpoint -> Endpoint
-redirect Nothing       = id
-redirect (Just (h, p)) =
-      (endpointHost   .~ h)
-    . (endpointPort   .~ p)
-    . (endpointSecure .~ (p == 443))
