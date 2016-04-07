@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings, ScopedTypeVariables #-}
 
-module DynamoDbEventStore.Webserver where
+module DynamoDbEventStore.Webserver(app, showEventResponse, positiveInt64Parser, runParser) where
 
 import           Web.Scotty
 
@@ -18,17 +18,6 @@ import           DynamoDbEventStore.EventStoreActions
 
 data ExpectedVersion = ExpectedVersion Int
   deriving (Show)
-
-addEvent :: Text -> Int64 -> a -> ActionM ()
-addEvent streamId expectedVersion _ =
-    html $
-      mconcat
-        ["StreamId:", streamId, " expectedVersion:",
-         (pack . show) expectedVersion]
-
-returnEither :: Either a a -> a
-returnEither (Left a) = a
-returnEither (Right a) = a
 
 toByteString :: Text -> ByteString
 toByteString = T.encodeUtf8 . TL.toStrict
