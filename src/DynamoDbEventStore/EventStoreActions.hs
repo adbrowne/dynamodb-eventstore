@@ -75,7 +75,7 @@ ensurePreviousEventExists (DynamoKey streamId eventNumber) = do
 
 postEventRequestProgram :: PostEventRequest -> DynamoCmdM EventWriteResult
 postEventRequestProgram (PostEventRequest sId ev ed et) = do
-  let dynamoKey = DynamoKey (Constants.streamDynamoKeyPrefix <> sId) ev
+  let dynamoKey = DynamoKey (Constants.streamDynamoKeyPrefix <> sId) (ev + 1)
   previousEventExists <- ensurePreviousEventExists dynamoKey
   if previousEventExists then do
     let values = HM.singleton fieldBody (set avB (Just (BL.toStrict ed)) attributeValue) & 

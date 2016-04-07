@@ -55,7 +55,7 @@ instance QC.Arbitrary UploadList where
       numberEvents :: [(StreamId, EventData)] -> [UploadItem]
       numberEvents xs = do
         (StreamId stream, events) <- groupTuple xs
-        (EventData event, number) <- zip events [0..]
+        (EventData event, number) <- zip events [-1..]
         return (stream, number, event)
 
 writeEvent :: (T.Text, Int64, T.Text) -> DynamoCmdM EventWriteResult
@@ -69,8 +69,10 @@ globalFeedFromUploadList =
   foldl' acc Map.empty
   where
     acc :: Map.Map T.Text (Seq.Seq Int64) -> UploadItem -> Map.Map T.Text (Seq.Seq Int64)
-    acc s (stream, number, _) =
-      let newValue = maybe (Seq.singleton number) (Seq.|> number) $ Map.lookup stream s
+    acc s (stream, expectedVersion, _) =
+      let 
+        eventVersion = expectedVersion + 1
+        newValue = maybe (Seq.singleton eventVersion) (Seq.|> eventVersion) $ Map.lookup stream s
       in Map.insert stream newValue s
 
 globalRecordedEventListToMap :: [EventKey] -> Map.Map T.Text (Seq.Seq Int64)
@@ -142,7 +144,7 @@ eventDataToByteString (EventData ed) = (TL.encodeUtf8 . TL.fromStrict) ed
 
 writeThenRead :: StreamId -> [(T.Text, BL.ByteString)] -> DynamoCmdM [RecordedEvent]
 writeThenRead (StreamId streamId) events = do
-  evalStateT (forM_ events writeSingleEvent) 0
+  evalStateT (forM_ events writeSingleEvent) (-1)
   getStreamRecordedEvents streamId
   where 
     writeSingleEvent (et, ed) = do
@@ -193,7 +195,7 @@ cannotWriteEventsOutOfOrder =
 canWriteFirstEvent :: Assertion
 canWriteFirstEvent =
   let 
-    postEventRequest = PostEventRequest { perStreamId = "MyStream", perExpectedVersion = 0, perEventData = TL.encodeUtf8 "My Content", perEventType = "MyEvent" }
+    postEventRequest = PostEventRequest { perStreamId = "MyStream", perExpectedVersion = -1, perEventData = TL.encodeUtf8 "My Content", perEventType = "MyEvent" }
     result = runProgram "writeEvent" (postEventRequestProgram postEventRequest) emptyTestState
   in assertEqual "Should return success" (Right WriteSuccess) result
 
