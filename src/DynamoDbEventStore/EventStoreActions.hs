@@ -1,5 +1,13 @@
 {-# LANGUAGE OverloadedStrings   #-}
-module DynamoDbEventStore.EventStoreActions where
+module DynamoDbEventStore.EventStoreActions(
+  ReadStreamRequest(..), 
+  ReadAllRequest(..), 
+  PostEventRequest(..), 
+  EventStoreAction(..),
+  EventWriteResult(..),
+  postEventRequestProgram,
+  getReadStreamRequestProgram,
+  getReadAllRequestProgram) where
 
 import           Control.Lens
 import           Safe
@@ -31,12 +39,9 @@ data EventStoreAction =
   SubscribeAll SubscribeAllRequest deriving (Show)
 
 data SubscribeAllRequest = SubscribeAllRequest {
-   from            :: Maybe TL.Text
 } deriving (Show)
 
 data SubscribeAllResponse = SubscribeAllResponse {
-  sarEvents :: [RecordedEvent],
-  sarNext   :: TL.Text
 } deriving (Show)
 
 data PostEventRequest = PostEventRequest {
