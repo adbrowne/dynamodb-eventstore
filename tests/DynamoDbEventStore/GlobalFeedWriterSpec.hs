@@ -142,19 +142,33 @@ prop_EventsShouldAppearInTheirSteamsInOrder (UploadList uploadList) =
 eventDataToByteString :: EventData -> BL.ByteString
 eventDataToByteString (EventData ed) = (TL.encodeUtf8 . TL.fromStrict) ed
 
-writeThenRead :: StreamId -> [(T.Text, BL.ByteString)] -> DynamoCmdM [RecordedEvent]
-writeThenRead (StreamId streamId) events = do
+type EventWriter = StreamId -> [(T.Text, BL.ByteString)] -> DynamoCmdM ()
+
+writeEventsWithExplicitExpectedVersions :: EventWriter
+writeEventsWithExplicitExpectedVersions (StreamId streamId) events =
   evalStateT (forM_ events writeSingleEvent) (-1)
-  getStreamRecordedEvents streamId
   where 
     writeSingleEvent (et, ed) = do
       eventNumber <- get
       result <- lift $ postEventRequestProgram (PostEventRequest streamId (Just eventNumber) ed et)
       when (result /= WriteSuccess) $ error "Bad write result"
       put (eventNumber + 1)
+
+writeEventsWithNoExpectedVersions :: EventWriter
+writeEventsWithNoExpectedVersions (StreamId streamId) events =
+  forM_ events writeSingleEvent
+  where 
+    writeSingleEvent (et, ed) = do
+      result <- postEventRequestProgram (PostEventRequest streamId Nothing ed et)
+      when (result /= WriteSuccess) $ error "Bad write result"
+
+writeThenRead :: StreamId -> [(T.Text, BL.ByteString)] -> EventWriter -> DynamoCmdM [RecordedEvent]
+writeThenRead (StreamId streamId) events writer = do
+  writer (StreamId streamId) events
+  getStreamRecordedEvents streamId
   
-writtenEventsAppearInReadStream :: Assertion
-writtenEventsAppearInReadStream = 
+writtenEventsAppearInReadStream :: EventWriter -> Assertion
+writtenEventsAppearInReadStream writer = 
   let 
     streamId = StreamId "MyStream"
     eventDatas = [("MyEvent", TL.encodeUtf8 "My Content"), ("MyEvent2", TL.encodeUtf8 "My Content2")]
@@ -170,7 +184,7 @@ writtenEventsAppearInReadStream =
         recordedEventNumber = 1, 
         recordedEventData = T.encodeUtf8 "My Content2", 
         recordedEventType = "MyEvent2"} ] 
-    result = runProgram "writeThenRead" (writeThenRead streamId eventDatas) emptyTestState
+    result = runProgram "writeThenRead" (writeThenRead streamId eventDatas writer) emptyTestState
   in assertEqual "Returned events should match input events" (Right expectedResult) result
 
 prop_NoWriteRequestCanCausesAFatalErrorInGlobalFeedWriter :: [PostEventRequest] -> QC.Property
@@ -205,7 +219,8 @@ tests = [
       testProperty "Global Feed preserves stream order" prop_EventShouldAppearInGlobalFeedInStreamOrder,
       testProperty "Each event appears in it's correct stream" prop_EventsShouldAppearInTheirSteamsInOrder,
       testProperty "No Write Request can cause a fatal error in global feed writer" prop_NoWriteRequestCanCausesAFatalErrorInGlobalFeedWriter,
-      testCase "Written Events Appear In Read Stream" writtenEventsAppearInReadStream,
+      testCase "Written Events Appear In Read Stream - explicit expected version" $ writtenEventsAppearInReadStream writeEventsWithExplicitExpectedVersions,
+      testCase "Written Events Appear In Read Stream - explicit expected version" $ writtenEventsAppearInReadStream writeEventsWithNoExpectedVersions,
       testCase "Cannot write event if previous one does not exist" cannotWriteEventsOutOfOrder,
       testCase "Can write first event" canWriteFirstEvent,
       testProperty "Can round trip FeedEntry via JSON" (\(a :: FeedEntry) -> (Aeson.decode . Aeson.encode) a === Just a)

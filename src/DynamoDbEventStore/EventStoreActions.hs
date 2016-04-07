@@ -97,7 +97,7 @@ postEventRequestProgram (PostEventRequest sId ev ed et) = do
       let dynamoHashKey = Constants.streamDynamoKeyPrefix <> streamId
       readResults <- queryBackward' dynamoHashKey 1 Nothing
       let lastEvent = headMay readResults
-      return $ Right $ DynamoKey dynamoHashKey $ maybe 0 (\(DynamoReadResult (DynamoKey _key eventNumber) _version _values) -> eventNumber)  lastEvent
+      return $ Right $ DynamoKey dynamoHashKey $ maybe 0 (\(DynamoReadResult (DynamoKey _key eventNumber) _version _values) -> eventNumber + 1) lastEvent
     getDynamoKey streamId (Just expectedVersion) = do
       let eventNumber = expectedVersion + 1
       let key = DynamoKey (Constants.streamDynamoKeyPrefix <> streamId) eventNumber
