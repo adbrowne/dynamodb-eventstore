@@ -8,7 +8,7 @@ import qualified Pipes.Prelude as P
 import qualified Data.ByteString.Lazy as BL
 import           Data.Int
 import           Data.Monoid
-import           Data.Maybe (fromJust)
+import           Data.Maybe (fromJust, isJust)
 import qualified Data.Text as T
 import qualified Data.Text.Lazy as TL
 import qualified Data.Text.Lazy.Encoding as TL
@@ -66,14 +66,25 @@ fieldBody = "Body"
 
 data EventWriteResult = WriteSuccess | WrongExpectedVersion | EventExists | WriteError deriving (Eq, Show)
 
+ensurePreviousEventExists :: DynamoKey -> DynamoCmdM Bool
+ensurePreviousEventExists (DynamoKey _streamId (0)) = return True
+ensurePreviousEventExists (DynamoKey streamId eventNumber) = do
+  let previousDynamoKey = DynamoKey streamId (eventNumber - 1)
+  result <- readFromDynamo' previousDynamoKey
+  return $ isJust result 
+
 postEventRequestProgram :: PostEventRequest -> DynamoCmdM EventWriteResult
 postEventRequestProgram (PostEventRequest sId ev ed et) = do
   let dynamoKey = DynamoKey (Constants.streamDynamoKeyPrefix <> sId) ev
-  let values = HM.singleton fieldBody (set avB (Just (BL.toStrict ed)) attributeValue) & 
-               HM.insert fieldEventType (set avS (Just et) attributeValue) & 
-               HM.insert Constants.needsPagingKey (set avS (Just "True") attributeValue)
-  writeResult <- GlobalFeedWriter.dynamoWriteWithRetry dynamoKey values 0 
-  return $ toEventResult writeResult
+  previousEventExists <- ensurePreviousEventExists dynamoKey
+  if previousEventExists then do
+    let values = HM.singleton fieldBody (set avB (Just (BL.toStrict ed)) attributeValue) & 
+                 HM.insert fieldEventType (set avS (Just et) attributeValue) & 
+                 HM.insert Constants.needsPagingKey (set avS (Just "True") attributeValue)
+    writeResult <- GlobalFeedWriter.dynamoWriteWithRetry dynamoKey values 0 
+    return $ toEventResult writeResult
+  else
+    return WrongExpectedVersion
   where
     toEventResult :: DynamoWriteResult -> EventWriteResult
     toEventResult DynamoWriteSuccess = WriteSuccess

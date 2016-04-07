@@ -190,6 +190,13 @@ cannotWriteEventsOutOfOrder =
     result = runProgram "writeEvent" (postEventRequestProgram postEventRequest) emptyTestState
   in assertEqual "Should return an error" (Right WrongExpectedVersion) result
 
+canWriteFirstEvent :: Assertion
+canWriteFirstEvent =
+  let 
+    postEventRequest = PostEventRequest { perStreamId = "MyStream", perExpectedVersion = 0, perEventData = TL.encodeUtf8 "My Content", perEventType = "MyEvent" }
+    result = runProgram "writeEvent" (postEventRequestProgram postEventRequest) emptyTestState
+  in assertEqual "Should return success" (Right WriteSuccess) result
+
 tests :: [TestTree]
 tests = [
       testProperty "Global Feed preserves stream order" prop_EventShouldAppearInGlobalFeedInStreamOrder,
@@ -197,5 +204,6 @@ tests = [
       testProperty "No Write Request can cause a fatal error in global feed writer" prop_NoWriteRequestCanCausesAFatalErrorInGlobalFeedWriter,
       testCase "Written Events Appear In Read Stream" writtenEventsAppearInReadStream,
       testCase "Cannot write event if previous one does not exist" cannotWriteEventsOutOfOrder,
+      testCase "Can write first event" canWriteFirstEvent,
       testProperty "Can round trip FeedEntry via JSON" (\(a :: FeedEntry) -> (Aeson.decode . Aeson.encode) a === Just a)
   ]
