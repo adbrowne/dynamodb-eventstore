@@ -59,7 +59,7 @@ instance QC.Arbitrary UploadList where
         return (stream, number, event)
 
 writeEvent :: (T.Text, Int64, T.Text) -> DynamoCmdM EventWriteResult
-writeEvent (stream, eventNumber, body) = postEventRequestProgram (PostEventRequest stream eventNumber (TL.encodeUtf8 . TL.fromStrict $ body) "")
+writeEvent (stream, eventNumber, body) = postEventRequestProgram (PostEventRequest stream (Just eventNumber) (TL.encodeUtf8 . TL.fromStrict $ body) "")
 
 publisher :: [(T.Text,Int64,T.Text)] -> DynamoCmdM ()
 publisher xs = forM_ xs writeEvent
@@ -149,7 +149,8 @@ writeThenRead (StreamId streamId) events = do
   where 
     writeSingleEvent (et, ed) = do
       eventNumber <- get
-      _ <- lift $ postEventRequestProgram (PostEventRequest streamId eventNumber ed et)
+      result <- lift $ postEventRequestProgram (PostEventRequest streamId (Just eventNumber) ed et)
+      when (result /= WriteSuccess) $ error "Bad write result"
       put (eventNumber + 1)
   
 writtenEventsAppearInReadStream :: Assertion
@@ -188,14 +189,14 @@ prop_NoWriteRequestCanCausesAFatalErrorInGlobalFeedWriter events =
 cannotWriteEventsOutOfOrder :: Assertion
 cannotWriteEventsOutOfOrder =
   let 
-    postEventRequest = PostEventRequest { perStreamId = "MyStream", perExpectedVersion = 1, perEventData = TL.encodeUtf8 "My Content", perEventType = "MyEvent" }
+    postEventRequest = PostEventRequest { perStreamId = "MyStream", perExpectedVersion = Just 1, perEventData = TL.encodeUtf8 "My Content", perEventType = "MyEvent" }
     result = runProgram "writeEvent" (postEventRequestProgram postEventRequest) emptyTestState
   in assertEqual "Should return an error" (Right WrongExpectedVersion) result
 
 canWriteFirstEvent :: Assertion
 canWriteFirstEvent =
   let 
-    postEventRequest = PostEventRequest { perStreamId = "MyStream", perExpectedVersion = -1, perEventData = TL.encodeUtf8 "My Content", perEventType = "MyEvent" }
+    postEventRequest = PostEventRequest { perStreamId = "MyStream", perExpectedVersion = Just (-1), perEventData = TL.encodeUtf8 "My Content", perEventType = "MyEvent" }
     result = runProgram "writeEvent" (postEventRequestProgram postEventRequest) emptyTestState
   in assertEqual "Should return success" (Right WriteSuccess) result
 

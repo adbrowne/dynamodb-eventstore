@@ -101,7 +101,7 @@ app process = do
     toResult . fmap (process . PostEvent) $
           PostEventRequest
           <$> pure streamId
-          <*> expectedVersion
+          <*> (Just <$> expectedVersion)
           <*> pure eventData
           <*> eventType
   get "/streams/:streamId" $ do
