@@ -46,6 +46,14 @@ parseMandatoryHeader headerName parser = do
     missingErrorText = headerError headerName "is missing"
     parseFailErrorText = headerError headerName "in wrong format"
 
+parseOptionalHeader :: Text -> Parser a -> ActionM (Either Text (Maybe a))
+parseOptionalHeader headerName parser = do
+  headerValue <- header headerName
+  case headerValue of Nothing -> return $ Right Nothing
+                      Just headerText -> return $ Just <$> (Right headerText >>= runParser parser parseFailErrorText)
+  where
+    parseFailErrorText = headerError headerName "in wrong format"
+
 maxInt64 :: Integer
 maxInt64 = toInteger (maxBound :: Int64)
 
@@ -84,13 +92,13 @@ app :: (EventStoreAction -> ActionM ()) -> ScottyM ()
 app process = do
   post "/streams/:streamId" $ do
     streamId <- param "streamId"
-    expectedVersion <- parseMandatoryHeader "ES-ExpectedVersion" positiveInt64Parser
+    expectedVersion <- parseOptionalHeader "ES-ExpectedVersion" positiveInt64Parser
     eventType <- parseMandatoryHeader "ES-EventType" textParser
     eventData <- body
     toResult . fmap (process . PostEvent) $
           PostEventRequest
           <$> pure streamId
-          <*> (Just <$> expectedVersion)
+          <*> expectedVersion
           <*> pure eventData
           <*> eventType
   get "/streams/:streamId" $ do
