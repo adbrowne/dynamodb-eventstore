@@ -6,7 +6,28 @@
 {-# LANGUAGE TemplateHaskell   #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
-module DynamoDbEventStore.EventStoreCommands where
+module DynamoDbEventStore.EventStoreCommands(
+  StreamId(..),
+  LogLevel(..),
+  log',
+  fatalError',
+  writeToDynamo',
+  readFromDynamo',
+  wait',
+  scanNeedsPaging',
+  queryBackward',
+  setPulseStatus',
+  DynamoCmdM,
+  DynamoVersion,
+  RecordedEvent(..),
+  EventKey(..),
+  DynamoCmd(..),
+  DynamoKey(..),
+  DynamoWriteResult(..),
+  EventReadResult,
+  DynamoReadResult(..),
+  DynamoValues
+  ) where
 
 import           Control.Monad
 import           Control.Monad.Free.Church
@@ -38,7 +59,6 @@ deriveTextShow ''EventKey
 type EventType = T.Text
 type PageKey = (Int, Int) -- (Partition, PageNumber)
 type EventReadResult = Maybe (EventType, BS.ByteString, Maybe PageKey)
-data SetEventPageResult = SetEventPageSuccess | SetEventPageError
 data PageStatus = Version Int | Full | Verified deriving (Eq, Show, Generic)
 
 data RecordedEvent = RecordedEvent {
