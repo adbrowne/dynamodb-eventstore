@@ -64,6 +64,8 @@ fieldEventType = "EventType"
 fieldBody :: T.Text
 fieldBody = "Body"
 
+data EventWriteResult = WriteSuccess | WrongExpectedVersion | EventExists | WriteError deriving (Eq, Show)
+
 postEventRequestProgram :: PostEventRequest -> DynamoCmdM EventWriteResult
 postEventRequestProgram (PostEventRequest sId ev ed et) = do
   let dynamoKey = DynamoKey (Constants.streamDynamoKeyPrefix <> sId) ev

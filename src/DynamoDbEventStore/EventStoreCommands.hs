@@ -37,7 +37,6 @@ newtype EventKey = EventKey (StreamId, Int64) deriving (Ord, Eq, Show)
 deriveTextShow ''EventKey
 type EventType = T.Text
 type PageKey = (Int, Int) -- (Partition, PageNumber)
-data EventWriteResult = WriteSuccess | EventExists | WriteError deriving (Eq, Show)
 type EventReadResult = Maybe (EventType, BS.ByteString, Maybe PageKey)
 data SetEventPageResult = SetEventPageSuccess | SetEventPageError
 data PageStatus = Version Int | Full | Verified deriving (Eq, Show, Generic)

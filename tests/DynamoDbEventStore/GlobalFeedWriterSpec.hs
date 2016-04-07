@@ -183,11 +183,19 @@ prop_NoWriteRequestCanCausesAFatalErrorInGlobalFeedWriter events =
        -- expect a result
        check (results, _) = Map.lookup "GlobalFeedWriter1" results === Nothing 
 
+cannotWriteEventsOutOfOrder :: Assertion
+cannotWriteEventsOutOfOrder =
+  let 
+    postEventRequest = PostEventRequest { perStreamId = "MyStream", perExpectedVersion = 1, perEventData = TL.encodeUtf8 "My Content", perEventType = "MyEvent" }
+    result = runProgram "writeEvent" (postEventRequestProgram postEventRequest) emptyTestState
+  in assertEqual "Should return an error" (Right WrongExpectedVersion) result
+
 tests :: [TestTree]
 tests = [
       testProperty "Global Feed preserves stream order" prop_EventShouldAppearInGlobalFeedInStreamOrder,
       testProperty "Each event appears in it's correct stream" prop_EventsShouldAppearInTheirSteamsInOrder,
       testProperty "No Write Request can cause a fatal error in global feed writer" prop_NoWriteRequestCanCausesAFatalErrorInGlobalFeedWriter,
       testCase "Written Events Appear In Read Stream" writtenEventsAppearInReadStream,
+      testCase "Cannot write event if previous one does not exist" cannotWriteEventsOutOfOrder,
       testProperty "Can round trip FeedEntry via JSON" (\(a :: FeedEntry) -> (Aeson.decode . Aeson.encode) a === Just a)
   ]
