@@ -14,6 +14,7 @@ import qualified Data.Text                 as T
 import           Data.Text.Lazy            (Text, pack)
 import qualified Data.Text.Lazy            as TL
 import           Network.HTTP.Types        (mkStatus)
+import           Network.HTTP.Types.Status
 import           DynamoDbEventStore.EventStoreActions
 
 data ExpectedVersion = ExpectedVersion Int
@@ -111,3 +112,4 @@ app process = do
   get "/all" $ 
     toResult . fmap (process . ReadAll) $
           pure ReadAllRequest
+  notFound $ status status404

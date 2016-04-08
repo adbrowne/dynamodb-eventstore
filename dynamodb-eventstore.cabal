@@ -63,6 +63,7 @@ executable web
                        text >= 1.2,
                        dynamodb-eventstore,
                        amazonka >= 1.0,
+                       warp,
                        amazonka-core >= 1.0,
                        amazonka-dynamodb >= 1.0,
                        exceptions,

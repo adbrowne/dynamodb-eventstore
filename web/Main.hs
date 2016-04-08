@@ -5,12 +5,13 @@
 module Main where
 
 import qualified Data.Text.Lazy as TL
+import           Network.Wai.Handler.Warp
 import           Web.Scotty
 import           DynamoDbEventStore.Webserver (app)
 import           Control.Monad.IO.Class (liftIO, MonadIO)
 import           Control.Monad.Trans.Control (MonadBaseControl)
 import           Control.Monad.Catch (MonadThrow)
-import           Control.Monad (when)
+import           Control.Monad (when, (>=>))
 import           Control.Concurrent
 import           DynamoDbEventStore.AmazonkaInterpreter
 import           DynamoDbEventStore.EventStoreActions
@@ -33,18 +34,23 @@ runMyAws :: (AWS a -> IO a) -> T.Text -> DynamoCmdM a -> IO a
 runMyAws runner tableName program = 
   runner $ runProgram tableName program
 
+printEvent :: EventStoreAction -> ActionM EventStoreAction
+printEvent a = do
+  liftIO . print . show $ a
+  return a
+
 showEvent :: (forall a. DynamoCmdM a -> IO a) -> EventStoreAction -> ActionM ()
-showEvent run (PostEvent req) = do
+showEvent runner (PostEvent req) = do
   let program = postEventRequestProgram req
-  a <- liftIO $ run program
+  a <- liftIO $ runner program
   (html . TL.pack . show) a
-showEvent run (ReadStream req) = do
+showEvent runner (ReadStream req) = do
   let program = getReadStreamRequestProgram req
-  a <- liftIO $ run program
+  a <- liftIO $ runner program
   json a
-showEvent run (ReadAll req) = do
+showEvent runner (ReadAll req) = do
   let program = getReadAllRequestProgram req
-  a <- liftIO $ run program
+  a <- liftIO $ runner program
   json a
 showEvent _ a = 
   (html . TL.pack . show) a
@@ -79,7 +85,8 @@ start parsedConfig = do
    runApp runner tableName = do
      let runner' = runMyAws runner tableName
      _ <- forkIO $ runner' GlobalFeedWriter.main
-     scotty 3000 (app (showEvent runner'))
+     let warpSettings = setPort 2113 $ setHost "127.0.0.1" defaultSettings
+     scottyApp (app (printEvent >=> showEvent runner')) >>= runSettings warpSettings
      return ()
    failNoTable = putStrLn "Table does not exist"
 
