@@ -13,7 +13,6 @@ import qualified Data.Text.Encoding        as T
 import qualified Data.Text                 as T
 import           Data.Text.Lazy            (Text, pack)
 import qualified Data.Text.Lazy            as TL
-import           Network.HTTP.Types        (mkStatus)
 import           Network.HTTP.Types.Status
 import           DynamoDbEventStore.EventStoreActions
 
