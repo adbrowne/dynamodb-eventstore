@@ -39,20 +39,20 @@ printEvent a = do
   liftIO . print . show $ a
   return a
 
-showEvent :: (forall a. DynamoCmdM a -> IO a) -> EventStoreAction -> ActionM ()
-showEvent runner (PostEvent req) = do
+runEventStoreAction :: (forall a. DynamoCmdM a -> IO a) -> EventStoreAction -> ActionM ()
+runEventStoreAction runner (PostEvent req) = do
   let program = postEventRequestProgram req
   a <- liftIO $ runner program
   (html . TL.pack . show) a
-showEvent runner (ReadStream req) = do
+runEventStoreAction runner (ReadStream req) = do
   let program = getReadStreamRequestProgram req
   a <- liftIO $ runner program
   json a
-showEvent runner (ReadAll req) = do
+runEventStoreAction runner (ReadAll req) = do
   let program = getReadAllRequestProgram req
   a <- liftIO $ runner program
   json a
-showEvent _ a = 
+runEventStoreAction _ a = 
   (html . TL.pack . show) a
 
 data Config = Config 
@@ -86,7 +86,7 @@ start parsedConfig = do
      let runner' = runMyAws runner tableName
      _ <- forkIO $ runner' GlobalFeedWriter.main
      let warpSettings = setPort 2113 $ setHost "127.0.0.1" defaultSettings
-     scottyApp (app (printEvent >=> showEvent runner')) >>= runSettings warpSettings
+     scottyApp (app (printEvent >=> runEventStoreAction runner')) >>= runSettings warpSettings
      return ()
    failNoTable = putStrLn "Table does not exist"
 
