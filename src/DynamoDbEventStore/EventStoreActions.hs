@@ -89,10 +89,10 @@ fieldBody = "Body"
 
 data EventWriteResult = WriteSuccess | WrongExpectedVersion | EventExists | WriteError deriving (Eq, Show)
 
-ensurePreviousEventExists :: DynamoKey -> DynamoCmdM Bool
-ensurePreviousEventExists (DynamoKey _streamId (0)) = return True
-ensurePreviousEventExists (DynamoKey streamId eventNumber) = do
-  let previousDynamoKey = DynamoKey streamId (eventNumber - 1)
+ensureExpectedVersion :: DynamoKey -> DynamoCmdM Bool
+ensureExpectedVersion (DynamoKey _streamId (-1)) = return True
+ensureExpectedVersion (DynamoKey streamId eventNumber) = do
+  let previousDynamoKey = DynamoKey streamId eventNumber
   result <- readFromDynamo' previousDynamoKey
   return $ isJust result 
 
@@ -109,18 +109,21 @@ postEventRequestProgram (PostEventRequest sId ev eventEntries) = do
                    HM.insert Constants.needsPagingKey (set avS (Just "True") attributeValue)
       writeResult <- GlobalFeedWriter.dynamoWriteWithRetry dynamoKey values 0 
       return $ toEventResult writeResult
+    dynamoReadResultToEventNumber (DynamoReadResult (DynamoKey _key eventNumber) _version _values) = eventNumber
     getDynamoKey :: T.Text -> Maybe Int64 -> Int -> DynamoCmdM (Either EventWriteResult DynamoKey)
     getDynamoKey streamId Nothing eventCount = do
       let dynamoHashKey = Constants.streamDynamoKeyPrefix <> streamId
       readResults <- queryBackward' dynamoHashKey 1 Nothing
       let lastEvent = headMay readResults
-      return $ Right $ DynamoKey dynamoHashKey $ maybe (fromIntegral $ eventCount - 1) (\(DynamoReadResult (DynamoKey _key eventNumber) _version _values) -> eventNumber + (fromIntegral eventCount)) lastEvent
+      let lastEventNumber = maybe (-1) dynamoReadResultToEventNumber lastEvent
+      let eventVersion = lastEventNumber + (fromIntegral eventCount)
+      return $ Right $ DynamoKey dynamoHashKey eventVersion
     getDynamoKey streamId (Just expectedVersion) eventCount = do
-      let eventNumber = expectedVersion + 1
-      let key = DynamoKey (Constants.streamDynamoKeyPrefix <> streamId) eventNumber
-      previousEventExists <- ensurePreviousEventExists key
-      if previousEventExists then 
-        return $ Right $ DynamoKey (Constants.streamDynamoKeyPrefix <> streamId) (expectedVersion + (fromIntegral eventCount))
+      let dynamoHashKey = Constants.streamDynamoKeyPrefix <> streamId
+      expectedVersionOk <- ensureExpectedVersion $ DynamoKey dynamoHashKey expectedVersion
+      if expectedVersionOk then do
+        let eventVersion = expectedVersion + (fromIntegral eventCount)
+        return $ Right $ DynamoKey dynamoHashKey eventVersion
       else 
         return $ Left WrongExpectedVersion
     toEventResult :: DynamoWriteResult -> EventWriteResult
