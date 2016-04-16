@@ -95,12 +95,15 @@ app process = do
     expectedVersion <- parseOptionalHeader "ES-ExpectedVersion" positiveInt64Parser
     eventType <- parseMandatoryHeader "ES-EventType" textParser
     eventData <- body
+    let eventEntries = 
+          EventEntry
+          <$> pure eventData
+          <*> eventType
     toResult . fmap (process . PostEvent) $
           PostEventRequest
           <$> pure streamId
           <*> expectedVersion
-          <*> pure eventData
-          <*> eventType
+          <*> ((\x -> x:[]) <$> eventEntries)
   get "/streams/:streamId" $ do
     streamId <- param "streamId"
     let mStreamId = notEmpty streamId

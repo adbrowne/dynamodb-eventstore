@@ -59,7 +59,7 @@ instance QC.Arbitrary UploadList where
         return (stream, number, event)
 
 writeEvent :: (T.Text, Int64, T.Text) -> DynamoCmdM EventWriteResult
-writeEvent (stream, eventNumber, body) = postEventRequestProgram (PostEventRequest stream (Just eventNumber) (TL.encodeUtf8 . TL.fromStrict $ body) "")
+writeEvent (stream, eventNumber, body) = postEventRequestProgram (PostEventRequest stream (Just eventNumber) [EventEntry (TL.encodeUtf8 . TL.fromStrict $ body) ""])
 
 publisher :: [(T.Text,Int64,T.Text)] -> DynamoCmdM ()
 publisher xs = forM_ xs writeEvent
@@ -150,7 +150,7 @@ writeEventsWithExplicitExpectedVersions (StreamId streamId) events =
   where 
     writeSingleEvent (et, ed) = do
       eventNumber <- get
-      result <- lift $ postEventRequestProgram (PostEventRequest streamId (Just eventNumber) ed et)
+      result <- lift $ postEventRequestProgram (PostEventRequest streamId (Just eventNumber) [EventEntry ed et])
       when (result /= WriteSuccess) $ error "Bad write result"
       put (eventNumber + 1)
 
@@ -159,7 +159,7 @@ writeEventsWithNoExpectedVersions (StreamId streamId) events =
   forM_ events writeSingleEvent
   where 
     writeSingleEvent (et, ed) = do
-      result <- postEventRequestProgram (PostEventRequest streamId Nothing ed et)
+      result <- postEventRequestProgram (PostEventRequest streamId Nothing [EventEntry ed et])
       when (result /= WriteSuccess) $ error "Bad write result"
 
 writeThenRead :: StreamId -> [(T.Text, BL.ByteString)] -> EventWriter -> DynamoCmdM [RecordedEvent]
@@ -203,15 +203,23 @@ prop_NoWriteRequestCanCausesAFatalErrorInGlobalFeedWriter events =
 cannotWriteEventsOutOfOrder :: Assertion
 cannotWriteEventsOutOfOrder =
   let 
-    postEventRequest = PostEventRequest { perStreamId = "MyStream", perExpectedVersion = Just 1, perEventData = TL.encodeUtf8 "My Content", perEventType = "MyEvent" }
+    postEventRequest = PostEventRequest { perStreamId = "MyStream", perExpectedVersion = Just 1, perEvents = [EventEntry (TL.encodeUtf8 "My Content") "MyEvent"] }
     result = runProgram "writeEvent" (postEventRequestProgram postEventRequest) emptyTestState
   in assertEqual "Should return an error" (Right WrongExpectedVersion) result
 
 canWriteFirstEvent :: Assertion
 canWriteFirstEvent =
   let 
-    postEventRequest = PostEventRequest { perStreamId = "MyStream", perExpectedVersion = Just (-1), perEventData = TL.encodeUtf8 "My Content", perEventType = "MyEvent" }
+    postEventRequest = PostEventRequest { perStreamId = "MyStream", perExpectedVersion = Just (-1), perEvents = [EventEntry (TL.encodeUtf8 "My Content") "MyEvent"] }
     result = runProgram "writeEvent" (postEventRequestProgram postEventRequest) emptyTestState
+  in assertEqual "Should return success" (Right WriteSuccess) result
+
+canWriteMultipleEvents :: Assertion
+canWriteMultipleEvents =
+  let 
+    multiPostEventRequest = PostEventRequest { perStreamId = "MyStream", perExpectedVersion = Just (-1), perEvents = [EventEntry (TL.encodeUtf8 "My Content") "MyEvent", EventEntry (TL.encodeUtf8 "My Content2") "MyEvent2"] }
+    subsequentPostEventRequest = PostEventRequest { perStreamId = "MyStream", perExpectedVersion = Just 1, perEvents = [EventEntry (TL.encodeUtf8 "My Content") "MyEvent"] }
+    result = runProgram "writeEvent" (postEventRequestProgram multiPostEventRequest >> postEventRequestProgram subsequentPostEventRequest) emptyTestState
   in assertEqual "Should return success" (Right WriteSuccess) result
 
 tests :: [TestTree]
@@ -223,5 +231,6 @@ tests = [
       testCase "Written Events Appear In Read Stream - explicit expected version" $ writtenEventsAppearInReadStream writeEventsWithNoExpectedVersions,
       testCase "Cannot write event if previous one does not exist" cannotWriteEventsOutOfOrder,
       testCase "Can write first event" canWriteFirstEvent,
+      testCase "Can write multiple events" canWriteMultipleEvents,
       testProperty "Can round trip FeedEntry via JSON" (\(a :: FeedEntry) -> (Aeson.decode . Aeson.encode) a === Just a)
   ]
