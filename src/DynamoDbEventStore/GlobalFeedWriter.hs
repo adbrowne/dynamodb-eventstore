@@ -4,7 +4,6 @@
 module DynamoDbEventStore.GlobalFeedWriter (main, FeedEntry(FeedEntry), feedEntryStream, feedEntryNumber, dynamoWriteWithRetry) where
 
 import           Safe
-import           Debug.Trace
 import           Control.Monad
 import           Data.Int
 import qualified Data.Sequence         as Seq
