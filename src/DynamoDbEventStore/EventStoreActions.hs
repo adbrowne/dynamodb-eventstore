@@ -1,5 +1,8 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE OverloadedStrings    #-}
+{-# LANGUAGE RecordWildCards      #-}
+{-# LANGUAGE RankNTypes           #-}
+{-# LANGUAGE ScopedTypeVariables  #-}
+{-# LANGUAGE DeriveGeneric        #-}
 
 module DynamoDbEventStore.EventStoreActions(
   ReadStreamRequest(..), 
@@ -14,7 +17,10 @@ module DynamoDbEventStore.EventStoreActions(
 
 import           Control.Lens hiding ((.=))
 import           Safe
+import           Control.Error.Safe
 import           Control.Monad (forM_)
+import           Control.Applicative
+import           TextShow
 import           Pipes
 import qualified Pipes.Prelude as P
 import qualified Data.ByteString.Lazy as BL
@@ -22,6 +28,7 @@ import           Data.Int
 import           Data.Monoid
 import           Data.Maybe (fromJust, isJust)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
 import qualified Data.Text.Lazy as TL
 import qualified Data.Text.Lazy.Encoding as TL
 import           DynamoDbEventStore.EventStoreCommands
@@ -30,8 +37,11 @@ import           Network.AWS.DynamoDB
 import           Text.Printf (printf)
 import qualified DynamoDbEventStore.Constants as Constants
 import qualified DynamoDbEventStore.GlobalFeedWriter as GlobalFeedWriter
-import           Data.Aeson
+import           Data.Aeson((.=))
+import qualified Data.Aeson as Aeson
 import qualified Test.QuickCheck as QC
+import qualified Data.Serialize as Serialize
+import           GHC.Generics
 
 -- High level event store actions
 -- should map almost one to one with http interface
@@ -50,14 +60,13 @@ data SubscribeAllResponse = SubscribeAllResponse {
 data EventEntry = EventEntry {
   eventEntryData :: BL.ByteString,
   eventEntryType :: T.Text
-} deriving (Show, Eq, Ord)
+} deriving (Show, Eq, Ord, Generic)
 
-instance ToJSON EventEntry where
-  toJSON EventEntry{..} =
-    object [ 
-           "eventData" .= ((TL.toStrict . TL.decodeUtf8) eventEntryData :: T.Text)
-         , "eventType" .= eventEntryType
-         ]
+instance Serialize.Serialize EventEntry
+
+instance Serialize.Serialize T.Text where
+  put = Serialize.put . T.encodeUtf8
+  get = T.decodeUtf8 <$> Serialize.get 
 
 data PostEventRequest = PostEventRequest {
    perStreamId        :: T.Text,
@@ -105,8 +114,9 @@ postEventRequestProgram (PostEventRequest sId ev eventEntries) = do
   where
     writeMyEvent :: DynamoKey -> DynamoCmdM EventWriteResult
     writeMyEvent dynamoKey = do
-      let values = HM.singleton fieldBody (set avB (Just ((BL.toStrict . encode) eventEntries)) attributeValue) & 
-                   HM.insert Constants.needsPagingKey (set avS (Just "True") attributeValue)
+      let values = HM.singleton fieldBody (set avB (Just (Serialize.encode eventEntries)) attributeValue) & 
+                   HM.insert Constants.needsPagingKey (set avS (Just "True") attributeValue) &
+                   HM.insert Constants.eventCountKey (set avN (Just ((showt . length) eventEntries)) attributeValue)
       writeResult <- GlobalFeedWriter.dynamoWriteWithRetry dynamoKey values 0 
       return $ toEventResult writeResult
     dynamoReadResultToEventNumber (DynamoReadResult (DynamoKey _key eventNumber) _version _values) = eventNumber
@@ -131,16 +141,28 @@ postEventRequestProgram (PostEventRequest sId ev eventEntries) = do
     toEventResult DynamoWriteFailure = WriteError
     toEventResult DynamoWriteWrongVersion = EventExists
 
+readField :: Monoid a => T.Text -> Lens' AttributeValue (Maybe a) -> DynamoValues -> Either String a
+readField fieldName fieldType values = 
+   maybeToEither $ view (ix fieldName . fieldType) values 
+   where 
+     maybeToEither Nothing  = Left $ "Error reading field: " <> T.unpack fieldName
+     maybeToEither (Just x) = Right x
+
+fromEitherError :: String -> Either String a -> a
+fromEitherError context  (Left err) = error (context <> " " <> err)
+fromEitherError _context (Right a)  = a
+
 getReadStreamRequestProgram :: ReadStreamRequest -> DynamoCmdM [RecordedEvent]
 getReadStreamRequestProgram (ReadStreamRequest sId startEventNumber) = do
   readResults <- queryBackward' (Constants.streamDynamoKeyPrefix <> sId) 10 startEventNumber
-  return $ fmap toRecordedEvent readResults
+  return $ readResults >>= toRecordedEvent 
   where 
-    toRecordedEvent :: DynamoReadResult -> RecordedEvent
-    toRecordedEvent (DynamoReadResult key _version values) = fromJust $ do
-      eventType <- view (ix fieldEventType . avS) values 
-      eventBody <- view (ix fieldBody . avB) values 
-      return $ RecordedEvent sId (dynamoKeyEventNumber key) eventBody eventType
+    toRecordedEvent :: DynamoReadResult -> [RecordedEvent]
+    toRecordedEvent (DynamoReadResult key _version values) = fromEitherError "toRecordedEvent" $ do
+      eventBody <- readField fieldBody avB values 
+      (eventEntries :: [EventEntry]) <- Serialize.decode eventBody
+      let recordedEvents = fmap (\EventEntry {..} -> RecordedEvent sId (dynamoKeyEventNumber key) (BL.toStrict eventEntryData) eventEntryType) eventEntries
+      return recordedEvents
 
 getPageDynamoKey :: Int -> DynamoKey 
 getPageDynamoKey pageNumber =
@@ -151,10 +173,13 @@ feedEntryToEventKey :: GlobalFeedWriter.FeedEntry -> EventKey
 feedEntryToEventKey GlobalFeedWriter.FeedEntry { GlobalFeedWriter.feedEntryStream = streamId, GlobalFeedWriter.feedEntryNumber = eventNumber } = 
   EventKey (streamId, eventNumber)
 
+fromJustError msg Nothing  = error msg
+fromJustError _   (Just x) = x
+
 readPageKeys :: DynamoReadResult -> [EventKey]
-readPageKeys (DynamoReadResult _key _version values) = fromJust $ do
+readPageKeys (DynamoReadResult _key _version values) = fromJustError "fromJust readPageKeys" $ do
    body <- view (ix Constants.pageBodyKey . avB) values 
-   feedEntries <- decodeStrict body
+   feedEntries <- Aeson.decodeStrict body
    return $ fmap feedEntryToEventKey feedEntries
 
 getPagesAfter :: Int -> Producer EventKey DynamoCmdM ()

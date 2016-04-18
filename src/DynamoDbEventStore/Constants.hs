@@ -6,6 +6,9 @@ import qualified Data.Text             as T
 needsPagingKey :: T.Text
 needsPagingKey = "NeedsPaging"
 
+eventCountKey :: T.Text
+eventCountKey = "EventCount"
+
 pageIsVerifiedKey :: T.Text
 pageIsVerifiedKey = "Verified"
 
