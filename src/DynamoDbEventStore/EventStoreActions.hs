@@ -36,6 +36,7 @@ import           Text.Printf (printf)
 import qualified DynamoDbEventStore.Constants as Constants
 import qualified DynamoDbEventStore.GlobalFeedWriter as GlobalFeedWriter
 import qualified Test.QuickCheck as QC
+import qualified Data.Aeson as Aeson
 import qualified Data.Serialize as Serialize
 import           GHC.Generics
 
