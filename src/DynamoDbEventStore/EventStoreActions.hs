@@ -17,16 +17,14 @@ module DynamoDbEventStore.EventStoreActions(
 
 import           Control.Lens hiding ((.=))
 import           Safe
-import           Control.Error.Safe
 import           Control.Monad (forM_)
-import           Control.Applicative
 import           TextShow
 import           Pipes
 import qualified Pipes.Prelude as P
 import qualified Data.ByteString.Lazy as BL
 import           Data.Int
 import           Data.Monoid
-import           Data.Maybe (fromJust, isJust)
+import           Data.Maybe (isJust)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.Lazy as TL
@@ -37,8 +35,6 @@ import           Network.AWS.DynamoDB
 import           Text.Printf (printf)
 import qualified DynamoDbEventStore.Constants as Constants
 import qualified DynamoDbEventStore.GlobalFeedWriter as GlobalFeedWriter
-import           Data.Aeson((.=))
-import qualified Data.Aeson as Aeson
 import qualified Test.QuickCheck as QC
 import qualified Data.Serialize as Serialize
 import           GHC.Generics
@@ -89,9 +85,6 @@ data ReadStreamRequest = ReadStreamRequest {
 } deriving (Show)
 
 data ReadAllRequest = ReadAllRequest deriving (Show)
-
-fieldEventType :: T.Text
-fieldEventType = "EventType"
 
 fieldBody :: T.Text
 fieldBody = "Body"
@@ -173,6 +166,7 @@ feedEntryToEventKey :: GlobalFeedWriter.FeedEntry -> EventKey
 feedEntryToEventKey GlobalFeedWriter.FeedEntry { GlobalFeedWriter.feedEntryStream = streamId, GlobalFeedWriter.feedEntryNumber = eventNumber } = 
   EventKey (streamId, eventNumber)
 
+fromJustError :: String -> Maybe a -> a
 fromJustError msg Nothing  = error msg
 fromJustError _   (Just x) = x
 
