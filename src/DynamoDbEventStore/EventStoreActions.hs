@@ -3,11 +3,13 @@
 {-# LANGUAGE RankNTypes           #-}
 {-# LANGUAGE ScopedTypeVariables  #-}
 {-# LANGUAGE DeriveGeneric        #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module DynamoDbEventStore.EventStoreActions(
   ReadStreamRequest(..), 
   ReadAllRequest(..), 
   PostEventRequest(..), 
+  EventType(..),
   EventEntry(..),
   EventStoreAction(..),
   EventWriteResult(..),
@@ -23,6 +25,7 @@ import           Pipes
 import qualified Pipes.Prelude as P
 import qualified Data.ByteString.Lazy as BL
 import           Data.Int
+import           Data.String
 import           Data.Monoid
 import           Data.Maybe (isJust)
 import qualified Data.Text as T
@@ -54,16 +57,21 @@ data SubscribeAllRequest = SubscribeAllRequest {
 data SubscribeAllResponse = SubscribeAllResponse {
 } deriving (Show)
 
+newtype EventType = EventType T.Text deriving (Show, Eq, Ord, IsString)
+
+eventTypeToText :: EventType -> T.Text
+eventTypeToText (EventType t) = t
+
 data EventEntry = EventEntry {
   eventEntryData :: BL.ByteString,
-  eventEntryType :: T.Text
+  eventEntryType :: EventType
 } deriving (Show, Eq, Ord, Generic)
 
 instance Serialize.Serialize EventEntry
 
-instance Serialize.Serialize T.Text where
-  put = Serialize.put . T.encodeUtf8
-  get = T.decodeUtf8 <$> Serialize.get 
+instance Serialize.Serialize EventType where
+  put (EventType t) = (Serialize.put . T.encodeUtf8) t
+  get = EventType . T.decodeUtf8 <$> Serialize.get 
 
 data PostEventRequest = PostEventRequest {
    perStreamId        :: T.Text,
@@ -73,7 +81,7 @@ data PostEventRequest = PostEventRequest {
 
 instance QC.Arbitrary EventEntry where
   arbitrary = EventEntry <$> (TL.encodeUtf8 .  TL.pack <$> QC.arbitrary)
-                         <*> (T.pack <$> QC.arbitrary)
+                         <*> (EventType . T.pack <$> QC.arbitrary)
 
 instance QC.Arbitrary PostEventRequest where
   arbitrary = PostEventRequest <$> (T.pack <$> QC.arbitrary)
@@ -155,7 +163,7 @@ getReadStreamRequestProgram (ReadStreamRequest sId startEventNumber) = do
     toRecordedEvent (DynamoReadResult key _version values) = fromEitherError "toRecordedEvent" $ do
       eventBody <- readField fieldBody avB values 
       (eventEntries :: [EventEntry]) <- Serialize.decode eventBody
-      let recordedEvents = fmap (\EventEntry {..} -> RecordedEvent sId (dynamoKeyEventNumber key) (BL.toStrict eventEntryData) eventEntryType) eventEntries
+      let recordedEvents = fmap (\EventEntry {..} -> RecordedEvent sId (dynamoKeyEventNumber key) (BL.toStrict eventEntryData)  (eventTypeToText eventEntryType)) eventEntries
       return recordedEvents
 
 getPageDynamoKey :: Int -> DynamoKey 

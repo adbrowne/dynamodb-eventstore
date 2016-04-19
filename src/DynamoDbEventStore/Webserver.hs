@@ -98,7 +98,7 @@ app process = do
     let eventEntries = 
           EventEntry
           <$> pure eventData
-          <*> eventType
+          <*> (EventType <$> eventType)
     toResult . fmap (process . PostEvent) $
           PostEventRequest
           <$> pure streamId

@@ -35,14 +35,14 @@ postEventSpec = do
       waiCase requestWithExpectedVersion $ assertStatus 200
 
     it "responds with body" $
-      waiCase requestWithExpectedVersion $ assertBody "PostEvent (PostEventRequest {perStreamId = \"streamId\", perExpectedVersion = Just 1, perEvents = [EventEntry {eventEntryData = \"\", eventEntryType = \"MyEventType\"}]})"
+      waiCase requestWithExpectedVersion $ assertBody "PostEvent (PostEventRequest {perStreamId = \"streamId\", perExpectedVersion = Just 1, perEvents = [EventEntry {eventEntryData = \"\", eventEntryType = EventType \"MyEventType\"}]})"
 
   describe "POST /streams/streamId without ExepectedVersion" $ do
     it "responds with 200" $
       waiCase requestWithoutExpectedVersion $ assertStatus 200
 
     it "responds with body" $
-      waiCase requestWithoutExpectedVersion $ assertBody "PostEvent (PostEventRequest {perStreamId = \"streamId\", perExpectedVersion = Nothing, perEvents = [EventEntry {eventEntryData = \"\", eventEntryType = \"MyEventType\"}]})"
+      waiCase requestWithoutExpectedVersion $ assertBody "PostEvent (PostEventRequest {perStreamId = \"streamId\", perExpectedVersion = Nothing, perEvents = [EventEntry {eventEntryData = \"\", eventEntryType = EventType \"MyEventType\"}]})"
 
   describe "POST /streams/streamId without EventType" $
     it "responds with 400" $

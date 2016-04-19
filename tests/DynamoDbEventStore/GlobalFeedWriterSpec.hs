@@ -150,7 +150,7 @@ writeEventsWithExplicitExpectedVersions (StreamId streamId) events =
   where 
     writeSingleEvent (et, ed) = do
       eventNumber <- get
-      result <- lift $ postEventRequestProgram (PostEventRequest streamId (Just eventNumber) [EventEntry ed et])
+      result <- lift $ postEventRequestProgram (PostEventRequest streamId (Just eventNumber) [EventEntry ed (EventType et)])
       when (result /= WriteSuccess) $ error "Bad write result"
       put (eventNumber + 1)
 
@@ -159,7 +159,7 @@ writeEventsWithNoExpectedVersions (StreamId streamId) events =
   forM_ events writeSingleEvent
   where 
     writeSingleEvent (et, ed) = do
-      result <- postEventRequestProgram (PostEventRequest streamId Nothing [EventEntry ed et])
+      result <- postEventRequestProgram (PostEventRequest streamId Nothing [EventEntry ed (EventType et)])
       when (result /= WriteSuccess) $ error "Bad write result"
 
 writeThenRead :: StreamId -> [(T.Text, BL.ByteString)] -> EventWriter -> DynamoCmdM [RecordedEvent]
