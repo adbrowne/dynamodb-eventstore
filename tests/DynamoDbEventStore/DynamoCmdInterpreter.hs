@@ -5,10 +5,11 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE RankNTypes #-}
 
-module DynamoDbEventStore.DynamoCmdInterpreter(ProgramError(FatalError), runPrograms, runProgramGenerator, runProgram, emptyTestState) where
+module DynamoDbEventStore.DynamoCmdInterpreter(ProgramError(FatalError), runPrograms, runProgramGenerator, runProgram, emptyTestState, evalProgram, execProgram, LoopState(..)) where
 
 import           Control.Lens
 import           Data.Int
+import           Data.List (sortOn)
 import           Data.Monoid
 import           Data.Foldable
 import           Data.List (unfoldr)
@@ -149,10 +150,11 @@ queryBackward key maxEvents startEvent table =
     dynamoReadResultToEventNumber (DynamoReadResult (DynamoKey _key eventNumber) _version _values) = eventNumber
     eventsBeforeStart Nothing = allEvents
     eventsBeforeStart (Just start) = getUptoItem (\a -> dynamoReadResultToEventNumber a == start) allEvents
-    allEvents = unfoldr getEvent 0
-    getEvent :: Int64 -> Maybe (DynamoReadResult, Int64)
-    getEvent eventNumber = 
-      (\result -> (result, eventNumber + 1)) <$> getReadResult (DynamoKey key eventNumber) table 
+    allEvents = 
+      let 
+        filteredMap = Map.filterWithKey (\(DynamoKey hashKey _rangeKey) _value -> hashKey == key) table
+        eventList = (sortOn fst . Map.toList) filteredMap
+      in (\(key, (version, values)) -> DynamoReadResult key version values) <$> eventList
 
 scanNeedsPaging :: TestDynamoTable -> [DynamoKey]
 scanNeedsPaging = 
@@ -241,12 +243,17 @@ runProgramGenerator programId program testState =
         loop (Left x) = return x
         loop (Right n) = runCmd programId n >>= loop
 
-runProgram :: T.Text -> DynamoCmdM a -> TestState -> Either ProgramError a
+runProgram :: T.Text -> DynamoCmdM a -> TestState -> (Either ProgramError a, LoopState a)
 runProgram programId program testState =
-  runIdentity $ evalStateT (loop $ Right (Church.fromF program)) initialState
+  runIdentity $ runStateT (loop $ Right (Church.fromF program)) initialState
   where
         runningPrograms = Map.singleton programId (RunningProgramState (Church.fromF program) 0)
         initialState = LoopState 0 (LoopActive Map.empty) testState runningPrograms Map.empty
         loop :: Either (Either ProgramError r) (DynamoCmdMFree r) -> InterpreterApp Identity r (Either ProgramError r)
         loop (Left x) = return x
         loop (Right n) = runCmd programId n >>= loop
+
+evalProgram :: T.Text -> DynamoCmdM a -> TestState -> (Either ProgramError a)
+evalProgram programId program testState = fst $ runProgram programId program testState
+execProgram :: T.Text -> DynamoCmdM a -> TestState -> (LoopState a)
+execProgram programId program testState = snd $ runProgram programId program testState

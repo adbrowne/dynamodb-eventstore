@@ -163,7 +163,9 @@ getReadStreamRequestProgram (ReadStreamRequest sId startEventNumber) = do
     toRecordedEvent (DynamoReadResult key _version values) = fromEitherError "toRecordedEvent" $ do
       eventBody <- readField fieldBody avB values 
       (eventEntries :: [EventEntry]) <- Serialize.decode eventBody
-      let recordedEvents = fmap (\EventEntry {..} -> RecordedEvent sId (dynamoKeyEventNumber key) (BL.toStrict eventEntryData)  (eventTypeToText eventEntryType)) eventEntries
+      let lastEventNumber = dynamoKeyEventNumber key
+      let eventEntriesWithEventNumber = zip [lastEventNumber, lastEventNumber -1..] (reverse eventEntries)
+      let recordedEvents = fmap (\(eventNumber, EventEntry {..}) -> RecordedEvent sId eventNumber (BL.toStrict eventEntryData) (eventTypeToText eventEntryType)) eventEntriesWithEventNumber
       return recordedEvents
 
 getPageDynamoKey :: Int -> DynamoKey 
