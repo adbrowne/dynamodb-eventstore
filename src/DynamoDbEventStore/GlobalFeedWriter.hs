@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module DynamoDbEventStore.GlobalFeedWriter (main, FeedEntry(FeedEntry), feedEntryStream, feedEntryNumber, dynamoWriteWithRetry) where
+module DynamoDbEventStore.GlobalFeedWriter (main, FeedEntry(FeedEntry), feedEntryStream, feedEntryNumber, feedEntryCount, dynamoWriteWithRetry) where
 
 import           Safe
 import           Control.Monad
@@ -27,24 +27,26 @@ toText = T.pack . show
 
 data FeedEntry = FeedEntry {
   feedEntryStream :: StreamId,
-  feedEntryNumber :: Int64
+  feedEntryNumber :: Int64,
+  feedEntryCount :: Int
 } deriving (Eq, Show)
 
 instance QC.Arbitrary FeedEntry where
-  arbitrary = do
-    stream <- QC.arbitrary
-    number <- QC.arbitrary
-    return $ FeedEntry stream number
+  arbitrary =
+    FeedEntry <$> QC.arbitrary
+              <*> QC.arbitrary
+              <*> QC.arbitrary
 
 instance Aeson.FromJSON FeedEntry where
     parseJSON (Aeson.Object v) = FeedEntry <$>
                            v Aeson..: "s" <*>
-                           v Aeson..: "n"
+                           v Aeson..: "n" <*>
+                           v Aeson..: "c"
     parseJSON _                = empty
 
 instance Aeson.ToJSON FeedEntry where
-    toJSON (FeedEntry stream number) =
-        Aeson.object ["s" Aeson..= stream, "n" Aeson..= number]
+    toJSON (FeedEntry stream number entryCount) =
+        Aeson.object ["s" Aeson..= stream, "n" Aeson..= number, "c" Aeson..=entryCount]
 
 data FeedPage = FeedPage {
   feedPageNumber     :: Int,
@@ -186,8 +188,8 @@ updateGlobalFeed itemKey@DynamoKey { dynamoKeyKey = itemHashKey, dynamoKeyEventN
   let itemIsPaged = entryIsPaged item
   logIf itemIsPaged Debug ("itemIsPaged" <> toText itemKey)
   unless itemIsPaged $ do
-    let feedEntry = itemToJsonByteString (feedPageEntries currentPage |> FeedEntry streamId itemEventNumber)
     let itemEventCount = entryEventCount item
+    let feedEntry = itemToJsonByteString (feedPageEntries currentPage |> FeedEntry streamId itemEventNumber itemEventCount)
     let previousEntryEventNumber = itemEventNumber - fromIntegral itemEventCount
     when (previousEntryEventNumber > -1) (updateGlobalFeed itemKey { dynamoKeyEventNumber = previousEntryEventNumber })
     let version = feedPageVersion currentPage + 1

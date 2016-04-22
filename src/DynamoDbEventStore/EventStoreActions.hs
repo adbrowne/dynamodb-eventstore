@@ -173,9 +173,9 @@ getPageDynamoKey pageNumber =
   let paddedPageNumber = T.pack (printf "%08d" pageNumber)
   in DynamoKey (Constants.pageDynamoKeyPrefix <> paddedPageNumber) 0
 
-feedEntryToEventKey :: GlobalFeedWriter.FeedEntry -> EventKey
-feedEntryToEventKey GlobalFeedWriter.FeedEntry { GlobalFeedWriter.feedEntryStream = streamId, GlobalFeedWriter.feedEntryNumber = eventNumber } = 
-  EventKey (streamId, eventNumber)
+feedEntryToEventKeys :: GlobalFeedWriter.FeedEntry -> [EventKey]
+feedEntryToEventKeys GlobalFeedWriter.FeedEntry { GlobalFeedWriter.feedEntryStream = streamId, GlobalFeedWriter.feedEntryNumber = eventNumber, GlobalFeedWriter.feedEntryCount = entryCount } = 
+  (\number -> EventKey(streamId, number)) <$> (reverse $ take entryCount [eventNumber,eventNumber-1..])
 
 fromJustError :: String -> Maybe a -> a
 fromJustError msg Nothing  = error msg
@@ -185,7 +185,7 @@ readPageKeys :: DynamoReadResult -> [EventKey]
 readPageKeys (DynamoReadResult _key _version values) = fromJustError "fromJust readPageKeys" $ do
    body <- view (ix Constants.pageBodyKey . avB) values 
    feedEntries <- Aeson.decodeStrict body
-   return $ fmap feedEntryToEventKey feedEntries
+   return $ feedEntries >>= feedEntryToEventKey s
 
 getPagesAfter :: Int -> Producer EventKey DynamoCmdM ()
 getPagesAfter startPage = do
