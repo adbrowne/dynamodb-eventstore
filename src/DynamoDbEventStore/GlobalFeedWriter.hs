@@ -208,7 +208,6 @@ main :: DynamoCmdM ()
 main = forever $ do
   scanResult <- scanNeedsPaging'
   forM_ scanResult updateGlobalFeed
-  log' Debug $ (toText . length) scanResult
   when (null scanResult) (wait' 1000)
   setPulseStatus' $ case scanResult of [] -> False
                                        _  -> True
