@@ -23,6 +23,7 @@ import qualified Data.Text.Lazy.Encoding    as TL
 import qualified Data.Map.Strict as Map
 import qualified Data.Sequence as Seq
 import qualified Data.Aeson as Aeson
+import qualified Data.Set as Set
 
 import           DynamoDbEventStore.EventStoreCommands
 import           DynamoDbEventStore.EventStoreActions
@@ -52,9 +53,12 @@ splitList xs = do
   index <- QC.choose (1, length xs)
   return (take index xs, drop index xs)
 
+uniqueList :: Ord a => [a] -> [a]
+uniqueList = Set.toList . Set.fromList
+
 instance QC.Arbitrary UploadList where
   arbitrary = do
-    (streams :: [StreamId]) <- cappedList 5
+    (streams :: [StreamId]) <- uniqueList <$> cappedList 5
     (streamWithEvents :: [(StreamId, [[EventData]])]) <- mapM (\s -> puts >>= (\p -> return (s,p))) streams
     return $ UploadList $ numberedPuts streamWithEvents 
     where
