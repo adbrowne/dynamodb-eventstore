@@ -119,6 +119,18 @@ prop_EventShouldAppearInGlobalFeedInStreamOrder (UploadList uploadList) =
        check (_, testState) = QC.forAll (runReadAllProgram testState) (\feedItems -> (globalRecordedEventListToMap <$> feedItems) === (Right $ globalFeedFromUploadList uploadList))
        runReadAllProgram = runProgramGenerator "readAllRequestProgram" (getReadAllRequestProgram ReadAllRequest)
 
+prop_ConflictingWritesWillNotSucceed :: QC.Property
+prop_ConflictingWritesWillNotSucceed =
+  let
+    programs = Map.fromList [
+        ("WriteOne", (writeEvent ("MyStream",-1,[EventData "", EventData ""]), 10))
+      , ("WriteTwo", (writeEvent ("MyStream",-1,[EventData ""]), 10))
+      ]
+  in QC.forAll (runPrograms programs) check
+     where
+       check (_, testState) = length (readStreamProgram testState) === 2
+       readStreamProgram = evalProgram "ReadEvents" (getStreamRecordedEvents "MyStream")
+
 getStreamRecordedEvents :: T.Text -> DynamoCmdM [RecordedEvent]
 getStreamRecordedEvents streamId = do
    recordedEvents <- concat <$> unfoldrM getEventSet Nothing 
@@ -254,16 +266,29 @@ eventNumbersCorrectForMultipleEvents =
     eventNumbers = (recordedEventNumber <$>) <$> result
   in assertEqual "Should return success" (Right [0,1,2]) eventNumbers
 
+errorThrownIfTryingToWriteAnEventInAMultipleGap :: Assertion
+errorThrownIfTryingToWriteAnEventInAMultipleGap =
+  let 
+    streamId = "MyStream"
+    multiPostEventRequest = PostEventRequest { perStreamId = streamId, perExpectedVersion = Just (-1), perEvents = [EventEntry (TL.encodeUtf8 "My Content") "MyEvent", EventEntry (TL.encodeUtf8 "My Content2") "MyEvent2"] }
+    subsequentPostEventRequest = PostEventRequest { perStreamId = streamId, perExpectedVersion = Just (-1), perEvents = [EventEntry (TL.encodeUtf8 "My Content") "MyEvent"] }
+    result = evalProgram "writeEvents" (postEventRequestProgram multiPostEventRequest >> postEventRequestProgram subsequentPostEventRequest) emptyTestState
+  in assertEqual "Should return failure" (Right WrongExpectedVersion) result
+
 tests :: [TestTree]
 tests = [
       testProperty "Global Feed preserves stream order" prop_EventShouldAppearInGlobalFeedInStreamOrder,
       testProperty "Each event appears in it's correct stream" prop_EventsShouldAppearInTheirSteamsInOrder,
       testProperty "No Write Request can cause a fatal error in global feed writer" prop_NoWriteRequestCanCausesAFatalErrorInGlobalFeedWriter,
+      testProperty "Conflicting writes will not succeed" prop_ConflictingWritesWillNotSucceed,
+      --testProperty "The result of multiple writers matches what they see" todo,
+      --testProperty "Get stream items contains event lists without duplicates or gaps" todo,
       testCase "Written Events Appear In Read Stream - explicit expected version" $ writtenEventsAppearInReadStream writeEventsWithExplicitExpectedVersions,
       testCase "Written Events Appear In Read Stream - explicit expected version" $ writtenEventsAppearInReadStream writeEventsWithNoExpectedVersions,
       testCase "Cannot write event if previous one does not exist" cannotWriteEventsOutOfOrder,
       testCase "Can write first event" canWriteFirstEvent,
       testCase "Can write multiple events" canWriteMultipleEvents,
+      testCase "Error thrown if trying to write an event in a multiple gap" errorThrownIfTryingToWriteAnEventInAMultipleGap,
       testCase "EventNumbers are calculated when there are multiple events" eventNumbersCorrectForMultipleEvents,
       testProperty "Can round trip FeedEntry via JSON" (\(a :: FeedEntry) -> (Aeson.decode . Aeson.encode) a === Just a)
   ]

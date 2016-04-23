@@ -185,7 +185,7 @@ readPageKeys :: DynamoReadResult -> [EventKey]
 readPageKeys (DynamoReadResult _key _version values) = fromJustError "fromJust readPageKeys" $ do
    body <- view (ix Constants.pageBodyKey . avB) values 
    feedEntries <- Aeson.decodeStrict body
-   return $ feedEntries >>= feedEntryToEventKey s
+   return $ feedEntries >>= feedEntryToEventKeys
 
 getPagesAfter :: Int -> Producer EventKey DynamoCmdM ()
 getPagesAfter startPage = do
