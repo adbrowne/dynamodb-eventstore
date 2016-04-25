@@ -15,7 +15,6 @@ import           Control.Monad.Loops
 import qualified Data.Text             as T
 import qualified Data.Text.Encoding             as T
 import qualified Data.Text.Lazy        as TL
-import qualified Data.ByteString.Lazy        as BL
 import qualified Data.Text.Lazy.Encoding    as TL
 import qualified Data.Map.Strict as Map
 import qualified Data.Sequence as Seq
@@ -28,14 +27,14 @@ import qualified DynamoDbEventStore.GlobalFeedWriter as GlobalFeedWriter
 import           DynamoDbEventStore.GlobalFeedWriter (FeedEntry())
 import           DynamoDbEventStore.DynamoCmdInterpreter
 
-type UploadItem = (T.Text,Int64,[EventData])
+type UploadItem = (Text,Int64,[EventData])
 newtype UploadList = UploadList [UploadItem] deriving (Show)
 
 -- Generateds a list of length between 1 and maxLength
 cappedList :: QC.Arbitrary a => Int -> QC.Gen [a]
 cappedList maxLength = QC.listOf1 QC.arbitrary `QC.suchThat` ((< maxLength) . length)
 
-newtype EventData = EventData T.Text deriving Show
+newtype EventData = EventData Text deriving Show
 instance QC.Arbitrary EventData where
   arbitrary = EventData . T.pack <$> QC.arbitrary
   shrink (EventData xs) = EventData . T.pack <$> QC.shrink (T.unpack xs)
@@ -59,11 +58,11 @@ instance QC.Arbitrary UploadList where
     (streamWithEvents :: [(StreamId, [[EventData]])]) <- mapM (\s -> puts >>= (\p -> return (s,p))) streams
     return $ UploadList $ numberedPuts streamWithEvents 
     where
-      numberedPuts :: [(StreamId, [[EventData]])] -> [(T.Text, Int64, [EventData])]
+      numberedPuts :: [(StreamId, [[EventData]])] -> [(Text, Int64, [EventData])]
       numberedPuts xs = (\(StreamId s,d) -> banana s d) =<< xs
-      banana :: T.Text -> [[EventData]] -> [(T.Text,Int64, [EventData])]
+      banana :: Text -> [[EventData]] -> [(Text,Int64, [EventData])]
       banana streamId xs = reverse $ evalState (foldM (apple streamId) [] xs) (-1)
-      apple :: T.Text -> [(T.Text,Int64, [EventData])] -> [EventData] -> State Int64 [(T.Text,Int64, [EventData])]
+      apple :: Text -> [(Text,Int64, [EventData])] -> [EventData] -> State Int64 [(Text,Int64, [EventData])]
       apple streamId xs x = do
         (eventNumber :: Int64) <- get
         put (eventNumber + (fromIntegral . length) x)
@@ -73,32 +72,32 @@ instance QC.Arbitrary UploadList where
         (p :: [()]) <- cappedList 100
         mapM (\_ -> cappedList 10) p
 
-writeEvent :: (T.Text, Int64, [EventData]) -> DynamoCmdM (Either Text EventWriteResult)
+writeEvent :: (Text, Int64, [EventData]) -> DynamoCmdM (Either Text EventWriteResult)
 writeEvent (stream, eventNumber, eventBodies) = 
   let 
     eventEntries = (\(EventData body) -> EventEntry (TL.encodeUtf8 . TL.fromStrict $ body) "") <$> eventBodies
   in
     postEventRequestProgram (PostEventRequest stream (Just eventNumber) eventEntries)
 
-publisher :: [(T.Text,Int64,[EventData])] -> DynamoCmdM ()
+publisher :: [(Text,Int64,[EventData])] -> DynamoCmdM ()
 publisher xs = forM_ xs writeEvent
 
-globalFeedFromUploadList :: [UploadItem] -> Map.Map T.Text (Seq.Seq Int64)
+globalFeedFromUploadList :: [UploadItem] -> Map.Map Text (Seq.Seq Int64)
 globalFeedFromUploadList =
   foldl' acc Map.empty
   where
-    acc :: Map.Map T.Text (Seq.Seq Int64) -> UploadItem -> Map.Map T.Text (Seq.Seq Int64)
+    acc :: Map.Map Text (Seq.Seq Int64) -> UploadItem -> Map.Map Text (Seq.Seq Int64)
     acc s (stream, expectedVersion, bodies) =
       let 
         eventVersions = Seq.fromList $ take (length bodies) [expectedVersion + 1..]
         newValue = maybe eventVersions (Seq.>< eventVersions) $ Map.lookup stream s
       in Map.insert stream newValue s
 
-globalRecordedEventListToMap :: [EventKey] -> Map.Map T.Text (Seq.Seq Int64)
+globalRecordedEventListToMap :: [EventKey] -> Map.Map Text (Seq.Seq Int64)
 globalRecordedEventListToMap = 
   foldl' acc Map.empty
   where
-    acc :: Map.Map T.Text (Seq.Seq Int64) -> EventKey -> Map.Map T.Text (Seq.Seq Int64)
+    acc :: Map.Map Text (Seq.Seq Int64) -> EventKey -> Map.Map Text (Seq.Seq Int64)
     acc s (EventKey (StreamId stream, number)) =
       let newValue = maybe (Seq.singleton number) (Seq.|> number) $ Map.lookup stream s
       in Map.insert stream newValue s
@@ -130,7 +129,7 @@ prop_ConflictingWritesWillNotSucceed =
        sumIfSuccess s (Right (Right WriteSuccess)) = s + 1
        sumIfSuccess s _            = s
 
-getStreamRecordedEvents :: T.Text -> DynamoCmdM [RecordedEvent]
+getStreamRecordedEvents :: Text -> DynamoCmdM [RecordedEvent]
 getStreamRecordedEvents streamId = do
    recordedEvents <- concat <$> unfoldrM getEventSet Nothing 
    return $ reverse recordedEvents
@@ -146,19 +145,19 @@ getStreamRecordedEvents streamId = do
         else 
           return $ Just (recordedEvents, (Just . (\x -> x - 1) . recordedEventNumber . last) recordedEvents)
 
-readEachStream :: [UploadItem] -> DynamoCmdM (Map.Map T.Text (Seq.Seq Int64))
+readEachStream :: [UploadItem] -> DynamoCmdM (Map.Map Text (Seq.Seq Int64))
 readEachStream uploadItems = 
   foldM readStream Map.empty streams
   where 
-    readStream :: Map.Map T.Text (Seq.Seq Int64) -> T.Text -> DynamoCmdM (Map.Map T.Text (Seq.Seq Int64))
+    readStream :: Map.Map Text (Seq.Seq Int64) -> Text -> DynamoCmdM (Map.Map Text (Seq.Seq Int64))
     readStream m streamId = do
       eventIds <- getEventIds streamId
       return $ Map.insert streamId eventIds m
-    getEventIds :: T.Text -> DynamoCmdM (Seq.Seq Int64)
+    getEventIds :: Text -> DynamoCmdM (Seq.Seq Int64)
     getEventIds streamId = do
        recordedEvents <- getStreamRecordedEvents streamId
        return $ Seq.fromList $ recordedEventNumber <$> recordedEvents
-    streams :: [T.Text]
+    streams :: [Text]
     streams = (\(stream, _, _) -> stream) <$> uploadItems
 
 prop_EventsShouldAppearInTheirSteamsInOrder :: UploadList -> QC.Property
@@ -172,10 +171,10 @@ prop_EventsShouldAppearInTheirSteamsInOrder (UploadList uploadList) =
        check (_, testState) = runReadEachStream testState === (Right $ globalFeedFromUploadList uploadList)
        runReadEachStream = evalProgram "readEachStream" (readEachStream uploadList)
 
-eventDataToByteString :: EventData -> BL.ByteString
+eventDataToByteString :: EventData -> LByteString
 eventDataToByteString (EventData ed) = (TL.encodeUtf8 . TL.fromStrict) ed
 
-type EventWriter = StreamId -> [(T.Text, BL.ByteString)] -> DynamoCmdM ()
+type EventWriter = StreamId -> [(Text, LByteString)] -> DynamoCmdM ()
 
 writeEventsWithExplicitExpectedVersions :: EventWriter
 writeEventsWithExplicitExpectedVersions (StreamId streamId) events =
@@ -195,7 +194,7 @@ writeEventsWithNoExpectedVersions (StreamId streamId) events =
       result <- postEventRequestProgram (PostEventRequest streamId Nothing [EventEntry ed (EventType et)])
       when (result /= Right WriteSuccess) $ error "Bad write result"
 
-writeThenRead :: StreamId -> [(T.Text, BL.ByteString)] -> EventWriter -> DynamoCmdM [RecordedEvent]
+writeThenRead :: StreamId -> [(Text, LByteString)] -> EventWriter -> DynamoCmdM [RecordedEvent]
 writeThenRead (StreamId streamId) events writer = do
   writer (StreamId streamId) events
   getStreamRecordedEvents streamId
