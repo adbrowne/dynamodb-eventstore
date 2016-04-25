@@ -182,6 +182,9 @@ getPreviousEntryEventNumber (DynamoKey streamId eventNumber) = do
     getEventNumber [] = error "Could not find previous event"
     getEventNumber ((DynamoReadResult (DynamoKey _key en) _version _values):_) = en
 
+feedEntriesContainsEntry :: StreamId -> Int64 -> Seq.Seq FeedEntry -> Bool
+feedEntriesContainsEntry streamId eventNumber = any (\(FeedEntry sId evN _) -> sId == streamId && evN == eventNumber)
+
 updateGlobalFeed :: DynamoKey -> DynamoCmdM ()
 updateGlobalFeed itemKey@DynamoKey { dynamoKeyKey = itemHashKey, dynamoKeyEventNumber = itemEventNumber } = do
   log' Debug ("updateGlobalFeed " <> show itemKey)
@@ -191,14 +194,19 @@ updateGlobalFeed itemKey@DynamoKey { dynamoKeyKey = itemHashKey, dynamoKeyEventN
   let itemIsPaged = entryIsPaged item
   logIf itemIsPaged Debug ("itemIsPaged" <> show itemKey)
   unless itemIsPaged $ do
-    let itemEventCount = entryEventCount item
-    let feedEntry = itemToJsonByteString (feedPageEntries currentPage |> FeedEntry streamId itemEventNumber itemEventCount)
-    previousEntryEventNumber <- getPreviousEntryEventNumber itemKey
-    when (previousEntryEventNumber > -1) (updateGlobalFeed itemKey { dynamoKeyEventNumber = previousEntryEventNumber })
-    let version = feedPageVersion currentPage + 1
-    pageResult <- dynamoWriteWithRetry (getPageDynamoKey (feedPageNumber currentPage)) (HM.singleton Constants.pageBodyKey (set avB (Just feedEntry) attributeValue)) version
-    onPageResult (feedPageNumber currentPage) pageResult
-    return ()
+    let currentPageFeedEntries = feedPageEntries currentPage
+    let pageNumber = feedPageNumber currentPage
+    if feedEntriesContainsEntry streamId itemEventNumber currentPageFeedEntries then
+      void $ setEventEntryPage itemKey pageNumber
+    else do
+      let itemEventCount = entryEventCount item
+      let feedEntry = itemToJsonByteString (currentPageFeedEntries |> FeedEntry streamId itemEventNumber itemEventCount)
+      previousEntryEventNumber <- getPreviousEntryEventNumber itemKey
+      when (previousEntryEventNumber > -1) (updateGlobalFeed itemKey { dynamoKeyEventNumber = previousEntryEventNumber })
+      let version = feedPageVersion currentPage + 1
+      pageResult <- dynamoWriteWithRetry (getPageDynamoKey (feedPageNumber currentPage)) (HM.singleton Constants.pageBodyKey (set avB (Just feedEntry) attributeValue)) version
+      onPageResult pageNumber pageResult
+      return ()
   return ()
   where
     onPageResult :: Int -> DynamoWriteResult -> DynamoCmdM ()
