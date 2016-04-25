@@ -102,15 +102,21 @@ data EventWriteResult = WriteSuccess | WrongExpectedVersion | EventExists | Writ
 
 ensureExpectedVersion :: DynamoKey -> DynamoCmdM Bool
 ensureExpectedVersion (DynamoKey _streamId (-1)) = return True
-ensureExpectedVersion (DynamoKey streamId eventNumber) = do
-  let previousDynamoKey = DynamoKey streamId eventNumber
-  result <- readFromDynamo' previousDynamoKey
-  return $ isJust result 
+ensureExpectedVersion (DynamoKey streamId expectedEventNumber) = do
+  result <- queryBackward' streamId 1 (Just expectedEventNumber)
+  return $ checkEventNumber result
+  where 
+    checkEventNumber [] = False
+    checkEventNumber ((readResult@(DynamoReadResult (DynamoKey _key eventNumber) _version values)):_) = 
+      let 
+        eventCount = GlobalFeedWriter.entryEventCount readResult
+      in eventNumber + (fromIntegral eventCount) - 1 == expectedEventNumber
+
 
 postEventRequestProgram :: PostEventRequest -> DynamoCmdM EventWriteResult
 postEventRequestProgram (PostEventRequest _sId _ev []) = return WriteSuccess -- todo
 postEventRequestProgram (PostEventRequest sId ev eventEntries) = do
-  dynamoKeyOrError <- getDynamoKey sId ev (length eventEntries)
+  dynamoKeyOrError <- getDynamoKey sId ev
   case dynamoKeyOrError of Left a -> return a
                            Right dynamoKey -> writeMyEvent dynamoKey
   where
@@ -122,19 +128,19 @@ postEventRequestProgram (PostEventRequest sId ev eventEntries) = do
       writeResult <- GlobalFeedWriter.dynamoWriteWithRetry dynamoKey values 0 
       return $ toEventResult writeResult
     dynamoReadResultToEventNumber (DynamoReadResult (DynamoKey _key eventNumber) _version _values) = eventNumber
-    getDynamoKey :: T.Text -> Maybe Int64 -> Int -> DynamoCmdM (Either EventWriteResult DynamoKey)
-    getDynamoKey streamId Nothing eventCount = do
+    getDynamoKey :: T.Text -> Maybe Int64 -> DynamoCmdM (Either EventWriteResult DynamoKey)
+    getDynamoKey streamId Nothing = do
       let dynamoHashKey = Constants.streamDynamoKeyPrefix <> streamId
       readResults <- queryBackward' dynamoHashKey 1 Nothing
       let lastEvent = headMay readResults
       let lastEventNumber = maybe (-1) dynamoReadResultToEventNumber lastEvent
-      let eventVersion = lastEventNumber + (fromIntegral eventCount)
+      let eventVersion = lastEventNumber + 1
       return $ Right $ DynamoKey dynamoHashKey eventVersion
-    getDynamoKey streamId (Just expectedVersion) eventCount = do
+    getDynamoKey streamId (Just expectedVersion) = do
       let dynamoHashKey = Constants.streamDynamoKeyPrefix <> streamId
       expectedVersionOk <- ensureExpectedVersion $ DynamoKey dynamoHashKey expectedVersion
       if expectedVersionOk then do
-        let eventVersion = expectedVersion + (fromIntegral eventCount)
+        let eventVersion = expectedVersion + 1
         return $ Right $ DynamoKey dynamoHashKey eventVersion
       else 
         return $ Left WrongExpectedVersion
@@ -163,10 +169,10 @@ getReadStreamRequestProgram (ReadStreamRequest sId startEventNumber) = do
     toRecordedEvent (DynamoReadResult key _version values) = fromEitherError "toRecordedEvent" $ do
       eventBody <- readField fieldBody avB values 
       (eventEntries :: [EventEntry]) <- Serialize.decode eventBody
-      let lastEventNumber = dynamoKeyEventNumber key
-      let eventEntriesWithEventNumber = zip [lastEventNumber, lastEventNumber -1..] (reverse eventEntries)
+      let firstEventNumber = dynamoKeyEventNumber key
+      let eventEntriesWithEventNumber = zip [firstEventNumber..] eventEntries
       let recordedEvents = fmap (\(eventNumber, EventEntry {..}) -> RecordedEvent sId eventNumber (BL.toStrict eventEntryData) (eventTypeToText eventEntryType)) eventEntriesWithEventNumber
-      return recordedEvents
+      return $ reverse recordedEvents
 
 getPageDynamoKey :: Int -> DynamoKey 
 getPageDynamoKey pageNumber =
@@ -175,7 +181,7 @@ getPageDynamoKey pageNumber =
 
 feedEntryToEventKeys :: GlobalFeedWriter.FeedEntry -> [EventKey]
 feedEntryToEventKeys GlobalFeedWriter.FeedEntry { GlobalFeedWriter.feedEntryStream = streamId, GlobalFeedWriter.feedEntryNumber = eventNumber, GlobalFeedWriter.feedEntryCount = entryCount } = 
-  (\number -> EventKey(streamId, number)) <$> (reverse $ take entryCount [eventNumber,eventNumber-1..])
+  (\number -> EventKey(streamId, number)) <$> (take entryCount [eventNumber..])
 
 fromJustError :: String -> Maybe a -> a
 fromJustError msg Nothing  = error msg

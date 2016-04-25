@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module DynamoDbEventStore.GlobalFeedWriter (main, FeedEntry(FeedEntry), feedEntryStream, feedEntryNumber, feedEntryCount, dynamoWriteWithRetry) where
+module DynamoDbEventStore.GlobalFeedWriter (main, FeedEntry(FeedEntry), feedEntryStream, feedEntryNumber, feedEntryCount, dynamoWriteWithRetry, entryEventCount) where
 
 import           Safe
 import           Control.Monad
@@ -179,6 +179,15 @@ setEventEntryPage key pageNumber = do
 itemToJsonByteString :: Aeson.ToJSON a => a -> BS.ByteString
 itemToJsonByteString = BL.toStrict . Aeson.encode . Aeson.toJSON
 
+getPreviousEntryEventNumber :: DynamoKey -> DynamoCmdM Int64
+getPreviousEntryEventNumber (DynamoKey _streamId (0)) = return (-1)
+getPreviousEntryEventNumber (DynamoKey streamId eventNumber) = do
+  result <- queryBackward' streamId 1 (Just $ eventNumber - 1)
+  return $ getEventNumber result
+  where 
+    getEventNumber [] = error "Could not find previous event"
+    getEventNumber ((DynamoReadResult (DynamoKey _key en) _version _values):_) = en
+
 updateGlobalFeed :: DynamoKey -> DynamoCmdM ()
 updateGlobalFeed itemKey@DynamoKey { dynamoKeyKey = itemHashKey, dynamoKeyEventNumber = itemEventNumber } = do
   log' Debug ("updateGlobalFeed " <> toText itemKey)
@@ -190,7 +199,7 @@ updateGlobalFeed itemKey@DynamoKey { dynamoKeyKey = itemHashKey, dynamoKeyEventN
   unless itemIsPaged $ do
     let itemEventCount = entryEventCount item
     let feedEntry = itemToJsonByteString (feedPageEntries currentPage |> FeedEntry streamId itemEventNumber itemEventCount)
-    let previousEntryEventNumber = itemEventNumber - fromIntegral itemEventCount
+    previousEntryEventNumber <- getPreviousEntryEventNumber itemKey
     when (previousEntryEventNumber > -1) (updateGlobalFeed itemKey { dynamoKeyEventNumber = previousEntryEventNumber })
     let version = feedPageVersion currentPage + 1
     pageResult <- dynamoWriteWithRetry (getPageDynamoKey (feedPageNumber currentPage)) (HM.singleton Constants.pageBodyKey (set avB (Just feedEntry) attributeValue)) version

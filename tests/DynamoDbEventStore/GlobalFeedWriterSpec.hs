@@ -5,10 +5,9 @@
 
 module DynamoDbEventStore.GlobalFeedWriterSpec where
 
+import qualified Data.Foldable as Foldable
 import           Data.List
 import           Data.Int
-import           Data.Monoid ((<>))
-import           TextShow
 import           Test.Tasty
 import           Test.Tasty.QuickCheck((===),testProperty)
 import qualified Test.Tasty.QuickCheck as QC
@@ -128,8 +127,10 @@ prop_ConflictingWritesWillNotSucceed =
       ]
   in QC.forAll (runPrograms programs) check
      where
-       check (_, testState) = length (readStreamProgram testState) === 2
-       readStreamProgram = evalProgram "ReadEvents" (getStreamRecordedEvents "MyStream")
+       check (writeResults, _testState) = (Foldable.foldl' sumIfSuccess 0 writeResults) === 1
+       sumIfSuccess :: Int -> Either ProgramError EventWriteResult -> Int
+       sumIfSuccess s (Right WriteSuccess) = s + 1
+       sumIfSuccess s _            = s
 
 getStreamRecordedEvents :: T.Text -> DynamoCmdM [RecordedEvent]
 getStreamRecordedEvents streamId = do
@@ -138,7 +139,7 @@ getStreamRecordedEvents streamId = do
    where
     getEventSet :: Maybe Int64 -> DynamoCmdM (Maybe ([RecordedEvent], Maybe Int64)) 
     getEventSet startEvent = 
-      if startEvent == Just (-1) then
+      if ((< 0) <$> startEvent) == Just True then
         return Nothing
       else do
         recordedEvents <- getReadStreamRequestProgram (ReadStreamRequest streamId startEvent)
@@ -273,22 +274,22 @@ errorThrownIfTryingToWriteAnEventInAMultipleGap =
     multiPostEventRequest = PostEventRequest { perStreamId = streamId, perExpectedVersion = Just (-1), perEvents = [EventEntry (TL.encodeUtf8 "My Content") "MyEvent", EventEntry (TL.encodeUtf8 "My Content2") "MyEvent2"] }
     subsequentPostEventRequest = PostEventRequest { perStreamId = streamId, perExpectedVersion = Just (-1), perEvents = [EventEntry (TL.encodeUtf8 "My Content") "MyEvent"] }
     result = evalProgram "writeEvents" (postEventRequestProgram multiPostEventRequest >> postEventRequestProgram subsequentPostEventRequest) emptyTestState
-  in assertEqual "Should return failure" (Right WrongExpectedVersion) result
+  in assertEqual "Should return failure" (Right EventExists) result
 
 tests :: [TestTree]
 tests = [
+      testProperty "Can round trip FeedEntry via JSON" (\(a :: FeedEntry) -> (Aeson.decode . Aeson.encode) a === Just a),
       testProperty "Global Feed preserves stream order" prop_EventShouldAppearInGlobalFeedInStreamOrder,
       testProperty "Each event appears in it's correct stream" prop_EventsShouldAppearInTheirSteamsInOrder,
       testProperty "No Write Request can cause a fatal error in global feed writer" prop_NoWriteRequestCanCausesAFatalErrorInGlobalFeedWriter,
       testProperty "Conflicting writes will not succeed" prop_ConflictingWritesWillNotSucceed,
       --testProperty "The result of multiple writers matches what they see" todo,
       --testProperty "Get stream items contains event lists without duplicates or gaps" todo,
-      testCase "Written Events Appear In Read Stream - explicit expected version" $ writtenEventsAppearInReadStream writeEventsWithExplicitExpectedVersions,
-      testCase "Written Events Appear In Read Stream - explicit expected version" $ writtenEventsAppearInReadStream writeEventsWithNoExpectedVersions,
-      testCase "Cannot write event if previous one does not exist" cannotWriteEventsOutOfOrder,
-      testCase "Can write first event" canWriteFirstEvent,
-      testCase "Can write multiple events" canWriteMultipleEvents,
-      testCase "Error thrown if trying to write an event in a multiple gap" errorThrownIfTryingToWriteAnEventInAMultipleGap,
-      testCase "EventNumbers are calculated when there are multiple events" eventNumbersCorrectForMultipleEvents,
-      testProperty "Can round trip FeedEntry via JSON" (\(a :: FeedEntry) -> (Aeson.decode . Aeson.encode) a === Just a)
+      testCase "Unit - Written Events Appear In Read Stream - explicit expected version" $ writtenEventsAppearInReadStream writeEventsWithExplicitExpectedVersions,
+      testCase "Unit - Written Events Appear In Read Stream - explicit expected version" $ writtenEventsAppearInReadStream writeEventsWithNoExpectedVersions,
+      testCase "Unit - Cannot write event if previous one does not exist" cannotWriteEventsOutOfOrder,
+      testCase "Unit - Can write first event" canWriteFirstEvent,
+      testCase "Unit - Can write multiple events" canWriteMultipleEvents,
+      testCase "Unit - Error thrown if trying to write an event in a multiple gap" errorThrownIfTryingToWriteAnEventInAMultipleGap,
+      testCase "Unit - EventNumbers are calculated when there are multiple events" eventNumbersCorrectForMultipleEvents
   ]
