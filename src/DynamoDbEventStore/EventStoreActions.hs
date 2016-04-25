@@ -187,10 +187,13 @@ maybeToException :: (MonadError e m) => e -> Maybe a -> m a
 maybeToException err Nothing  = throwError err
 maybeToException _   (Just a) = return a
 
+jsonDecode :: (Aeson.FromJSON a, MonadError Text m) => ByteString -> m a
+jsonDecode a = eitherToError $ over _Left T.pack $ Aeson.eitherDecodeStrict a
+
 readPageKeys :: DynamoReadResult -> UserProgramStack [EventKey]
 readPageKeys (DynamoReadResult _key _version values) = do
    body <- maybeToException "Error reading pageBody" $ view (ix Constants.pageBodyKey . avB) values 
-   feedEntries <- eitherToError $ over _Left T.pack $ Aeson.eitherDecodeStrict body
+   feedEntries <- jsonDecode body
    return $ feedEntries >>= feedEntryToEventKeys
 
 getPagesAfter :: Int -> Producer EventKey UserProgramStack ()
