@@ -31,6 +31,7 @@ library
                        safe >= 0.3,
                        text >= 1.0,
                        cereal,
+                       either,
                        hashable,
                        errors,
                        containers >= 0.5,

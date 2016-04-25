@@ -18,6 +18,7 @@ module DynamoDbEventStore.EventStoreActions(
   getReadStreamRequestProgram,
   getReadAllRequestProgram) where
 
+import           Data.Either.Combinators
 import           Control.Monad.Except
 import           BasicPrelude
 import           Control.Lens hiding ((.=))
@@ -182,21 +183,23 @@ feedEntryToEventKeys :: GlobalFeedWriter.FeedEntry -> [EventKey]
 feedEntryToEventKeys GlobalFeedWriter.FeedEntry { GlobalFeedWriter.feedEntryStream = streamId, GlobalFeedWriter.feedEntryNumber = eventNumber, GlobalFeedWriter.feedEntryCount = entryCount } = 
   (\number -> EventKey(streamId, number)) <$> (take entryCount [eventNumber..])
 
-fromJustError :: String -> Maybe a -> a
-fromJustError msg Nothing  = error msg
-fromJustError _   (Just x) = x
+maybeToException :: (MonadError e m) => e -> Maybe a -> m a
+maybeToException err Nothing  = throwError err
+maybeToException _   (Just a) = return a
 
-readPageKeys :: DynamoReadResult -> [EventKey]
-readPageKeys (DynamoReadResult _key _version values) = fromJustError "fromJust readPageKeys" $ do
-   body <- view (ix Constants.pageBodyKey . avB) values 
-   feedEntries <- Aeson.decodeStrict body
+readPageKeys :: DynamoReadResult -> UserProgramStack [EventKey]
+readPageKeys (DynamoReadResult _key _version values) = do
+   body <- maybeToException "Error reading pageBody" $ view (ix Constants.pageBodyKey . avB) values 
+   feedEntries <- eitherToError $ over _Left T.pack $ Aeson.eitherDecodeStrict body
    return $ feedEntries >>= feedEntryToEventKeys
 
-getPagesAfter :: Int -> Producer EventKey DynamoCmdM ()
+getPagesAfter :: Int -> Producer EventKey UserProgramStack ()
 getPagesAfter startPage = do
   result <- lift $ readFromDynamo' (getPageDynamoKey startPage)
-  case result of (Just entries) -> forM_ (readPageKeys entries) yield >> getPagesAfter (startPage + 1)
+  case result of (Just entries) -> do
+                   pageKeys <- lift $ readPageKeys entries
+                   forM_ pageKeys yield >> getPagesAfter (startPage + 1)
                  Nothing        -> return ()
 
-getReadAllRequestProgram :: ReadAllRequest -> DynamoCmdM [EventKey]
-getReadAllRequestProgram ReadAllRequest = P.toListM (getPagesAfter 0)
+getReadAllRequestProgram :: ReadAllRequest -> DynamoCmdM (Either Text [EventKey])
+getReadAllRequestProgram ReadAllRequest = runExceptT $ P.toListM (getPagesAfter 0)
