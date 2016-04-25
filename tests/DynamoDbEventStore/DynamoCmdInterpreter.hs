@@ -7,11 +7,9 @@
 
 module DynamoDbEventStore.DynamoCmdInterpreter(ProgramError(FatalError), runPrograms, runProgramGenerator, runProgram, emptyTestState, evalProgram, execProgram, LoopState(..)) where
 
+import           BasicPrelude
+import qualified Prelude as P
 import           Control.Lens
-import           Data.Int
-import           Data.List (sortOn)
-import           Data.Monoid
-import           Data.Foldable
 import           Control.Monad.State
 import           Data.Functor (($>))
 import qualified Data.HashMap.Lazy as HM
@@ -53,9 +51,9 @@ data TestState = TestState {
   _testStateLog :: Seq.Seq T.Text
 } deriving (Eq)
 
-instance Show TestState where
+instance P.Show TestState where
   show a = 
-    "Dynamo: \n" <> show (_testStateDynamo a) <> "\n" <> "Log: \n" <> foldl' (\s l -> s <> "\n" <> show l) "" (_testStateLog a)
+    "Dynamo: \n" <> P.show (_testStateDynamo a) <> "\n" <> "Log: \n" <> foldl' (\s l -> s <> "\n" <> P.show l) "" (_testStateLog a)
 
 $(makeLenses ''LoopState)
 
@@ -85,9 +83,6 @@ addLog m =
   let
     appendMessage = flip (|>) m
   in (loopStateTestState . testStateLog) %= appendMessage
-
-addLogS :: String -> InterpreterApp m a ()
-addLogS = addLog . T.pack
 
 class Monad m => RandomFailure m where
   checkFail :: Double -> m Bool 
@@ -123,10 +118,10 @@ writeToDynamo key values version next =
       | cv == v - 1 = performWrite v
       | otherwise = versionFailure v (Just cv)
     versionFailure newVersion currentVersion = do
-       _ <- addLogS $ "Wrong version writing: " ++ show newVersion ++ " current: " ++ show currentVersion
+       _ <- addLog $ "Wrong version writing: " ++ show newVersion ++ " current: " ++ show currentVersion
        return $ next DynamoWriteWrongVersion
     performWrite newVersion = do
-       _ <- addLogS $ "Performing write: " ++ show key ++ " " ++ show values ++ " " ++ show version
+       _ <- addLog $ "Performing write: " ++ show key ++ " " ++ show values ++ " " ++ show version
        _ <- loopStateTestState . testStateDynamo %= Map.insert key (newVersion, values)
        return $ next DynamoWriteSuccess
 

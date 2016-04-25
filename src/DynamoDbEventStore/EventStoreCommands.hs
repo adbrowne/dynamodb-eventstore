@@ -28,14 +28,12 @@ module DynamoDbEventStore.EventStoreCommands(
   DynamoReadResult(..),
   DynamoValues
   ) where
-
-import           Control.Monad
+import           BasicPrelude
 import           Control.Monad.Free.Church
 import           Control.Monad.Free.TH
 
 import           Data.Aeson
 import qualified Data.ByteString       as BS
-import           Data.Int
 import qualified Data.Text             as T
 import qualified Data.Text.Encoding    as T
 import           GHC.Generics
@@ -43,7 +41,6 @@ import           GHC.Generics
 import           TextShow.TH
 import qualified Data.HashMap.Strict     as HM
 import qualified Test.QuickCheck as QC
-import           Data.Hashable
 
 import           Network.AWS.DynamoDB
 

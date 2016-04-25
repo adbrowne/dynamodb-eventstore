@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 module WebserverSpec (postEventSpec, getStreamSpec) where
 
+import           BasicPrelude
 import           Test.Tasty.Hspec
 import           Network.Wai.Test
 import           Network.Wai

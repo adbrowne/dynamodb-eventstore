@@ -3,6 +3,7 @@
 
 module DynamoCmdAmazonkaTests where
 
+import           BasicPrelude
 import qualified Data.HashMap.Lazy       as HM
 import qualified Data.Text               as T
 import           Network.AWS.DynamoDB

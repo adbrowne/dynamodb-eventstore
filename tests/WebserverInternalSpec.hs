@@ -2,15 +2,15 @@
 module WebserverInternalSpec (spec) where
 
 
+import           BasicPrelude
 import           Test.Tasty.Hspec
 import           Test.Tasty.QuickCheck
-import           Data.Int
 import qualified DynamoDbEventStore.Webserver as W
 import qualified Data.Text.Lazy as TL
 import           Text.Read (readMaybe)
 
 showText :: Show a => a -> TL.Text
-showText = TL.pack . show
+showText = TL.fromStrict . show
 
 spec :: Spec
 spec =

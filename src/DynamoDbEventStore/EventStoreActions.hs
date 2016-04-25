@@ -17,16 +17,13 @@ module DynamoDbEventStore.EventStoreActions(
   getReadStreamRequestProgram,
   getReadAllRequestProgram) where
 
+import           BasicPrelude
 import           Control.Lens hiding ((.=))
 import           Safe
-import           Control.Monad (forM_)
 import           TextShow
 import           Pipes
 import qualified Pipes.Prelude as P
 import qualified Data.ByteString.Lazy as BL
-import           Data.Int
-import           Data.String
-import           Data.Monoid
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.Lazy as TL

@@ -3,6 +3,7 @@
 
 module Main where
 
+import BasicPrelude
 import Network.Wreq
 import Control.Lens
 import           System.Random
@@ -12,7 +13,7 @@ import           Data.Aeson
 main :: IO ()
 main = do
   streamIdNum :: Int <- getStdRandom (randomR (1,9999999999))
-  let streamId = "foo" ++ (show streamIdNum) -- random stream
+  let streamId = "foo" ++ ((T.unpack . show) streamIdNum) -- random stream
   let streamUri = "http://localhost:3000/streams/" ++ streamId
   let opts = defaults
                  & header "ES-ExpectedVersion" .~ ["0"]

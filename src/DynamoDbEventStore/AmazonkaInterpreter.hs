@@ -6,24 +6,20 @@
 
 module DynamoDbEventStore.AmazonkaInterpreter (runProgram, buildTable, runLocalDynamo, evalProgram, doesTableExist) where
 
+import           BasicPrelude
 import           Control.Concurrent (threadDelay)
-import           Control.Monad.IO.Class
-import           Data.Int
-import           Data.Typeable
 import           Control.Exception.Lens
-import           Data.Monoid
 import           Control.Monad.Free.Church
 import           Control.Monad.Catch
 import qualified Data.HashMap.Strict     as HM
 import           Control.Lens
-import           Data.Maybe              (fromJust, isJust)
+import           Data.Maybe              (fromJust)
 import           Data.List.NonEmpty      (NonEmpty (..))
 import qualified Data.Text               as T
 import           TextShow
 import qualified DynamoDbEventStore.Constants as Constants
 import           System.Random
 import           DynamoDbEventStore.EventStoreCommands
-import qualified Safe
 
 import Network.AWS
 import Network.AWS.Waiter
@@ -50,10 +46,6 @@ getDynamoKey hashKey rangeKey =
 getDynamoKeyForEvent :: DynamoKey -> HM.HashMap T.Text AttributeValue
 getDynamoKeyForEvent (DynamoKey streamId eventNumber) =
     getDynamoKey streamId eventNumber
-
--- from http://haddock.stackage.org/lts-3.2/basic-prelude-0.5.0/src/BasicPrelude.html#readMay
-readMay :: Read a => T.Text -> Maybe a
-readMay = Safe.readMay . T.unpack
 
 itemAttribute :: T.Text -> Lens' AttributeValue (Maybe v) -> v -> (T.Text, AttributeValue)
 itemAttribute key l value =
@@ -131,7 +123,7 @@ runCmd tn (ScanNeedsPaging' n) =
              scan tn
              & set sIndexName (Just unpagedIndexName)
         n $ fmap toEntry (view srsItems resp)
-runCmd _tn (FatalError' message) = error ("FatalError': " <> show message)
+runCmd _tn (FatalError' message) = error $ T.unpack ("FatalError': " <> show message)
 runCmd _tn (SetPulseStatus' _ n) = n
 runCmd _tn (Log' _level msg n) = do
   liftIO $ print msg
@@ -170,7 +162,7 @@ doesTableExist tableName =
 evalProgram :: DynamoCmdM a -> IO a
 evalProgram program = do
   tableNameId :: Int <- getStdRandom (randomR (1,9999999999))
-  let tableName = T.pack $ "testtable-" ++ show tableNameId
+  let tableName = "testtable-" ++ show tableNameId
   runLocalDynamo $ buildTable tableName
   runLocalDynamo $ runProgram tableName program
 

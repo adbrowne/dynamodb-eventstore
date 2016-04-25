@@ -4,14 +4,13 @@
 {-# LANGUAGE FlexibleContexts #-}
 module Main where
 
+import           BasicPrelude
 import qualified Data.Text.Lazy as TL
 import           Network.Wai.Handler.Warp
 import           Web.Scotty
 import           DynamoDbEventStore.Webserver (app)
-import           Control.Monad.IO.Class (liftIO, MonadIO)
 import           Control.Monad.Trans.Control (MonadBaseControl)
 import           Control.Monad.Catch (MonadThrow)
-import           Control.Monad (when, (>=>))
 import           Control.Concurrent
 import           DynamoDbEventStore.AmazonkaInterpreter
 import           DynamoDbEventStore.EventStoreActions
@@ -43,7 +42,7 @@ runEventStoreAction :: (forall a. DynamoCmdM a -> IO a) -> EventStoreAction -> A
 runEventStoreAction runner (PostEvent req) = do
   let program = postEventRequestProgram req
   a <- liftIO $ runner program
-  (html . TL.pack . show) a
+  (html . TL.fromStrict . show) a
 runEventStoreAction runner (ReadStream req) = do
   let program = getReadStreamRequestProgram req
   a <- liftIO $ runner program
@@ -53,7 +52,7 @@ runEventStoreAction runner (ReadAll req) = do
   a <- liftIO $ runner program
   json a
 runEventStoreAction _ a = 
-  (html . TL.pack . show) a
+  (html . TL.fromStrict . show) a
 
 data Config = Config 
   { configTableName :: String,

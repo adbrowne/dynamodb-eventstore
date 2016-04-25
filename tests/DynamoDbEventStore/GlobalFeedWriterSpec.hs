@@ -5,9 +5,7 @@
 
 module DynamoDbEventStore.GlobalFeedWriterSpec where
 
-import qualified Data.Foldable as Foldable
-import           Data.List
-import           Data.Int
+import           BasicPrelude
 import           Test.Tasty
 import           Test.Tasty.QuickCheck((===),testProperty)
 import qualified Test.Tasty.QuickCheck as QC
@@ -127,7 +125,7 @@ prop_ConflictingWritesWillNotSucceed =
       ]
   in QC.forAll (runPrograms programs) check
      where
-       check (writeResults, _testState) = (Foldable.foldl' sumIfSuccess 0 writeResults) === 1
+       check (writeResults, _testState) = (foldl' sumIfSuccess 0 writeResults) === 1
        sumIfSuccess :: Int -> Either ProgramError EventWriteResult -> Int
        sumIfSuccess s (Right WriteSuccess) = s + 1
        sumIfSuccess s _            = s
