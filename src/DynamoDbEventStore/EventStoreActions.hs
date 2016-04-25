@@ -27,7 +27,6 @@ import qualified Data.ByteString.Lazy as BL
 import           Data.Int
 import           Data.String
 import           Data.Monoid
-import           Data.Maybe (isJust)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.Lazy as TL
@@ -107,7 +106,7 @@ ensureExpectedVersion (DynamoKey streamId expectedEventNumber) = do
   return $ checkEventNumber result
   where 
     checkEventNumber [] = False
-    checkEventNumber ((readResult@(DynamoReadResult (DynamoKey _key eventNumber) _version values)):_) = 
+    checkEventNumber ((readResult@(DynamoReadResult (DynamoKey _key eventNumber) _version _values)):_) = 
       let 
         eventCount = GlobalFeedWriter.entryEventCount readResult
       in eventNumber + (fromIntegral eventCount) - 1 == expectedEventNumber

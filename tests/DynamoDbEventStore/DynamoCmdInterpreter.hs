@@ -12,7 +12,6 @@ import           Data.Int
 import           Data.List (sortOn)
 import           Data.Monoid
 import           Data.Foldable
-import           Data.List (unfoldr)
 import           Control.Monad.State
 import           Data.Functor (($>))
 import qualified Data.HashMap.Lazy as HM
@@ -137,7 +136,7 @@ getReadResult key table = do
   return $ DynamoReadResult key version values
 
 queryBackward :: T.Text -> Int -> Maybe Int64 -> TestDynamoTable -> [DynamoReadResult]
-queryBackward key maxEvents startEvent table = 
+queryBackward streamId maxEvents startEvent table = 
   take maxEvents $ reverse $ eventsBeforeStart startEvent 
   where 
     dynamoReadResultToEventNumber (DynamoReadResult (DynamoKey _key eventNumber) _version _values) = eventNumber
@@ -145,7 +144,7 @@ queryBackward key maxEvents startEvent table =
     eventsBeforeStart (Just start) = takeWhile (\a -> dynamoReadResultToEventNumber a <= start) allEvents
     allEvents = 
       let 
-        filteredMap = Map.filterWithKey (\(DynamoKey hashKey _rangeKey) _value -> hashKey == key) table
+        filteredMap = Map.filterWithKey (\(DynamoKey hashKey _rangeKey) _value -> hashKey == streamId) table
         eventList = (sortOn fst . Map.toList) filteredMap
       in (\(key, (version, values)) -> DynamoReadResult key version values) <$> eventList
 
