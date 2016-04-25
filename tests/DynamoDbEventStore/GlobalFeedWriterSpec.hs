@@ -73,7 +73,7 @@ instance QC.Arbitrary UploadList where
         (p :: [()]) <- cappedList 100
         mapM (\_ -> cappedList 10) p
 
-writeEvent :: (T.Text, Int64, [EventData]) -> DynamoCmdM EventWriteResult
+writeEvent :: (T.Text, Int64, [EventData]) -> DynamoCmdM (Either Text EventWriteResult)
 writeEvent (stream, eventNumber, eventBodies) = 
   let 
     eventEntries = (\(EventData body) -> EventEntry (TL.encodeUtf8 . TL.fromStrict $ body) "") <$> eventBodies
@@ -126,8 +126,8 @@ prop_ConflictingWritesWillNotSucceed =
   in QC.forAll (runPrograms programs) check
      where
        check (writeResults, _testState) = (foldl' sumIfSuccess 0 writeResults) === 1
-       sumIfSuccess :: Int -> Either ProgramError EventWriteResult -> Int
-       sumIfSuccess s (Right WriteSuccess) = s + 1
+       sumIfSuccess :: Int -> Either ProgramError (Either Text EventWriteResult) -> Int
+       sumIfSuccess s (Right (Right WriteSuccess)) = s + 1
        sumIfSuccess s _            = s
 
 getStreamRecordedEvents :: T.Text -> DynamoCmdM [RecordedEvent]
@@ -184,7 +184,7 @@ writeEventsWithExplicitExpectedVersions (StreamId streamId) events =
     writeSingleEvent (et, ed) = do
       eventNumber <- get
       result <- lift $ postEventRequestProgram (PostEventRequest streamId (Just eventNumber) [EventEntry ed (EventType et)])
-      when (result /= WriteSuccess) $ error "Bad write result"
+      when (result /= Right WriteSuccess) $ error "Bad write result"
       put (eventNumber + 1)
 
 writeEventsWithNoExpectedVersions :: EventWriter
@@ -193,7 +193,7 @@ writeEventsWithNoExpectedVersions (StreamId streamId) events =
   where 
     writeSingleEvent (et, ed) = do
       result <- postEventRequestProgram (PostEventRequest streamId Nothing [EventEntry ed (EventType et)])
-      when (result /= WriteSuccess) $ error "Bad write result"
+      when (result /= Right WriteSuccess) $ error "Bad write result"
 
 writeThenRead :: StreamId -> [(T.Text, BL.ByteString)] -> EventWriter -> DynamoCmdM [RecordedEvent]
 writeThenRead (StreamId streamId) events writer = do
@@ -238,14 +238,14 @@ cannotWriteEventsOutOfOrder =
   let 
     postEventRequest = PostEventRequest { perStreamId = "MyStream", perExpectedVersion = Just 1, perEvents = [EventEntry (TL.encodeUtf8 "My Content") "MyEvent"] }
     result = evalProgram "writeEvent" (postEventRequestProgram postEventRequest) emptyTestState
-  in assertEqual "Should return an error" (Right WrongExpectedVersion) result
+  in assertEqual "Should return an error" (Right (Right WrongExpectedVersion)) result
 
 canWriteFirstEvent :: Assertion
 canWriteFirstEvent =
   let 
     postEventRequest = PostEventRequest { perStreamId = "MyStream", perExpectedVersion = Just (-1), perEvents = [EventEntry (TL.encodeUtf8 "My Content") "MyEvent"] }
     result = evalProgram "writeEvent" (postEventRequestProgram postEventRequest) emptyTestState
-  in assertEqual "Should return success" (Right WriteSuccess) result
+  in assertEqual "Should return success" (Right (Right WriteSuccess)) result
 
 canWriteMultipleEvents :: Assertion
 canWriteMultipleEvents =
@@ -253,7 +253,7 @@ canWriteMultipleEvents =
     multiPostEventRequest = PostEventRequest { perStreamId = "MyStream", perExpectedVersion = Just (-1), perEvents = [EventEntry (TL.encodeUtf8 "My Content") "MyEvent", EventEntry (TL.encodeUtf8 "My Content2") "MyEvent2"] }
     subsequentPostEventRequest = PostEventRequest { perStreamId = "MyStream", perExpectedVersion = Just 1, perEvents = [EventEntry (TL.encodeUtf8 "My Content") "MyEvent"] }
     result = evalProgram "writeEvent" (postEventRequestProgram multiPostEventRequest >> postEventRequestProgram subsequentPostEventRequest) emptyTestState
-  in assertEqual "Should return success" (Right WriteSuccess) result
+  in assertEqual "Should return success" (Right (Right WriteSuccess)) result
 
 eventNumbersCorrectForMultipleEvents :: Assertion
 eventNumbersCorrectForMultipleEvents =
@@ -272,7 +272,7 @@ errorThrownIfTryingToWriteAnEventInAMultipleGap =
     multiPostEventRequest = PostEventRequest { perStreamId = streamId, perExpectedVersion = Just (-1), perEvents = [EventEntry (TL.encodeUtf8 "My Content") "MyEvent", EventEntry (TL.encodeUtf8 "My Content2") "MyEvent2"] }
     subsequentPostEventRequest = PostEventRequest { perStreamId = streamId, perExpectedVersion = Just (-1), perEvents = [EventEntry (TL.encodeUtf8 "My Content") "MyEvent"] }
     result = evalProgram "writeEvents" (postEventRequestProgram multiPostEventRequest >> postEventRequestProgram subsequentPostEventRequest) emptyTestState
-  in assertEqual "Should return failure" (Right EventExists) result
+  in assertEqual "Should return failure" (Right (Right EventExists)) result
 
 tests :: [TestTree]
 tests = [

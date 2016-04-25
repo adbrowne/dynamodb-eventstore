@@ -3,6 +3,7 @@
 {-# LANGUAGE RankNTypes           #-}
 {-# LANGUAGE ScopedTypeVariables  #-}
 {-# LANGUAGE DeriveGeneric        #-}
+{-# LANGUAGE FlexibleContexts     #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module DynamoDbEventStore.EventStoreActions(
@@ -17,6 +18,7 @@ module DynamoDbEventStore.EventStoreActions(
   getReadStreamRequestProgram,
   getReadAllRequestProgram) where
 
+import           Control.Monad.Except
 import           BasicPrelude
 import           Control.Lens hiding ((.=))
 import           Safe
@@ -96,25 +98,26 @@ fieldBody = "Body"
 
 data EventWriteResult = WriteSuccess | WrongExpectedVersion | EventExists | WriteError deriving (Eq, Show)
 
-ensureExpectedVersion :: DynamoKey -> DynamoCmdM Bool
+type UserProgramStack = ExceptT Text DynamoCmdM
+
+ensureExpectedVersion :: DynamoKey -> UserProgramStack Bool
 ensureExpectedVersion (DynamoKey _streamId (-1)) = return True
 ensureExpectedVersion (DynamoKey streamId expectedEventNumber) = do
   result <- queryBackward' streamId 1 (Just expectedEventNumber)
-  return $ checkEventNumber result
+  checkEventNumber result
   where 
-    checkEventNumber [] = False
-    checkEventNumber ((readResult@(DynamoReadResult (DynamoKey _key eventNumber) _version _values)):_) = 
-      let 
-        eventCount = GlobalFeedWriter.entryEventCount readResult
-      in eventNumber + (fromIntegral eventCount) - 1 == expectedEventNumber
+    checkEventNumber [] = return False
+    checkEventNumber ((readResult@(DynamoReadResult (DynamoKey _key eventNumber) _version _values)):_) = do
+      eventCount <- GlobalFeedWriter.entryEventCount readResult
+      return $ eventNumber + (fromIntegral eventCount) - 1 == expectedEventNumber
 
 
-postEventRequestProgram :: PostEventRequest -> DynamoCmdM EventWriteResult
-postEventRequestProgram (PostEventRequest _sId _ev []) = return WriteSuccess -- todo
-postEventRequestProgram (PostEventRequest sId ev eventEntries) = do
+postEventRequestProgram :: PostEventRequest -> DynamoCmdM (Either Text EventWriteResult)
+postEventRequestProgram (PostEventRequest _sId _ev []) = return $ Left "PostRequest must have events"
+postEventRequestProgram (PostEventRequest sId ev eventEntries) = runExceptT $ do
   dynamoKeyOrError <- getDynamoKey sId ev
   case dynamoKeyOrError of Left a -> return a
-                           Right dynamoKey -> writeMyEvent dynamoKey
+                           Right dynamoKey -> lift $ writeMyEvent dynamoKey
   where
     writeMyEvent :: DynamoKey -> DynamoCmdM EventWriteResult
     writeMyEvent dynamoKey = do
@@ -124,7 +127,7 @@ postEventRequestProgram (PostEventRequest sId ev eventEntries) = do
       writeResult <- GlobalFeedWriter.dynamoWriteWithRetry dynamoKey values 0 
       return $ toEventResult writeResult
     dynamoReadResultToEventNumber (DynamoReadResult (DynamoKey _key eventNumber) _version _values) = eventNumber
-    getDynamoKey :: T.Text -> Maybe Int64 -> DynamoCmdM (Either EventWriteResult DynamoKey)
+    getDynamoKey :: T.Text -> Maybe Int64 -> UserProgramStack (Either EventWriteResult DynamoKey)
     getDynamoKey streamId Nothing = do
       let dynamoHashKey = Constants.streamDynamoKeyPrefix <> streamId
       readResults <- queryBackward' dynamoHashKey 1 Nothing

@@ -1,10 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE FlexibleContexts #-}
 
 module DynamoDbEventStore.GlobalFeedWriter (main, FeedEntry(FeedEntry), feedEntryStream, feedEntryNumber, feedEntryCount, dynamoWriteWithRetry, entryEventCount) where
 
 import           BasicPrelude
 import           Safe
+import           Control.Monad.Except
 import qualified Data.Sequence         as Seq
 import qualified Data.Text             as T
 import qualified Data.ByteString.Lazy  as BL
@@ -12,7 +14,6 @@ import qualified Data.ByteString       as BS
 import qualified Data.HashMap.Lazy as HM
 import qualified DynamoDbEventStore.Constants as Constants
 import           DynamoDbEventStore.EventStoreCommands
-import           Data.Maybe
 import           Control.Lens
 import           Network.AWS.DynamoDB
 import qualified Data.Aeson as Aeson
@@ -94,13 +95,15 @@ entryIsPaged dynamoItem = do
     HM.member Constants.needsPagingKey &
     not
 
-entryEventCount :: DynamoReadResult -> Int
+entryEventCount :: (MonadError Text m) => DynamoReadResult -> m Int
 entryEventCount dynamoItem = 
   let 
     value = dynamoItem &
               dynamoReadResultValue &
               view (ix Constants.eventCountKey . avN) 
-  in fromJust $ value >>= (Safe.readMay . T.unpack)
+    parsedValue = value >>= (Safe.readMay . T.unpack)
+  in case parsedValue of Nothing  -> throwError $ "Unable to parse eventEntryCount: " <> show value
+                         (Just x) -> return x 
 
 readPageBody :: DynamoValues -> Seq.Seq FeedEntry
 readPageBody values = -- todo don't ignore errors
@@ -138,8 +141,8 @@ verifyPage pageNumber = do
     let newValues = HM.insert Constants.pageIsVerifiedKey (stringAttributeValue "Verified") pageValues
     void $ dynamoWriteWithRetry pageDynamoKey newValues (pageVersion + 1)
 
-logIf :: Bool -> LogLevel -> T.Text -> DynamoCmdM ()
-logIf True logLevel t = log' logLevel t
+logIf :: Bool -> LogLevel -> T.Text -> GlobalFeedWriterStack ()
+logIf True logLevel t = lift $ log' logLevel t
 logIf False _ _ = return ()
 
 readFromDynamoMustExist :: DynamoKey -> DynamoCmdM DynamoReadResult
@@ -173,10 +176,10 @@ setEventEntryPage key pageNumber = do
 itemToJsonByteString :: Aeson.ToJSON a => a -> BS.ByteString
 itemToJsonByteString = BL.toStrict . Aeson.encode . Aeson.toJSON
 
-getPreviousEntryEventNumber :: DynamoKey -> DynamoCmdM Int64
+getPreviousEntryEventNumber :: DynamoKey -> GlobalFeedWriterStack Int64
 getPreviousEntryEventNumber (DynamoKey _streamId (0)) = return (-1)
 getPreviousEntryEventNumber (DynamoKey streamId eventNumber) = do
-  result <- queryBackward' streamId 1 (Just $ eventNumber - 1)
+  result <- lift $ queryBackward' streamId 1 (Just $ eventNumber - 1)
   return $ getEventNumber result
   where 
     getEventNumber [] = error "Could not find previous event"
@@ -185,42 +188,49 @@ getPreviousEntryEventNumber (DynamoKey streamId eventNumber) = do
 feedEntriesContainsEntry :: StreamId -> Int64 -> Seq.Seq FeedEntry -> Bool
 feedEntriesContainsEntry streamId eventNumber = any (\(FeedEntry sId evN _) -> sId == streamId && evN == eventNumber)
 
-updateGlobalFeed :: DynamoKey -> DynamoCmdM ()
+updateGlobalFeed :: DynamoKey -> GlobalFeedWriterStack ()
 updateGlobalFeed itemKey@DynamoKey { dynamoKeyKey = itemHashKey, dynamoKeyEventNumber = itemEventNumber } = do
   log' Debug ("updateGlobalFeed " <> show itemKey)
   let streamId = StreamId $ T.drop (T.length Constants.streamDynamoKeyPrefix) itemHashKey
-  currentPage <- getCurrentPage
-  item <- readFromDynamoMustExist itemKey
+  currentPage <- lift getCurrentPage
+  item <- lift $ readFromDynamoMustExist itemKey
   let itemIsPaged = entryIsPaged item
   logIf itemIsPaged Debug ("itemIsPaged" <> show itemKey)
   unless itemIsPaged $ do
     let currentPageFeedEntries = feedPageEntries currentPage
     let pageNumber = feedPageNumber currentPage
     if feedEntriesContainsEntry streamId itemEventNumber currentPageFeedEntries then
-      void $ setEventEntryPage itemKey pageNumber
+      void $ lift $ setEventEntryPage itemKey pageNumber
     else do
-      let itemEventCount = entryEventCount item
+      itemEventCount <- entryEventCount item
       let feedEntry = itemToJsonByteString (currentPageFeedEntries |> FeedEntry streamId itemEventNumber itemEventCount)
       previousEntryEventNumber <- getPreviousEntryEventNumber itemKey
       when (previousEntryEventNumber > -1) (updateGlobalFeed itemKey { dynamoKeyEventNumber = previousEntryEventNumber })
       let version = feedPageVersion currentPage + 1
-      pageResult <- dynamoWriteWithRetry (getPageDynamoKey (feedPageNumber currentPage)) (HM.singleton Constants.pageBodyKey (set avB (Just feedEntry) attributeValue)) version
+      pageResult <- lift $ dynamoWriteWithRetry (getPageDynamoKey (feedPageNumber currentPage)) (HM.singleton Constants.pageBodyKey (set avB (Just feedEntry) attributeValue)) version
       onPageResult pageNumber pageResult
       return ()
   return ()
   where
-    onPageResult :: Int -> DynamoWriteResult -> DynamoCmdM ()
+    onPageResult :: Int -> DynamoWriteResult -> GlobalFeedWriterStack ()
     onPageResult _ DynamoWriteWrongVersion = do
       log' Debug "Got wrong version writing page"
       updateGlobalFeed itemKey
     onPageResult pageNumber DynamoWriteSuccess = 
-      void $ setEventEntryPage itemKey pageNumber
-    onPageResult pageNumber DynamoWriteFailure = fatalError' ("DynamoWriteFailure on writing page: " <> show pageNumber)
+      void $ lift $ setEventEntryPage itemKey pageNumber
+    onPageResult pageNumber DynamoWriteFailure = lift $ fatalError' ("DynamoWriteFailure on writing page: " <> show pageNumber)
 
-main :: DynamoCmdM ()
-main = forever $ do
-  scanResult <- scanNeedsPaging'
+type GlobalFeedWriterStack = ExceptT Text DynamoCmdM
+
+runLoop :: GlobalFeedWriterStack ()
+runLoop = do
+  scanResult <- lift scanNeedsPaging'
   forM_ scanResult updateGlobalFeed
   when (null scanResult) (wait' 1000)
   setPulseStatus' $ case scanResult of [] -> False
                                        _  -> True
+main :: DynamoCmdM ()
+main = forever $ do
+  result <- runExceptT runLoop
+  case result of (Left errMsg) -> fatalError' errMsg
+                 (Right ())    -> return ()
