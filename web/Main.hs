@@ -51,8 +51,11 @@ runEventStoreAction runner (ReadAll req) = do
   let program = getReadAllRequestProgram req
   a <- liftIO $ runner program
   json a
-runEventStoreAction _ a = 
-  (html . TL.fromStrict . show) a
+runEventStoreAction runner (ReadEvent req) = do
+  let program = getReadEventRequestProgram req
+  a <- liftIO $ runner program
+  json a
+runEventStoreAction _ (SubscribeAll _) = error "SubscribeAll not implemented" 
 
 data Config = Config 
   { configTableName :: String,
@@ -77,7 +80,7 @@ start parsedConfig = do
   tableAlreadyExists <- runner $ doesTableExist tableName
   let shouldCreateTable = configCreateTable parsedConfig
   when (not tableAlreadyExists && shouldCreateTable) 
-    (putStrLn "Creating table..." >> runner (buildTable tableName))
+    (putStrLn "Creating table..." >> runner (buildTable tableName) >> putStrLn "Table created")
   if tableAlreadyExists || shouldCreateTable then runApp runner tableName else failNoTable
   where
    runApp :: (forall a. AWS a -> IO a) -> T.Text -> IO ()

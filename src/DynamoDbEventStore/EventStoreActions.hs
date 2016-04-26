@@ -17,6 +17,7 @@ module DynamoDbEventStore.EventStoreActions(
   EventWriteResult(..),
   postEventRequestProgram,
   getReadStreamRequestProgram,
+  getReadEventRequestProgram,
   getReadAllRequestProgram) where
 
 import           Data.Either.Combinators
@@ -167,19 +168,25 @@ fromEitherError :: String -> Either String a -> a
 fromEitherError context  (Left err) = error (context <> " " <> err)
 fromEitherError _context (Right a)  = a
 
+toRecordedEvent :: Text -> DynamoReadResult -> [RecordedEvent]
+toRecordedEvent sId (DynamoReadResult key _version values) = fromEitherError "toRecordedEvent" $ do
+  eventBody <- readField fieldBody avB values 
+  (eventEntries :: [EventEntry]) <- Serialize.decode eventBody
+  let firstEventNumber = dynamoKeyEventNumber key
+  let eventEntriesWithEventNumber = zip [firstEventNumber..] eventEntries
+  let recordedEvents = fmap (\(eventNumber, EventEntry {..}) -> RecordedEvent sId eventNumber (BL.toStrict eventEntryData) (eventTypeToText eventEntryType)) eventEntriesWithEventNumber
+  return $ reverse recordedEvents
+
+getReadEventRequestProgram :: ReadEventRequest -> DynamoCmdM (Maybe RecordedEvent)
+getReadEventRequestProgram (ReadEventRequest sId eventNumber) = do
+  readResults <- queryBackward' (Constants.streamDynamoKeyPrefix <> sId) 1 (Just eventNumber)
+  let events = readResults >>= toRecordedEvent sId
+  return $ find ((== eventNumber) . recordedEventNumber) events
+
 getReadStreamRequestProgram :: ReadStreamRequest -> DynamoCmdM [RecordedEvent]
 getReadStreamRequestProgram (ReadStreamRequest sId startEventNumber) = do
   readResults <- queryBackward' (Constants.streamDynamoKeyPrefix <> sId) 10 startEventNumber
-  return $ readResults >>= toRecordedEvent 
-  where 
-    toRecordedEvent :: DynamoReadResult -> [RecordedEvent]
-    toRecordedEvent (DynamoReadResult key _version values) = fromEitherError "toRecordedEvent" $ do
-      eventBody <- readField fieldBody avB values 
-      (eventEntries :: [EventEntry]) <- Serialize.decode eventBody
-      let firstEventNumber = dynamoKeyEventNumber key
-      let eventEntriesWithEventNumber = zip [firstEventNumber..] eventEntries
-      let recordedEvents = fmap (\(eventNumber, EventEntry {..}) -> RecordedEvent sId eventNumber (BL.toStrict eventEntryData) (eventTypeToText eventEntryType)) eventEntriesWithEventNumber
-      return $ reverse recordedEvents
+  return $ readResults >>= toRecordedEvent sId
 
 getPageDynamoKey :: Int -> DynamoKey 
 getPageDynamoKey pageNumber =

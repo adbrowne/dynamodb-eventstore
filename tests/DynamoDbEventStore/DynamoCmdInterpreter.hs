@@ -5,7 +5,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE RankNTypes #-}
 
-module DynamoDbEventStore.DynamoCmdInterpreter(ProgramError(FatalError), runPrograms, runProgramGenerator, runProgram, emptyTestState, evalProgram, execProgram, LoopState(..)) where
+module DynamoDbEventStore.DynamoCmdInterpreter(ProgramError(FatalError), TestState(..), runPrograms, runProgramGenerator, runProgram, emptyTestState, evalProgram, execProgram, LoopState(..)) where
 
 import           BasicPrelude
 import qualified Prelude as P

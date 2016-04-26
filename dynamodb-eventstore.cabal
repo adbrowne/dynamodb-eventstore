@@ -15,7 +15,6 @@ category:            Database
 build-type:          Simple
 -- extra-source-files:  
 cabal-version:       >=1.10
-default-extensions:  NoImplicitPrelude
 
 library
   GHC-Options: -Wall

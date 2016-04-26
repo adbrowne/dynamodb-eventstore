@@ -6,6 +6,7 @@
 module DynamoDbEventStore.GlobalFeedWriterSpec where
 
 import           BasicPrelude
+import           Control.Lens
 import           Test.Tasty
 import           Test.Tasty.QuickCheck((===),testProperty)
 import qualified Test.Tasty.QuickCheck as QC
@@ -34,20 +35,20 @@ newtype UploadList = UploadList [UploadItem] deriving (Show)
 cappedList :: QC.Arbitrary a => Int -> QC.Gen [a]
 cappedList maxLength = QC.listOf1 QC.arbitrary `QC.suchThat` ((< maxLength) . length)
 
-newtype EventData = EventData Text deriving Show
+newtype EventData = EventData Text deriving (Eq,Show)
 instance QC.Arbitrary EventData where
   arbitrary = EventData . T.pack <$> QC.arbitrary
   shrink (EventData xs) = EventData . T.pack <$> QC.shrink (T.unpack xs)
 
 selectListItem :: [a] -> QC.Gen (a, [a])
 selectListItem xs = do
-  index <- QC.choose (0, length xs - 1)
-  return (xs !! index, take index xs ++ drop (index + 1) xs)
+  itemIndex <- QC.choose (0, length xs - 1)
+  return (xs !! itemIndex, take itemIndex xs ++ drop (itemIndex + 1) xs)
 
 splitList :: [a] -> QC.Gen ([a],[a])
 splitList xs = do
-  index <- QC.choose (1, length xs)
-  return (take index xs, drop index xs)
+  splitIndex <- QC.choose (1, length xs)
+  return (take splitIndex xs, drop splitIndex xs)
 
 uniqueList :: Ord a => [a] -> [a]
 uniqueList = Set.toList . Set.fromList
@@ -114,6 +115,29 @@ prop_EventShouldAppearInGlobalFeedInStreamOrder (UploadList uploadList) =
      where
        check (_, testState) = QC.forAll (runReadAllProgram testState) (\feedItems -> ((globalRecordedEventListToMap <$>) <$> feedItems) === (Right $ Right $ globalFeedFromUploadList uploadList))
        runReadAllProgram = runProgramGenerator "readAllRequestProgram" (getReadAllRequestProgram ReadAllRequest)
+
+expectedEventsFromUploadList :: UploadList -> [(Text, Int64, EventData)]
+expectedEventsFromUploadList (UploadList uploadItems) = do
+  (streamId, firstEventNumber, bodies) <- uploadItems
+  (eventNumber, eventData) <- zip [firstEventNumber+1..] bodies
+  return (streamId, eventNumber, eventData)
+
+prop_AllEventsCanBeReadIndividually :: UploadList -> QC.Property
+prop_AllEventsCanBeReadIndividually (UploadList uploadItems) =
+  let
+    programs = Map.fromList [
+      ("Publisher", (publisher uploadItems,100))
+      ]
+    expectedEvents = expectedEventsFromUploadList (UploadList uploadItems)
+    check (_, testState) = lookupBodies testState === ((_3 %~ Just) <$> expectedEvents)
+    lookupBodies :: TestState -> [(Text, Int64, Maybe EventData)]
+    lookupBodies testState = fmap (\(streamId, eventNumber, _) -> (streamId, eventNumber, lookupBody testState streamId eventNumber)) expectedEvents
+    lookupBody :: TestState ->  Text -> Int64 -> (Maybe EventData)
+    lookupBody testState streamId eventNumber =
+      let result = evalProgram "LookupEvent" (getReadEventRequestProgram $ ReadEventRequest streamId eventNumber) testState
+      in case result of (Left _)  -> Nothing
+                        (Right a) -> (EventData . T.decodeUtf8 . recordedEventData) <$> a
+  in QC.forAll (runPrograms programs) check
 
 prop_ConflictingWritesWillNotSucceed :: QC.Property
 prop_ConflictingWritesWillNotSucceed =
@@ -280,6 +304,7 @@ tests = [
       testProperty "Each event appears in it's correct stream" prop_EventsShouldAppearInTheirSteamsInOrder,
       testProperty "No Write Request can cause a fatal error in global feed writer" prop_NoWriteRequestCanCausesAFatalErrorInGlobalFeedWriter,
       testProperty "Conflicting writes will not succeed" prop_ConflictingWritesWillNotSucceed,
+      testProperty "All Events can be read individually" prop_AllEventsCanBeReadIndividually,
       --testProperty "The result of multiple writers matches what they see" todo,
       --testProperty "Get stream items contains event lists without duplicates or gaps" todo,
       testCase "Unit - Written Events Appear In Read Stream - explicit expected version" $ writtenEventsAppearInReadStream writeEventsWithExplicitExpectedVersions,
