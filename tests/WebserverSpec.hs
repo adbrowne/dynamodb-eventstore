@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-module WebserverSpec (postEventSpec, getStreamSpec) where
+module WebserverSpec (postEventSpec, getStreamSpec, getEventSpec) where
 
 import           BasicPrelude
 import           Test.Tasty.Hspec
@@ -83,6 +83,29 @@ getStreamSpec = do
     let getExample = getStream ""
     it "responds with 400" $
       waiCase getExample $ assertStatus 400
+
+  where
+    app = S.scottyApp (W.app W.showEventResponse)
+    waiCase r assertion = do
+      app' <- app
+      flip runSession app' $ assertion =<< r
+
+getEvent :: T.Text -> Int64 -> Session SResponse
+getEvent streamId eventNumber =
+  request $ defaultRequest {
+               pathInfo = ["streams",streamId,show eventNumber],
+               requestMethod = H.methodGet
+            }
+
+getEventSpec :: Spec 
+getEventSpec = do
+  describe "Get stream" $ do
+    let getExample = getEvent "myStreamId" 0
+    it "responds with 200" $
+      waiCase getExample $ assertStatus 200
+
+    it "responds with body" $
+      waiCase getExample $ assertBody "ReadEvent (ReadEventRequest {rerStreamId = \"myStreamId\", rerEventNumber = 0})"
 
   where
     app = S.scottyApp (W.app W.showEventResponse)

@@ -102,6 +102,13 @@ app process = do
           <$> pure streamId
           <*> expectedVersion
           <*> ((\x -> x:[]) <$> eventEntries)
+  get "/streams/:streamId/:eventNumber" $ do
+    streamId <- param "streamId"
+    eventNumber <- param "eventNumber"
+    toResult . fmap (process . ReadEvent) $
+          ReadEventRequest
+          <$> notEmpty streamId
+          <*> runParser positiveInt64Parser "Invalid Event Number" eventNumber
   get "/streams/:streamId" $ do
     streamId <- param "streamId"
     let mStreamId = notEmpty streamId

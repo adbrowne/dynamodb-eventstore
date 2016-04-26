@@ -8,6 +8,7 @@
 
 module DynamoDbEventStore.EventStoreActions(
   ReadStreamRequest(..), 
+  ReadEventRequest(..), 
   ReadAllRequest(..), 
   PostEventRequest(..), 
   EventType(..),
@@ -47,6 +48,7 @@ import           GHC.Generics
 data EventStoreAction =
   PostEvent PostEventRequest |
   ReadStream ReadStreamRequest |
+  ReadEvent ReadEventRequest |
   ReadAll ReadAllRequest |
   SubscribeAll SubscribeAllRequest deriving (Show)
 
@@ -90,6 +92,11 @@ instance QC.Arbitrary PostEventRequest where
 data ReadStreamRequest = ReadStreamRequest {
    rsrStreamId         :: T.Text,
    rsrStartEventNumber :: Maybe Int64
+} deriving (Show)
+
+data ReadEventRequest = ReadEventRequest {
+   rerStreamId         :: T.Text,
+   rerEventNumber      :: Int64
 } deriving (Show)
 
 data ReadAllRequest = ReadAllRequest deriving (Show)

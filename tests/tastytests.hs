@@ -26,6 +26,7 @@ main :: IO ()
 main = do
   postEventSpec' <- testSpec "Post Event tests" postEventSpec
   getStreamSpec' <- testSpec "Get Stream tests" getStreamSpec
+  getEventSpec' <- testSpec "Get Event tests" getEventSpec
   webserverInternalTests' <- testSpec "Webserver Internal Tests" WebserverInternalSpec.spec
   defaultMain $
     testGroup "Tests"
@@ -34,5 +35,6 @@ main = do
         testGroup "Global Feed Writer" GlobalFeedWriterSpec.tests,
         postEventSpec',
         getStreamSpec',
+        getEventSpec',
         webserverInternalTests'
       ]
