@@ -8,6 +8,7 @@
 module DynamoDbEventStore.DynamoCmdInterpreter(ProgramError(FatalError), TestState(..), runPrograms, runProgramGenerator, runProgram, emptyTestState, evalProgram, execProgram, LoopState(..)) where
 
 import           BasicPrelude
+import           GHC.Natural
 import qualified Prelude as P
 import           Control.Lens
 import           Control.Monad.State
@@ -138,9 +139,9 @@ getUptoItem p =
             | p x = Nothing
             | otherwise = Just (x, xs)
 
-queryBackward :: T.Text -> Int -> Maybe Int64 -> TestDynamoTable -> [DynamoReadResult]
+queryBackward :: T.Text -> Natural -> Maybe Int64 -> TestDynamoTable -> [DynamoReadResult]
 queryBackward streamId maxEvents startEvent table = 
-  take maxEvents $ reverse $ eventsBeforeStart startEvent 
+  take (fromIntegral maxEvents) $ reverse $ eventsBeforeStart startEvent 
   where 
     dynamoReadResultToEventNumber (DynamoReadResult (DynamoKey _key eventNumber) _version _values) = eventNumber
     eventsBeforeStart Nothing = allEvents

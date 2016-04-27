@@ -96,6 +96,19 @@ tests evalProgram =
         in do
           r <- evt
           assertEqual "Events are returned in reverse order" expected r
+    , testCase "Read events respects max items " $
+        let
+          actions = do
+            _ <- writeToDynamo' (DynamoKey testStreamId 0) sampleValuesNeedsPaging 0
+            _ <- writeToDynamo' (DynamoKey testStreamId 1) sampleValuesNeedsPaging 0
+            queryBackward' testStreamId 1 Nothing
+          evt = evalProgram actions
+          expected :: [DynamoReadResult]
+          expected = [
+            DynamoReadResult (DynamoKey testStreamId 1) 0 sampleValuesNeedsPaging ]
+        in do
+          r <- evt
+          assertEqual "Only event 1 should be returned" expected r
     , testCase "Can read events backward starting at offset" $
         let
           actions = do

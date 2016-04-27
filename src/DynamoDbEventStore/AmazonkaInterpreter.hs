@@ -78,7 +78,7 @@ runCmd tn (ReadFromDynamo' eventKey n) = do
     getResult :: GetItemResponse -> Maybe DynamoReadResult
     getResult r = 
       toDynamoReadResult $ view girsItem r
-runCmd tn (QueryBackward' streamId _ exclusiveStartKey n) =
+runCmd tn (QueryBackward' streamId limit exclusiveStartKey n) =
   getBackward
     where
       setStartKey Nothing = id
@@ -87,6 +87,7 @@ runCmd tn (QueryBackward' streamId _ exclusiveStartKey n) =
         resp <- send $
                 query tn
                 & (setStartKey exclusiveStartKey)
+                & (set qLimit (Just limit))
                 & (set qScanIndexForward (Just False))
                 & (set qExpressionAttributeValues (HM.fromList [(":streamId",set avS (Just streamId) attributeValue)]))
                 & (set qKeyConditionExpression (Just $ fieldStreamId <> " = :streamId"))

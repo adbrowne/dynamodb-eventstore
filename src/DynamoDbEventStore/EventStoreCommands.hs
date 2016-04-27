@@ -31,6 +31,7 @@ module DynamoDbEventStore.EventStoreCommands(
 import           BasicPrelude
 import           Control.Monad.Free.Church
 import           Control.Monad.Free.TH
+import           GHC.Natural
 
 import           Data.Aeson
 import qualified Data.ByteString       as BS
@@ -130,7 +131,7 @@ data DynamoCmd next =
     (DynamoWriteResult -> next) |
   QueryBackward'
     T.Text -- Hash Key
-    Int -- max events to retrieve
+    Natural -- max events to retrieve
     (Maybe Int64) -- starting event, Nothing means start at head
     ([DynamoReadResult] -> next) |
   ScanNeedsPaging'
