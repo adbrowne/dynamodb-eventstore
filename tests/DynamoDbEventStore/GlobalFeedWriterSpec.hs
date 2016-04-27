@@ -109,7 +109,7 @@ prop_EventShouldAppearInGlobalFeedInStreamOrder (UploadList uploadList) =
     programs = Map.fromList [
       ("Publisher", (publisher uploadList,100))
       , ("GlobalFeedWriter1", (GlobalFeedWriter.main, 100))
-      --, ("GlobalFeedWriter2", (GlobalFeedWriter.main, 100)) 
+      , ("GlobalFeedWriter2", (GlobalFeedWriter.main, 100)) 
       ]
   in QC.forAll (runPrograms programs) check
      where
@@ -189,7 +189,8 @@ prop_EventsShouldAppearInTheirSteamsInOrder (UploadList uploadList) =
   let
     programs = Map.fromList [
       ("Publisher", (publisher uploadList,100)),
-      ("GlobalFeedWriter1", (GlobalFeedWriter.main, 100)) ]
+      ("GlobalFeedWriter1", (GlobalFeedWriter.main, 100)), 
+      ("GlobalFeedWriter2", (GlobalFeedWriter.main, 100)) ]
   in QC.forAll (runPrograms programs) check
      where
        check (_, testState) = runReadEachStream testState === (Right $ globalFeedFromUploadList uploadList)
