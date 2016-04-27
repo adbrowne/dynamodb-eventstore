@@ -72,6 +72,12 @@ config = Config
    <*> flag False True
        (long "createTable" <> short 'c' <> help "Create table if it does not exist")
 
+httpPort :: Int
+httpPort = 2113
+
+httpHost :: String
+httpHost = "127.0.0.1"
+
 start :: Config -> IO ()
 start parsedConfig = do
   let tableName = (T.pack . configTableName) parsedConfig
@@ -87,7 +93,8 @@ start parsedConfig = do
    runApp runner tableName = do
      let runner' = runMyAws runner tableName
      _ <- forkIO $ runner' GlobalFeedWriter.main
-     let warpSettings = setPort 2113 $ setHost "127.0.0.1" defaultSettings
+     let warpSettings = setPort httpPort $ setHost (fromString httpHost) defaultSettings
+     putStrLn $ "Server listenting on: http://" <> fromString httpHost <> ":" <> show httpPort
      scottyApp (app (printEvent >=> runEventStoreAction runner')) >>= runSettings warpSettings
      return ()
    failNoTable = putStrLn "Table does not exist"
