@@ -179,7 +179,7 @@ itemToJsonByteString = BL.toStrict . Aeson.encode . Aeson.toJSON
 getPreviousEntryEventNumber :: DynamoKey -> GlobalFeedWriterStack Int64
 getPreviousEntryEventNumber (DynamoKey _streamId (0)) = return (-1)
 getPreviousEntryEventNumber (DynamoKey streamId eventNumber) = do
-  result <- lift $ queryBackward' streamId 1 (Just $ eventNumber - 1)
+  result <- lift $ queryBackward' streamId 1 (Just $ eventNumber)
   return $ getEventNumber result
   where 
     getEventNumber [] = error "Could not find previous event"
@@ -205,6 +205,7 @@ updateGlobalFeed itemKey@DynamoKey { dynamoKeyKey = itemHashKey, dynamoKeyEventN
       itemEventCount <- entryEventCount item
       let feedEntry = itemToJsonByteString (currentPageFeedEntries |> FeedEntry streamId itemEventNumber itemEventCount)
       previousEntryEventNumber <- getPreviousEntryEventNumber itemKey
+      log' Debug $ "itemKey: " <> show itemKey <> " previousEntryEventNumber: " <> show previousEntryEventNumber
       when (previousEntryEventNumber > -1) (updateGlobalFeed itemKey { dynamoKeyEventNumber = previousEntryEventNumber })
       let version = feedPageVersion currentPage + 1
       pageResult <- lift $ dynamoWriteWithRetry (getPageDynamoKey (feedPageNumber currentPage)) (HM.singleton Constants.pageBodyKey (set avB (Just feedEntry) attributeValue)) version

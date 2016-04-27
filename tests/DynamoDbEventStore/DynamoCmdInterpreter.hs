@@ -130,13 +130,21 @@ getReadResult key table = do
   (version, values) <- Map.lookup key table
   return $ DynamoReadResult key version values
 
+getUptoItem :: (a -> Bool) -> [a] -> [a]
+getUptoItem p =
+  unfoldr f
+    where f [] = Nothing
+          f (x:xs)
+            | p x = Nothing
+            | otherwise = Just (x, xs)
+
 queryBackward :: T.Text -> Int -> Maybe Int64 -> TestDynamoTable -> [DynamoReadResult]
 queryBackward streamId maxEvents startEvent table = 
   take maxEvents $ reverse $ eventsBeforeStart startEvent 
   where 
     dynamoReadResultToEventNumber (DynamoReadResult (DynamoKey _key eventNumber) _version _values) = eventNumber
     eventsBeforeStart Nothing = allEvents
-    eventsBeforeStart (Just start) = takeWhile (\a -> dynamoReadResultToEventNumber a <= start) allEvents
+    eventsBeforeStart (Just start) = getUptoItem (\a -> dynamoReadResultToEventNumber a >= start) allEvents
     allEvents = 
       let 
         filteredMap = Map.filterWithKey (\(DynamoKey hashKey _rangeKey) _value -> hashKey == streamId) table

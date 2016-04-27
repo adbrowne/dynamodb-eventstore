@@ -196,6 +196,18 @@ prop_EventsShouldAppearInTheirSteamsInOrder (UploadList uploadList) =
        check (_, testState) = runReadEachStream testState === (Right $ globalFeedFromUploadList uploadList)
        runReadEachStream = evalProgram "readEachStream" (readEachStream uploadList)
 
+prop_ScanUnpagedShouldBeEmpty :: UploadList -> QC.Property
+prop_ScanUnpagedShouldBeEmpty (UploadList uploadList) =
+  let
+    programs = Map.fromList [
+      ("Publisher", (publisher uploadList,100)),
+      ("GlobalFeedWriter1", (GlobalFeedWriter.main, 100)), 
+      ("GlobalFeedWriter2", (GlobalFeedWriter.main, 100)) ]
+  in QC.forAll (runPrograms programs) check
+     where
+       check (_, testState) = scanUnpaged testState === (Right [])
+       scanUnpaged = evalProgram "scanUnpaged" scanNeedsPaging'
+
 eventDataToByteString :: EventData -> LByteString
 eventDataToByteString (EventData ed) = (TL.encodeUtf8 . TL.fromStrict) ed
 
@@ -306,6 +318,7 @@ tests = [
       testProperty "No Write Request can cause a fatal error in global feed writer" prop_NoWriteRequestCanCausesAFatalErrorInGlobalFeedWriter,
       testProperty "Conflicting writes will not succeed" prop_ConflictingWritesWillNotSucceed,
       testProperty "All Events can be read individually" prop_AllEventsCanBeReadIndividually,
+      testProperty "Scan unpaged should be empty" prop_ScanUnpagedShouldBeEmpty,
       --testProperty "The result of multiple writers matches what they see" todo,
       --testProperty "Get stream items contains event lists without duplicates or gaps" todo,
       testCase "Unit - Written Events Appear In Read Stream - explicit expected version" $ writtenEventsAppearInReadStream writeEventsWithExplicitExpectedVersions,

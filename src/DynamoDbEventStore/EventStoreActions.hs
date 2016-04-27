@@ -112,7 +112,7 @@ type UserProgramStack = ExceptT Text DynamoCmdM
 ensureExpectedVersion :: DynamoKey -> UserProgramStack Bool
 ensureExpectedVersion (DynamoKey _streamId (-1)) = return True
 ensureExpectedVersion (DynamoKey streamId expectedEventNumber) = do
-  result <- queryBackward' streamId 1 (Just expectedEventNumber)
+  result <- queryBackward' streamId 1 (Just $ expectedEventNumber + 1)
   checkEventNumber result
   where 
     checkEventNumber [] = return False
@@ -179,13 +179,13 @@ toRecordedEvent sId (DynamoReadResult key _version values) = fromEitherError "to
 
 getReadEventRequestProgram :: ReadEventRequest -> DynamoCmdM (Maybe RecordedEvent)
 getReadEventRequestProgram (ReadEventRequest sId eventNumber) = do
-  readResults <- queryBackward' (Constants.streamDynamoKeyPrefix <> sId) 1 (Just eventNumber)
+  readResults <- queryBackward' (Constants.streamDynamoKeyPrefix <> sId) 1 (Just $ eventNumber + 1)
   let events = readResults >>= toRecordedEvent sId
   return $ find ((== eventNumber) . recordedEventNumber) events
 
 getReadStreamRequestProgram :: ReadStreamRequest -> DynamoCmdM [RecordedEvent]
 getReadStreamRequestProgram (ReadStreamRequest sId startEventNumber) = do
-  readResults <- queryBackward' (Constants.streamDynamoKeyPrefix <> sId) 10 startEventNumber
+  readResults <- queryBackward' (Constants.streamDynamoKeyPrefix <> sId) 10 ((+1) <$> startEventNumber)
   return $ readResults >>= toRecordedEvent sId
 
 getPageDynamoKey :: Int -> DynamoKey 
