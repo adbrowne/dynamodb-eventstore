@@ -25,33 +25,33 @@ import Network.AWS
 import Network.AWS.Waiter
 import Network.AWS.DynamoDB
 
-fieldStreamId :: T.Text
+fieldStreamId :: Text
 fieldStreamId = "streamId"
-fieldEventNumber :: T.Text
+fieldEventNumber :: Text
 fieldEventNumber = "eventNumber"
-fieldVersion :: T.Text
+fieldVersion :: Text
 fieldVersion = "version"
-fieldPagingRequired :: T.Text
+fieldPagingRequired :: Text
 fieldPagingRequired = Constants.needsPagingKey
-unpagedIndexName :: T.Text
+unpagedIndexName :: Text
 unpagedIndexName = "unpagedIndex"
 
-getDynamoKey :: T.Text -> Int64 -> HM.HashMap T.Text AttributeValue
+getDynamoKey :: Text -> Int64 -> HM.HashMap Text AttributeValue
 getDynamoKey hashKey rangeKey =
     HM.fromList [
         (fieldStreamId, set avS (Just hashKey) attributeValue),
         (fieldEventNumber, set avN (Just (showt rangeKey)) attributeValue)
     ]
 
-getDynamoKeyForEvent :: DynamoKey -> HM.HashMap T.Text AttributeValue
+getDynamoKeyForEvent :: DynamoKey -> HM.HashMap Text AttributeValue
 getDynamoKeyForEvent (DynamoKey streamId eventNumber) =
     getDynamoKey streamId eventNumber
 
-itemAttribute :: T.Text -> Lens' AttributeValue (Maybe v) -> v -> (T.Text, AttributeValue)
+itemAttribute :: Text -> Lens' AttributeValue (Maybe v) -> v -> (Text, AttributeValue)
 itemAttribute key l value =
   (key, set l (Just value) attributeValue)
 
-toDynamoReadResult :: HM.HashMap T.Text AttributeValue -> Maybe DynamoReadResult
+toDynamoReadResult :: HM.HashMap Text AttributeValue -> Maybe DynamoReadResult
 toDynamoReadResult allValues = do
   let 
     values = 
@@ -65,7 +65,7 @@ toDynamoReadResult allValues = do
   version <- view (ix fieldVersion . avN) allValues >>= readMay
   return DynamoReadResult { dynamoReadResultKey = eventKey, dynamoReadResultVersion = version, dynamoReadResultValue = values }
 
-runCmd :: (Typeable m, MonadCatch m, MonadAWS m, MonadIO m) => T.Text -> DynamoCmd (m a) -> m a
+runCmd :: (Typeable m, MonadCatch m, MonadAWS m, MonadIO m) => Text -> DynamoCmd (m a) -> m a
 runCmd _ (Wait' milliseconds n) = do
   liftIO $ threadDelay (milliseconds * 1000)
   n
@@ -91,7 +91,7 @@ runCmd tn (QueryBackward' streamId limit exclusiveStartKey n) =
                 & (set qScanIndexForward (Just False))
                 & (set qExpressionAttributeValues (HM.fromList [(":streamId",set avS (Just streamId) attributeValue)]))
                 & (set qKeyConditionExpression (Just $ fieldStreamId <> " = :streamId"))
-        let items :: [HM.HashMap T.Text AttributeValue] = view qrsItems resp
+        let items :: [HM.HashMap Text AttributeValue] = view qrsItems resp
         n $ (fmap (fromJust . toDynamoReadResult)) items -- todo remove fromJust
 runCmd tn (WriteToDynamo' DynamoKey { dynamoKeyKey = streamId, dynamoKeyEventNumber = eventNumber } values version n) = 
   catches writeItem [handler _ConditionalCheckFailedException (\_ -> n DynamoWriteWrongVersion)] 
@@ -117,7 +117,7 @@ runCmd tn (WriteToDynamo' DynamoKey { dynamoKeyKey = streamId, dynamoKeyEventNum
 runCmd tn (ScanNeedsPaging' n) =
   scanUnpaged
     where
-      toEntry :: HM.HashMap T.Text AttributeValue -> DynamoKey
+      toEntry :: HM.HashMap Text AttributeValue -> DynamoKey
       toEntry i = fromJust $ do
         streamId <- view (ix fieldStreamId . avS) i
         eventNumber <- view (ix fieldEventNumber . avN) i >>= readMay
@@ -133,7 +133,7 @@ runCmd _tn (Log' _level msg n) = do
   liftIO $ print msg
   n -- todo: error "Log' unimplemented"
 
-buildTable :: T.Text -> AWS ()
+buildTable :: Text -> AWS ()
 buildTable tableName = do
   let unpagedGlobalSecondary = globalSecondaryIndex
           unpagedIndexName
@@ -154,7 +154,7 @@ buildTable tableName = do
   _ <- await (tableExists { _waitDelay = 4 }) (describeTable tableName)
   return ()
 
-doesTableExist :: T.Text -> AWS Bool
+doesTableExist :: Text -> AWS Bool
 doesTableExist tableName =
   catches describe [handler _ResourceNotFoundException (const $ return False)] 
   where 
@@ -176,5 +176,5 @@ runLocalDynamo x = do
   env <- newEnv Sydney (FromEnv "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" Nothing)
   runResourceT $ runAWS env $ reconfigure dynamo x
 
-runProgram :: T.Text -> DynamoCmdM a -> AWS a
+runProgram :: Text -> DynamoCmdM a -> AWS a
 runProgram tableName = iterM (runCmd tableName)

@@ -8,7 +8,6 @@ import           Network.Wai
 import qualified DynamoDbEventStore.Webserver as W
 import qualified Web.Scotty as S
 import qualified Network.HTTP.Types as H
-import qualified Data.Text            as T
 
 addEventPost :: [H.Header] -> Session SResponse
 addEventPost headers =
@@ -62,7 +61,7 @@ postEventSpec = do
       app' <- app
       flip runSession app' $ assertion =<< r
 
-getStream :: T.Text -> Session SResponse
+getStream :: Text -> Session SResponse
 getStream streamId =
   request $ defaultRequest {
                pathInfo = ["streams",streamId],
@@ -90,7 +89,7 @@ getStreamSpec = do
       app' <- app
       flip runSession app' $ assertion =<< r
 
-getEvent :: T.Text -> Int64 -> Session SResponse
+getEvent :: Text -> Int64 -> Session SResponse
 getEvent streamId eventNumber =
   request $ defaultRequest {
                pathInfo = ["streams",streamId,show eventNumber],

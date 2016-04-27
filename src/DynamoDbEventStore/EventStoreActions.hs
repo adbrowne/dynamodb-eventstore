@@ -25,12 +25,11 @@ import           Control.Monad.Except
 import           BasicPrelude
 import           Control.Lens hiding ((.=))
 import           Safe
-import           TextShow
+import           TextShow hiding (fromString)
 import           Pipes
 import qualified Pipes.Prelude as P
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.Text as T
-import qualified Data.Text.Encoding as T
 import qualified Data.Text.Lazy as TL
 import qualified Data.Text.Lazy.Encoding as TL
 import           DynamoDbEventStore.EventStoreCommands
@@ -59,9 +58,9 @@ data SubscribeAllRequest = SubscribeAllRequest {
 data SubscribeAllResponse = SubscribeAllResponse {
 } deriving (Show)
 
-newtype EventType = EventType T.Text deriving (Show, Eq, Ord, IsString)
+newtype EventType = EventType Text deriving (Show, Eq, Ord, IsString)
 
-eventTypeToText :: EventType -> T.Text
+eventTypeToText :: EventType -> Text
 eventTypeToText (EventType t) = t
 
 data EventEntry = EventEntry {
@@ -72,37 +71,37 @@ data EventEntry = EventEntry {
 instance Serialize.Serialize EventEntry
 
 instance Serialize.Serialize EventType where
-  put (EventType t) = (Serialize.put . T.encodeUtf8) t
-  get = EventType . T.decodeUtf8 <$> Serialize.get 
+  put (EventType t) = (Serialize.put . encodeUtf8) t
+  get = EventType . decodeUtf8 <$> Serialize.get 
 
 data PostEventRequest = PostEventRequest {
-   perStreamId        :: T.Text,
+   perStreamId        :: Text,
    perExpectedVersion :: Maybe Int64,
    perEvents          :: [EventEntry]
 } deriving (Show)
 
 instance QC.Arbitrary EventEntry where
-  arbitrary = EventEntry <$> (TL.encodeUtf8 .  TL.pack <$> QC.arbitrary)
-                         <*> (EventType . T.pack <$> QC.arbitrary)
+  arbitrary = EventEntry <$> (TL.encodeUtf8 . TL.pack <$> QC.arbitrary)
+                         <*> (EventType . fromString <$> QC.arbitrary)
 
 instance QC.Arbitrary PostEventRequest where
-  arbitrary = PostEventRequest <$> (T.pack <$> QC.arbitrary)
+  arbitrary = PostEventRequest <$> (fromString <$> QC.arbitrary)
                                <*> QC.arbitrary
                                <*> QC.arbitrary
 
 data ReadStreamRequest = ReadStreamRequest {
-   rsrStreamId         :: T.Text,
+   rsrStreamId         :: Text,
    rsrStartEventNumber :: Maybe Int64
 } deriving (Show)
 
 data ReadEventRequest = ReadEventRequest {
-   rerStreamId         :: T.Text,
+   rerStreamId         :: Text,
    rerEventNumber      :: Int64
 } deriving (Show)
 
 data ReadAllRequest = ReadAllRequest deriving (Show)
 
-fieldBody :: T.Text
+fieldBody :: Text
 fieldBody = "Body"
 
 data EventWriteResult = WriteSuccess | WrongExpectedVersion | EventExists | WriteError deriving (Eq, Show)
@@ -136,7 +135,7 @@ postEventRequestProgram (PostEventRequest sId ev eventEntries) = runExceptT $ do
       writeResult <- GlobalFeedWriter.dynamoWriteWithRetry dynamoKey values 0 
       return $ toEventResult writeResult
     dynamoReadResultToEventNumber (DynamoReadResult (DynamoKey _key eventNumber) _version _values) = eventNumber
-    getDynamoKey :: T.Text -> Maybe Int64 -> UserProgramStack (Either EventWriteResult DynamoKey)
+    getDynamoKey :: Text -> Maybe Int64 -> UserProgramStack (Either EventWriteResult DynamoKey)
     getDynamoKey streamId Nothing = do
       let dynamoHashKey = Constants.streamDynamoKeyPrefix <> streamId
       readResults <- queryBackward' dynamoHashKey 1 Nothing
@@ -157,7 +156,7 @@ postEventRequestProgram (PostEventRequest sId ev eventEntries) = runExceptT $ do
     toEventResult DynamoWriteFailure = WriteError
     toEventResult DynamoWriteWrongVersion = EventExists
 
-readField :: Monoid a => T.Text -> Lens' AttributeValue (Maybe a) -> DynamoValues -> Either String a
+readField :: Monoid a => Text -> Lens' AttributeValue (Maybe a) -> DynamoValues -> Either String a
 readField fieldName fieldType values = 
    maybeToEither $ view (ix fieldName . fieldType) values 
    where 
@@ -190,7 +189,7 @@ getReadStreamRequestProgram (ReadStreamRequest sId startEventNumber) = do
 
 getPageDynamoKey :: Int -> DynamoKey 
 getPageDynamoKey pageNumber =
-  let paddedPageNumber = T.pack (printf "%08d" pageNumber)
+  let paddedPageNumber = fromString (printf "%08d" pageNumber)
   in DynamoKey (Constants.pageDynamoKeyPrefix <> paddedPageNumber) 0
 
 feedEntryToEventKeys :: GlobalFeedWriter.FeedEntry -> [EventKey]
@@ -202,7 +201,7 @@ maybeToException err Nothing  = throwError err
 maybeToException _   (Just a) = return a
 
 jsonDecode :: (Aeson.FromJSON a, MonadError Text m) => ByteString -> m a
-jsonDecode a = eitherToError $ over _Left T.pack $ Aeson.eitherDecodeStrict a
+jsonDecode a = eitherToError $ over _Left fromString $ Aeson.eitherDecodeStrict a
 
 readPageKeys :: DynamoReadResult -> UserProgramStack [EventKey]
 readPageKeys (DynamoReadResult _key _version values) = do

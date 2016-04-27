@@ -34,9 +34,6 @@ import           Control.Monad.Free.TH
 import           GHC.Natural
 
 import           Data.Aeson
-import qualified Data.ByteString       as BS
-import qualified Data.Text             as T
-import qualified Data.Text.Encoding    as T
 import           GHC.Generics
 
 import           TextShow.TH
@@ -45,31 +42,31 @@ import qualified Test.QuickCheck as QC
 
 import           Network.AWS.DynamoDB
 
-newtype StreamId = StreamId T.Text deriving (Ord, Eq, Show, Hashable)
+newtype StreamId = StreamId Text deriving (Ord, Eq, Show, Hashable)
 deriveTextShow ''StreamId
 
 instance QC.Arbitrary StreamId where
-  arbitrary = StreamId . T.pack <$> QC.arbitrary
+  arbitrary = StreamId . fromString <$> QC.arbitrary
 
 newtype EventKey = EventKey (StreamId, Int64) deriving (Ord, Eq, Show)
 deriveTextShow ''EventKey
-type EventType = T.Text
+type EventType = Text
 type PageKey = (Int, Int) -- (Partition, PageNumber)
-type EventReadResult = Maybe (EventType, BS.ByteString, Maybe PageKey)
+type EventReadResult = Maybe (EventType, ByteString, Maybe PageKey)
 data PageStatus = Version Int | Full | Verified deriving (Eq, Show, Generic)
 
 data RecordedEvent = RecordedEvent {
-   recordedEventStreamId :: T.Text,
+   recordedEventStreamId :: Text,
    recordedEventNumber   :: Int64,
-   recordedEventData     :: BS.ByteString,
-   recordedEventType     :: T.Text
+   recordedEventData     :: ByteString,
+   recordedEventType     :: Text
 } deriving (Show, Eq, Ord)
 
 instance ToJSON RecordedEvent where
   toJSON RecordedEvent{..} =
     object [ "streamId"    .= recordedEventStreamId
            , "eventNumber" .= recordedEventNumber
-           , "eventData" .= T.decodeUtf8 recordedEventData
+           , "eventData" .= decodeUtf8 recordedEventData
            , "eventType" .= recordedEventType
            ]
 
@@ -96,11 +93,11 @@ instance ToJSON EventKey where
            ]
 
 data DynamoKey = DynamoKey {
-  dynamoKeyKey :: T.Text,
+  dynamoKeyKey :: Text,
   dynamoKeyEventNumber :: Int64
 } deriving (Show, Eq, Ord)
 
-type DynamoValues = HM.HashMap T.Text AttributeValue
+type DynamoValues = HM.HashMap Text AttributeValue
 data DynamoReadResult = DynamoReadResult {
   dynamoReadResultKey :: DynamoKey,
   dynamoReadResultVersion :: Int,
@@ -130,7 +127,7 @@ data DynamoCmd next =
     DynamoVersion
     (DynamoWriteResult -> next) |
   QueryBackward'
-    T.Text -- Hash Key
+    Text -- Hash Key
     Natural -- max events to retrieve
     (Maybe Int64) -- starting event, Nothing means start at head
     ([DynamoReadResult] -> next) |
@@ -140,13 +137,13 @@ data DynamoCmd next =
     Int
     next |
   FatalError'
-    T.Text |
+    Text |
   SetPulseStatus'
     Bool
     next |
   Log'
     LogLevel
-    T.Text
+    Text
     next
 
   deriving (Functor)

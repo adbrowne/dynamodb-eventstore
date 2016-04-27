@@ -1,25 +1,25 @@
 {-# LANGUAGE OverloadedStrings #-}
 module DynamoDbEventStore.Constants where
 
-import qualified Data.Text             as T
+import BasicPrelude
 
-needsPagingKey :: T.Text
+needsPagingKey :: Text
 needsPagingKey = "NeedsPaging"
 
-eventCountKey :: T.Text
+eventCountKey :: Text
 eventCountKey = "EventCount"
 
-pageIsVerifiedKey :: T.Text
+pageIsVerifiedKey :: Text
 pageIsVerifiedKey = "Verified"
 
-pageDynamoKeyPrefix :: T.Text
+pageDynamoKeyPrefix :: Text
 pageDynamoKeyPrefix = "page$"
 
-streamDynamoKeyPrefix :: T.Text
+streamDynamoKeyPrefix :: Text
 streamDynamoKeyPrefix = "stream$"
 
-pageBodyKey :: T.Text
+pageBodyKey :: Text
 pageBodyKey = "Body"
 
-eventPageNumberKey :: T.Text
+eventPageNumberKey :: Text
 eventPageNumberKey = "PageNumber"

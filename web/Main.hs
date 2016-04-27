@@ -29,7 +29,7 @@ runDynamoLocal env x = do
 runDynamoCloud :: (MonadThrow m, MonadIO m, MonadBaseControl IO m, HasEnv r) => r -> AWS a -> m a
 runDynamoCloud env x = runResourceT $ runAWS env x
 
-runMyAws :: (AWS a -> IO a) -> T.Text -> DynamoCmdM a -> IO a
+runMyAws :: (AWS a -> IO a) -> Text -> DynamoCmdM a -> IO a
 runMyAws runner tableName program = 
   runner $ runProgram tableName program
 
@@ -89,7 +89,7 @@ start parsedConfig = do
     (putStrLn "Creating table..." >> runner (buildTable tableName) >> putStrLn "Table created")
   if tableAlreadyExists || shouldCreateTable then runApp runner tableName else failNoTable
   where
-   runApp :: (forall a. AWS a -> IO a) -> T.Text -> IO ()
+   runApp :: (forall a. AWS a -> IO a) -> Text -> IO ()
    runApp runner tableName = do
      let runner' = runMyAws runner tableName
      _ <- forkIO $ runner' GlobalFeedWriter.main

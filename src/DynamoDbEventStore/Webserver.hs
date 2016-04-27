@@ -8,8 +8,6 @@ import           Web.Scotty
 import           Control.Arrow             (left)
 import           Data.Attoparsec.Text.Lazy
 import           Data.Char                 (isDigit)
-import qualified Data.Text.Encoding        as T
-import qualified Data.Text                 as T
 import qualified Data.Text.Lazy            as TL
 import           Network.HTTP.Types.Status
 import           DynamoDbEventStore.EventStoreActions
@@ -17,16 +15,16 @@ import           DynamoDbEventStore.EventStoreActions
 data ExpectedVersion = ExpectedVersion Int
   deriving (Show)
 
-toByteString :: TL.Text -> ByteString
-toByteString = T.encodeUtf8 . TL.toStrict
+toByteString :: LText -> ByteString
+toByteString = encodeUtf8 . TL.toStrict
 
-error400 :: TL.Text -> ActionM ()
+error400 :: LText -> ActionM ()
 error400 err = status $ mkStatus 400 (toByteString err)
 
-runParser :: Parser a -> e -> TL.Text -> Either e a
+runParser :: Parser a -> e -> LText -> Either e a
 runParser p e = left (const e) . eitherResult . parse p
 
-headerError :: TL.Text -> TL.Text -> TL.Text
+headerError :: LText -> LText -> LText
 headerError headerName message =
   mconcat [headerName, " header ", message]
 
@@ -34,7 +32,7 @@ maybeToEither :: a -> Maybe b ->Either a b
 maybeToEither a Nothing = Left a
 maybeToEither _ (Just a) = Right a
 
-parseMandatoryHeader :: TL.Text -> Parser a -> ActionM (Either TL.Text a)
+parseMandatoryHeader :: LText -> Parser a -> ActionM (Either LText a)
 parseMandatoryHeader headerName parser = do
   headerText <- header headerName
   return $
@@ -44,7 +42,7 @@ parseMandatoryHeader headerName parser = do
     missingErrorText = headerError headerName "is missing"
     parseFailErrorText = headerError headerName "in wrong format"
 
-parseOptionalHeader :: TL.Text -> Parser a -> ActionM (Either TL.Text (Maybe a))
+parseOptionalHeader :: LText -> Parser a -> ActionM (Either LText (Maybe a))
 parseOptionalHeader headerName parser = do
   headerValue <- header headerName
   case headerValue of Nothing -> return $ Right Nothing
@@ -57,11 +55,11 @@ maxInt64 = toInteger (maxBound :: Int64)
 
 positiveIntegerParser :: Parser Integer
 positiveIntegerParser =
-  fmap (read . T.pack) $ many1 (satisfy isDigit) <* endOfInput
+  fmap (read . fromString) $ many1 (satisfy isDigit) <* endOfInput
 
-textParser :: Parser T.Text
+textParser :: Parser Text
 textParser =
-  fmap T.pack $ many1 (satisfy (const True)) <* endOfInput
+  fmap fromString $ many1 (satisfy (const True)) <* endOfInput
 
 positiveInt64Parser :: Parser Int64
 positiveInt64Parser =
@@ -76,13 +74,13 @@ fromEither :: Either a a -> a
 fromEither (Left a) = a
 fromEither (Right a) = a
 
-toResult :: Either TL.Text (ActionM ()) -> ActionM ()
+toResult :: Either LText (ActionM ()) -> ActionM ()
 toResult = fromEither . left error400
 
 showEventResponse :: Show a => a -> ActionM ()
 showEventResponse = html . TL.fromStrict . show
 
-notEmpty :: T.Text -> Either TL.Text T.Text
+notEmpty :: Text -> Either LText Text
 notEmpty "" = Left "streamId required"
 notEmpty t = Right t
 

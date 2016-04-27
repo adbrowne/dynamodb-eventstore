@@ -123,7 +123,7 @@ setPageEntryPageNumber pageNumber feedEntry = do
   let newValue = (HM.delete Constants.needsPagingKey . HM.insert Constants.eventPageNumberKey (stringAttributeValue (show pageNumber)) . dynamoReadResultValue) eventEntry
   void $ dynamoWriteWithRetry dynamoKey newValue (nextVersion eventEntry)
 
-stringAttributeValue :: T.Text -> AttributeValue
+stringAttributeValue :: Text -> AttributeValue
 stringAttributeValue t = set avS (Just t) attributeValue
 
 verifyPage :: Int -> DynamoCmdM ()
@@ -141,7 +141,7 @@ verifyPage pageNumber = do
     let newValues = HM.insert Constants.pageIsVerifiedKey (stringAttributeValue "Verified") pageValues
     void $ dynamoWriteWithRetry pageDynamoKey newValues (pageVersion + 1)
 
-logIf :: Bool -> LogLevel -> T.Text -> GlobalFeedWriterStack ()
+logIf :: Bool -> LogLevel -> Text -> GlobalFeedWriterStack ()
 logIf True logLevel t = lift $ log' logLevel t
 logIf False _ _ = return ()
 

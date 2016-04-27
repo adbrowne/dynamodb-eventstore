@@ -9,7 +9,7 @@ import qualified DynamoDbEventStore.Webserver as W
 import qualified Data.Text.Lazy as TL
 import           Text.Read (readMaybe)
 
-showText :: Show a => a -> TL.Text
+showText :: Show a => a -> LText
 showText = TL.fromStrict . show
 
 spec :: Spec

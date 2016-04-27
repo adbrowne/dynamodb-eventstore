@@ -18,6 +18,6 @@ main = do
   let opts = defaults
                  & header "ES-ExpectedVersion" .~ ["0"]
                  & header "ES-EventType" .~ ["EventType0"]
-  _ <- postWith opts streamUri (toJSON ("content" :: T.Text))
+  _ <- postWith opts streamUri (toJSON ("content" :: Text))
   r <- get streamUri
   putStrLn $ show $ r ^. responseBody
