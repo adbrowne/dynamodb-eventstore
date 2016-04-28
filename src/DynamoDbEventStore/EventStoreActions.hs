@@ -29,7 +29,6 @@ import           TextShow hiding (fromString)
 import           Pipes
 import qualified Pipes.Prelude as P
 import qualified Data.ByteString.Lazy as BL
-import qualified Data.Text as T
 import qualified Data.Text.Lazy as TL
 import qualified Data.Text.Lazy.Encoding as TL
 import           DynamoDbEventStore.EventStoreCommands
@@ -155,13 +154,6 @@ postEventRequestProgram (PostEventRequest sId ev eventEntries) = runExceptT $ do
     toEventResult DynamoWriteSuccess = WriteSuccess
     toEventResult DynamoWriteFailure = WriteError
     toEventResult DynamoWriteWrongVersion = EventExists
-
-readField :: Monoid a => Text -> Lens' AttributeValue (Maybe a) -> DynamoValues -> Either String a
-readField fieldName fieldType values = 
-   maybeToEither $ view (ix fieldName . fieldType) values 
-   where 
-     maybeToEither Nothing  = Left $ "Error reading field: " <> T.unpack fieldName
-     maybeToEither (Just x) = Right x
 
 fromEitherError :: String -> Either String a -> a
 fromEitherError context  (Left err) = error (context <> " " <> err)

@@ -51,7 +51,14 @@ itemAttribute :: Text -> Lens' AttributeValue (Maybe v) -> v -> (Text, Attribute
 itemAttribute key l value =
   (key, set l (Just value) attributeValue)
 
-toDynamoReadResult :: HM.HashMap Text AttributeValue -> Maybe DynamoReadResult
+readExcept :: (Read a) => String -> Text -> Either String a
+readExcept err t = 
+  let 
+    parsed = readMay t
+  in case parsed of Nothing  -> Left err
+                    (Just a) -> Right a
+
+toDynamoReadResult :: HM.HashMap Text AttributeValue -> Either String DynamoReadResult
 toDynamoReadResult allValues = do
   let 
     values = 
@@ -59,11 +66,23 @@ toDynamoReadResult allValues = do
         & HM.delete fieldVersion 
         & HM.delete fieldStreamId 
         & HM.delete fieldEventNumber
-  streamId <- view (ix fieldStreamId . avS) allValues 
-  eventNumber <- view (ix fieldEventNumber . avN) allValues >>= readMay
+  streamId <- readField fieldStreamId avS allValues 
+  eventNumber <- readField fieldEventNumber avN allValues >>= readExcept "Error parsing eventNumber"
   let eventKey = DynamoKey streamId eventNumber
-  version <- view (ix fieldVersion . avN) allValues >>= readMay
+  version <- readField fieldVersion avN allValues >>= readExcept "Error parsing version"
   return DynamoReadResult { dynamoReadResultKey = eventKey, dynamoReadResultVersion = version, dynamoReadResultValue = values }
+
+allErrors :: (MonadError String m) => [Either String a] -> m [a]
+allErrors l =
+  let
+    loop ((Left s):_)   _   = throwError s
+    loop []             acc = return acc
+    loop ((Right a):xs) acc = loop xs (a:acc)
+  in reverse <$> loop l []
+
+eitherToExcept :: (MonadError e m) => Either e a -> m a
+eitherToExcept (Left s) = throwError s
+eitherToExcept (Right a) = return a
 
 runCmd :: (Typeable m, MonadCatch m, MonadAWS m, MonadIO m, MonadError String m, MonadResource m, MonadReader r m, HasEnv r) => Text -> DynamoCmd (m a) -> m a
 runCmd _ (Wait' milliseconds n) = do
@@ -73,11 +92,15 @@ runCmd tn (ReadFromDynamo' eventKey n) = do
   let key = getDynamoKeyForEvent eventKey
   let req = getItem tn & set giKey key
   resp <- send req
-  n $ getResult resp
+  result <- getResult resp
+  n $ result
   where
-    getResult :: GetItemResponse -> Maybe DynamoReadResult
+    getResult :: (MonadError String m) => GetItemResponse -> m (Maybe DynamoReadResult)
     getResult r = 
-      toDynamoReadResult $ view girsItem r
+      let item = view girsItem r
+      in 
+        if item == mempty then return Nothing
+        else eitherToExcept (Just <$> toDynamoReadResult item)
 runCmd tn (QueryBackward' streamId limit exclusiveStartKey n) =
   getBackward
     where
@@ -92,7 +115,9 @@ runCmd tn (QueryBackward' streamId limit exclusiveStartKey n) =
                 & (set qExpressionAttributeValues (HM.fromList [(":streamId",set avS (Just streamId) attributeValue)]))
                 & (set qKeyConditionExpression (Just $ fieldStreamId <> " = :streamId"))
         let items :: [HM.HashMap Text AttributeValue] = view qrsItems resp
-        n $ (fmap (fromJust . toDynamoReadResult)) items -- todo remove fromJust
+        let parsedItems = fmap toDynamoReadResult items
+        x <- allErrors parsedItems
+        n $ x
 runCmd tn (WriteToDynamo' DynamoKey { dynamoKeyKey = streamId, dynamoKeyEventNumber = eventNumber } values version n) = 
   catches writeItem [handler _ConditionalCheckFailedException (\_ -> n DynamoWriteWrongVersion)] 
   where

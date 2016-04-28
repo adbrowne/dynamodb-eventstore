@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveFunctor     #-}
 {-# LANGUAGE DeriveGeneric     #-}
+{-# LANGUAGE RankNTypes        #-}
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
@@ -17,6 +18,7 @@ module DynamoDbEventStore.EventStoreCommands(
   scanNeedsPaging',
   queryBackward',
   setPulseStatus',
+  readField,
   DynamoCmdM,
   DynamoVersion,
   RecordedEvent(..),
@@ -29,6 +31,8 @@ module DynamoDbEventStore.EventStoreCommands(
   DynamoValues
   ) where
 import           BasicPrelude
+import           Control.Lens hiding ((.=))
+import qualified Data.Text as T
 import           Control.Monad.Free.Church
 import           Control.Monad.Free.TH
 import           GHC.Natural
@@ -151,3 +155,11 @@ data DynamoCmd next =
 makeFree ''DynamoCmd
 
 type DynamoCmdM = F DynamoCmd
+
+readField :: Monoid a => Text -> Lens' AttributeValue (Maybe a) -> DynamoValues -> Either String a
+readField fieldName fieldType values = 
+   maybeToEither $ view (ix fieldName . fieldType) values 
+   where 
+     maybeToEither Nothing  = Left $ "Error reading field: " <> T.unpack fieldName
+     maybeToEither (Just x) = Right x
+
