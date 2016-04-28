@@ -36,16 +36,12 @@ fieldPagingRequired = Constants.needsPagingKey
 unpagedIndexName :: Text
 unpagedIndexName = "unpagedIndex"
 
-getDynamoKey :: Text -> Int64 -> HM.HashMap Text AttributeValue
-getDynamoKey hashKey rangeKey =
+getDynamoKeyForEvent :: DynamoKey -> HM.HashMap Text AttributeValue
+getDynamoKeyForEvent (DynamoKey hashKey rangeKey) =
     HM.fromList [
         (fieldStreamId, set avS (Just hashKey) attributeValue),
         (fieldEventNumber, set avN (Just (showt rangeKey)) attributeValue)
     ]
-
-getDynamoKeyForEvent :: DynamoKey -> HM.HashMap Text AttributeValue
-getDynamoKeyForEvent (DynamoKey streamId eventNumber) =
-    getDynamoKey streamId eventNumber
 
 itemAttribute :: Text -> Lens' AttributeValue (Maybe v) -> v -> (Text, AttributeValue)
 itemAttribute key l value =
