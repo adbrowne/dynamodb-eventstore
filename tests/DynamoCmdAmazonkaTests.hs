@@ -30,7 +30,7 @@ testWrite = writeToDynamo' testKey
 sampleRead :: DynamoCmdM (Maybe DynamoReadResult)
 sampleRead = readFromDynamo' testKey
 
-tests :: (forall a. DynamoCmdM a -> IO a) -> [TestTree]
+tests :: (forall a. DynamoCmdM a -> IO (Either String a)) -> [TestTree]
 tests evalProgram =
   [
     testCase "Can read event" $
@@ -39,8 +39,7 @@ tests evalProgram =
             _ <- testWrite sampleValuesNeedsPaging 0
             sampleRead
           evt = evalProgram actions
-          expected :: Maybe DynamoReadResult
-          expected = Just $ DynamoReadResult testKey 0 sampleValuesNeedsPaging
+          expected = Right $ Just $ DynamoReadResult testKey 0 sampleValuesNeedsPaging
         in do
           r <- evt
           assertEqual "Event is read" expected r
@@ -52,7 +51,7 @@ tests evalProgram =
           writeResult = evalProgram actions
         in do
           r <- writeResult
-          assertEqual "Second write has error" DynamoWriteWrongVersion r
+          assertEqual "Second write has error" (Right DynamoWriteWrongVersion) r
     , testCase "With correct version you can write a subsequent event" $
         let
           actions = do
@@ -61,7 +60,7 @@ tests evalProgram =
           writeResult = evalProgram actions
         in do
           r <- writeResult
-          assertEqual "Second write should succeed" DynamoWriteSuccess r
+          assertEqual "Second write should succeed" (Right DynamoWriteSuccess) r
     , testCase "Scan unpaged events returns written event" $
       let
         actions = do
@@ -70,7 +69,7 @@ tests evalProgram =
         evtList = evalProgram actions
       in do
         r <- evtList
-        assertEqual "Should should have single item" [testKey] r
+        assertEqual "Should should have single item" (Right [testKey]) r
     , testCase "Scan unpaged events does not returned paged event" $
       let
         actions = do
@@ -80,7 +79,7 @@ tests evalProgram =
         evtList = evalProgram actions
       in do
         r <- evtList
-        assertEqual "Should have no items" [] r
+        assertEqual "Should have no items" (Right []) r
     , testCase "Can read events backward" $
         let
           actions = do
@@ -88,8 +87,7 @@ tests evalProgram =
             _ <- writeToDynamo' (DynamoKey testStreamId 1) sampleValuesNeedsPaging 0
             queryBackward' testStreamId 10 Nothing
           evt = evalProgram actions
-          expected :: [DynamoReadResult]
-          expected = [
+          expected = Right [
             DynamoReadResult (DynamoKey testStreamId 1) 0 sampleValuesNeedsPaging,
             DynamoReadResult (DynamoKey testStreamId 0) 0 sampleValuesNeedsPaging ]
         in do
@@ -102,8 +100,7 @@ tests evalProgram =
             _ <- writeToDynamo' (DynamoKey testStreamId 1) sampleValuesNeedsPaging 0
             queryBackward' testStreamId 1 Nothing
           evt = evalProgram actions
-          expected :: [DynamoReadResult]
-          expected = [
+          expected = Right [
             DynamoReadResult (DynamoKey testStreamId 1) 0 sampleValuesNeedsPaging ]
         in do
           r <- evt
@@ -115,8 +112,7 @@ tests evalProgram =
             _ <- writeToDynamo' (DynamoKey testStreamId 1) sampleValuesNeedsPaging 0
             queryBackward' testStreamId 10 (Just 1)
           evt = evalProgram actions
-          expected :: [DynamoReadResult]
-          expected = [
+          expected = Right [
             DynamoReadResult (DynamoKey testStreamId 0) 0 sampleValuesNeedsPaging ]
         in do
           r <- evt

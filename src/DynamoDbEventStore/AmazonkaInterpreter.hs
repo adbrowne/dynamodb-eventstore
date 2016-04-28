@@ -4,9 +4,12 @@
 {-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE RankNTypes               #-}
 
-module DynamoDbEventStore.AmazonkaInterpreter (runProgram, buildTable, runLocalDynamo, evalProgram, doesTableExist) where
+module DynamoDbEventStore.AmazonkaInterpreter (runProgram, buildTable, runLocalDynamo, evalProgram, doesTableExist, MyAwsStack) where
 
 import           BasicPrelude
+import           Control.Monad.Representable.Reader
+import           Control.Monad.Trans.Resource
+import           Control.Monad.Except
 import           Control.Concurrent (threadDelay)
 import           Control.Exception.Lens
 import           Control.Monad.Free.Church
@@ -21,7 +24,8 @@ import qualified DynamoDbEventStore.Constants as Constants
 import           System.Random
 import           DynamoDbEventStore.EventStoreCommands
 
-import Network.AWS
+import Network.AWS(MonadAWS)
+import Control.Monad.Trans.AWS
 import Network.AWS.Waiter
 import Network.AWS.DynamoDB
 
@@ -61,7 +65,7 @@ toDynamoReadResult allValues = do
   version <- view (ix fieldVersion . avN) allValues >>= readMay
   return DynamoReadResult { dynamoReadResultKey = eventKey, dynamoReadResultVersion = version, dynamoReadResultValue = values }
 
-runCmd :: (Typeable m, MonadCatch m, MonadAWS m, MonadIO m) => Text -> DynamoCmd (m a) -> m a
+runCmd :: (Typeable m, MonadCatch m, MonadAWS m, MonadIO m, MonadError String m, MonadResource m, MonadReader r m, HasEnv r) => Text -> DynamoCmd (m a) -> m a
 runCmd _ (Wait' milliseconds n) = do
   liftIO $ threadDelay (milliseconds * 1000)
   n
@@ -129,7 +133,7 @@ runCmd _tn (Log' _level msg n) = do
   liftIO $ print msg
   n -- todo: error "Log' unimplemented"
 
-buildTable :: Text -> AWS ()
+buildTable :: Text -> MyAwsStack ()
 buildTable tableName = do
   let unpagedGlobalSecondary = globalSecondaryIndex
           unpagedIndexName
@@ -150,7 +154,7 @@ buildTable tableName = do
   _ <- await (tableExists { _waitDelay = 4 }) (describeTable tableName)
   return ()
 
-doesTableExist :: Text -> AWS Bool
+doesTableExist :: Text -> MyAwsStack Bool
 doesTableExist tableName =
   catches describe [handler _ResourceNotFoundException (const $ return False)] 
   where 
@@ -159,18 +163,20 @@ doesTableExist tableName =
       let tableDesc = view drsTable resp
       return $ isJust tableDesc
 
-evalProgram :: DynamoCmdM a -> IO a
+evalProgram :: DynamoCmdM a -> IO (Either String a)
 evalProgram program = do
   tableNameId :: Int <- getStdRandom (randomR (1,9999999999))
   let tableName = "testtable-" ++ show tableNameId
-  runLocalDynamo $ buildTable tableName
+  _ <- runLocalDynamo $ buildTable tableName
   runLocalDynamo $ runProgram tableName program
 
-runLocalDynamo :: AWS b -> IO b
+runLocalDynamo :: MyAwsStack b -> IO (Either String b)
 runLocalDynamo x = do
   let dynamo = setEndpoint False "localhost" 8000 dynamoDB
   env <- newEnv Sydney (FromEnv "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" Nothing)
-  runResourceT $ runAWS env $ reconfigure dynamo x
+  runResourceT $ runAWST env $ reconfigure dynamo $ runExceptT x
 
-runProgram :: Text -> DynamoCmdM a -> AWS a
+type MyAwsStack = (ExceptT String) (AWST (ResourceT IO))
+
+runProgram :: Text -> DynamoCmdM a -> MyAwsStack a
 runProgram tableName = iterM (runCmd tableName)
