@@ -16,7 +16,6 @@ import           Control.Monad.Free.Church
 import           Control.Monad.Catch
 import qualified Data.HashMap.Strict     as HM
 import           Control.Lens
-import           Data.Maybe              (fromJust)
 import           Data.List.NonEmpty      (NonEmpty (..))
 import qualified Data.Text               as T
 import           TextShow
@@ -58,6 +57,12 @@ readExcept err t =
   in case parsed of Nothing  -> Left err
                     (Just a) -> Right a
 
+fromAttributesToDynamoKey :: HM.HashMap Text AttributeValue -> Either String DynamoKey
+fromAttributesToDynamoKey allValues = do
+  streamId <- readField fieldStreamId avS allValues 
+  eventNumber <- readField fieldEventNumber avN allValues >>= readExcept "Error parsing eventNumber"
+  return (DynamoKey streamId eventNumber)
+
 toDynamoReadResult :: HM.HashMap Text AttributeValue -> Either String DynamoReadResult
 toDynamoReadResult allValues = do
   let 
@@ -66,9 +71,7 @@ toDynamoReadResult allValues = do
         & HM.delete fieldVersion 
         & HM.delete fieldStreamId 
         & HM.delete fieldEventNumber
-  streamId <- readField fieldStreamId avS allValues 
-  eventNumber <- readField fieldEventNumber avN allValues >>= readExcept "Error parsing eventNumber"
-  let eventKey = DynamoKey streamId eventNumber
+  eventKey <- fromAttributesToDynamoKey allValues
   version <- readField fieldVersion avN allValues >>= readExcept "Error parsing version"
   return DynamoReadResult { dynamoReadResultKey = eventKey, dynamoReadResultVersion = version, dynamoReadResultValue = values }
 
@@ -116,8 +119,7 @@ runCmd tn (QueryBackward' streamId limit exclusiveStartKey n) =
                 & (set qKeyConditionExpression (Just $ fieldStreamId <> " = :streamId"))
         let items :: [HM.HashMap Text AttributeValue] = view qrsItems resp
         let parsedItems = fmap toDynamoReadResult items
-        x <- allErrors parsedItems
-        n $ x
+        allErrors parsedItems >>= n
 runCmd tn (WriteToDynamo' DynamoKey { dynamoKeyKey = streamId, dynamoKeyEventNumber = eventNumber } values version n) = 
   catches writeItem [handler _ConditionalCheckFailedException (\_ -> n DynamoWriteWrongVersion)] 
   where
@@ -142,16 +144,11 @@ runCmd tn (WriteToDynamo' DynamoKey { dynamoKeyKey = streamId, dynamoKeyEventNum
 runCmd tn (ScanNeedsPaging' n) =
   scanUnpaged
     where
-      toEntry :: HM.HashMap Text AttributeValue -> DynamoKey
-      toEntry i = fromJust $ do
-        streamId <- view (ix fieldStreamId . avS) i
-        eventNumber <- view (ix fieldEventNumber . avN) i >>= readMay
-        return (DynamoKey streamId eventNumber)
       scanUnpaged = do
         resp <- send $
              scan tn
              & set sIndexName (Just unpagedIndexName)
-        n $ fmap toEntry (view srsItems resp)
+        allErrors (fmap fromAttributesToDynamoKey (view srsItems resp)) >>= n
 runCmd _tn (FatalError' message) = error $ T.unpack ("FatalError': " <> show message)
 runCmd _tn (SetPulseStatus' _ n) = n
 runCmd _tn (Log' _level msg n) = do
