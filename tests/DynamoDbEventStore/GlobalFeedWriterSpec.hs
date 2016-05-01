@@ -80,8 +80,8 @@ writeEvent (stream, eventNumber, eventBodies) =
   in
     postEventRequestProgram (PostEventRequest stream (Just eventNumber) eventEntries)
 
-publisher :: [(Text,Int64,[EventData])] -> DynamoCmdM ()
-publisher xs = forM_ xs writeEvent
+publisher :: [(Text,Int64,[EventData])] -> DynamoCmdM (Either Text ())
+publisher xs = Right <$> forM_ xs writeEvent
 
 globalFeedFromUploadList :: [UploadItem] -> Map.Map Text (Seq.Seq Int64)
 globalFeedFromUploadList =
@@ -260,7 +260,7 @@ prop_NoWriteRequestCanCausesAFatalErrorInGlobalFeedWriter :: [PostEventRequest] 
 prop_NoWriteRequestCanCausesAFatalErrorInGlobalFeedWriter events =
   let
     programs = Map.fromList [
-      ("Publisher", (forM_ events postEventRequestProgram, 100))
+      ("Publisher", (Right <$> forM_ events postEventRequestProgram, 100))
       , ("GlobalFeedWriter1", (GlobalFeedWriter.main, 100))
       ]
   in QC.forAll (runPrograms programs) check

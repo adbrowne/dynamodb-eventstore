@@ -230,8 +230,8 @@ runLoop = do
   when (null scanResult) (wait' 1000)
   setPulseStatus' $ case scanResult of [] -> False
                                        _  -> True
-main :: DynamoCmdM ()
-main = forever $ do
+main :: DynamoCmdM (Either Text ())
+main = do
   result <- runExceptT runLoop
-  case result of (Left errMsg) -> fatalError' errMsg
-                 (Right ())    -> return ()
+  case result of (Left errMsg) -> return $ Left errMsg
+                 (Right ())    -> main
