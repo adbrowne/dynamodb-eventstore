@@ -22,15 +22,16 @@ module DynamoDbEventStore.EventStoreActions(
 
 import           Data.Either.Combinators
 import           Control.Monad.Except
-import           Control.Monad.Trans.List
 import           BasicPrelude
 import           Control.Lens hiding ((.=))
 import           Safe
+import           GHC.Natural
 import           TextShow hiding (fromString)
-import           Pipes hiding (ListT, runListT)
 import qualified Pipes.Prelude as P
+import           Pipes hiding (ListT, runListT)
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.Text.Lazy as TL
+import qualified Data.Text as T
 import qualified Data.Text.Lazy.Encoding as TL
 import           DynamoDbEventStore.EventStoreCommands
 import qualified Data.HashMap.Strict     as HM
@@ -119,6 +120,8 @@ ensureExpectedVersion (DynamoKey streamId expectedEventNumber) = do
       eventCount <- GlobalFeedWriter.entryEventCount readResult
       return $ eventNumber + (fromIntegral eventCount) - 1 == expectedEventNumber
 
+dynamoReadResultToEventNumber :: DynamoReadResult -> Int64
+dynamoReadResultToEventNumber (DynamoReadResult (DynamoKey _key eventNumber) _version _values) = eventNumber
 
 postEventRequestProgram :: PostEventRequest -> DynamoCmdM (Either Text EventWriteResult)
 postEventRequestProgram (PostEventRequest _sId _ev []) = return $ Left "PostRequest must have events"
@@ -134,7 +137,6 @@ postEventRequestProgram (PostEventRequest sId ev eventEntries) = runExceptT $ do
                    HM.insert Constants.eventCountKey (set avN (Just ((showt . length) eventEntries)) attributeValue)
       writeResult <- GlobalFeedWriter.dynamoWriteWithRetry dynamoKey values 0 
       return $ toEventResult writeResult
-    dynamoReadResultToEventNumber (DynamoReadResult (DynamoKey _key eventNumber) _version _values) = eventNumber
     getDynamoKey :: Text -> Maybe Int64 -> UserProgramStack (Either EventWriteResult DynamoKey)
     getDynamoKey streamId Nothing = do
       let dynamoHashKey = Constants.streamDynamoKeyPrefix <> streamId
@@ -162,27 +164,53 @@ binaryDeserialize x = do
   case value of Left err    -> throwError (fromString err)
                 Right v     -> return v
 
-toRecordedEvent :: Text -> DynamoReadResult -> ListT (ExceptT Text DynamoCmdM) [RecordedEvent]
-toRecordedEvent sId (DynamoReadResult key _version values) = do
+toRecordedEvent :: DynamoReadResult -> (ExceptT Text DynamoCmdM) [RecordedEvent]
+toRecordedEvent (DynamoReadResult (DynamoKey dynamoHashKey firstEventNumber) _version values) = do
   eventBody <- readField fieldBody avB values 
+  let streamId = T.drop (T.length Constants.streamDynamoKeyPrefix) dynamoHashKey
   (eventEntries :: [EventEntry]) <- binaryDeserialize eventBody
-  let firstEventNumber = dynamoKeyEventNumber key
   let eventEntriesWithEventNumber = zip [firstEventNumber..] eventEntries
-  let recordedEvents = fmap (\(eventNumber, EventEntry {..}) -> RecordedEvent sId eventNumber (BL.toStrict eventEntryData) (eventTypeToText eventEntryType)) eventEntriesWithEventNumber
+  let recordedEvents = fmap (\(eventNumber, EventEntry {..}) -> RecordedEvent streamId eventNumber (BL.toStrict eventEntryData) (eventTypeToText eventEntryType)) eventEntriesWithEventNumber
   return $ reverse recordedEvents
+
+
+dynamoReadResultProducer :: StreamId -> Maybe Int64 -> Natural -> Producer DynamoReadResult UserProgramStack ()
+dynamoReadResultProducer (StreamId streamId) lastEvent batchSize = do
+  (firstBatch :: [DynamoReadResult]) <- lift $ queryBackward' (Constants.streamDynamoKeyPrefix <> streamId) batchSize lastEvent
+  yieldResultsAndLoop firstBatch
+  where
+    yieldResultsAndLoop [] = return ()
+    yieldResultsAndLoop [recordedEvent] = do
+      yield recordedEvent
+      let lastEventNumber = dynamoReadResultToEventNumber recordedEvent
+      dynamoReadResultProducer (StreamId streamId) (Just $ lastEventNumber - 1) batchSize
+    yieldResultsAndLoop (x:xs) = do
+      yield x
+      yieldResultsAndLoop xs
+
+readResultToRecordedEventPipe :: Pipe DynamoReadResult RecordedEvent UserProgramStack ()
+readResultToRecordedEventPipe = do
+  readResult <- await
+  (recordedEvents :: [RecordedEvent]) <- lift $ toRecordedEvent readResult
+  forM_ recordedEvents yield
+
+recordedEventProducer :: StreamId -> Maybe Int64 -> Natural -> Producer RecordedEvent UserProgramStack ()
+recordedEventProducer streamId lastEvent batchSize = 
+  dynamoReadResultProducer streamId lastEvent batchSize 
+    >-> readResultToRecordedEventPipe 
+    >-> filterLastEvent lastEvent
+  where
+    filterLastEvent Nothing = P.filter (const True)
+    filterLastEvent (Just v) = P.filter ((<= v) . recordedEventNumber) 
 
 getReadEventRequestProgram :: ReadEventRequest -> DynamoCmdM (Either Text (Maybe RecordedEvent))
 getReadEventRequestProgram (ReadEventRequest sId eventNumber) = runExceptT $ do
-  (readResults :: [DynamoReadResult]) <- lift $ queryBackward' (Constants.streamDynamoKeyPrefix <> sId) 1 (Just $ eventNumber + 1)
-  allEvents <- runListT $ forM readResults (toRecordedEvent sId)
-  let (events :: [RecordedEvent]) = join (join allEvents)
+  (events :: [RecordedEvent]) <- P.toListM $ recordedEventProducer (StreamId sId) (Just $ eventNumber + 1) 1
   return $ find ((== eventNumber) . recordedEventNumber) events
 
 getReadStreamRequestProgram :: ReadStreamRequest -> DynamoCmdM (Either Text [RecordedEvent])
-getReadStreamRequestProgram (ReadStreamRequest sId startEventNumber) = runExceptT $ do
-  readResults <- lift $ queryBackward' (Constants.streamDynamoKeyPrefix <> sId) 10 ((+1) <$> startEventNumber)
-  allEvents <- runListT $ forM readResults (toRecordedEvent sId)
-  return $ join (join allEvents)
+getReadStreamRequestProgram (ReadStreamRequest sId startEventNumber) = 
+  runExceptT $ P.toListM $ recordedEventProducer (StreamId sId) ((+1) <$> startEventNumber) 10
 
 getPageDynamoKey :: Int -> DynamoKey 
 getPageDynamoKey pageNumber =
