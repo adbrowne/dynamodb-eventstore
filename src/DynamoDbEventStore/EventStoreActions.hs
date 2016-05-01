@@ -221,16 +221,12 @@ feedEntryToEventKeys :: GlobalFeedWriter.FeedEntry -> [EventKey]
 feedEntryToEventKeys GlobalFeedWriter.FeedEntry { GlobalFeedWriter.feedEntryStream = streamId, GlobalFeedWriter.feedEntryNumber = eventNumber, GlobalFeedWriter.feedEntryCount = entryCount } = 
   (\number -> EventKey(streamId, number)) <$> (take entryCount [eventNumber..])
 
-maybeToException :: (MonadError e m) => e -> Maybe a -> m a
-maybeToException err Nothing  = throwError err
-maybeToException _   (Just a) = return a
-
 jsonDecode :: (Aeson.FromJSON a, MonadError Text m) => ByteString -> m a
 jsonDecode a = eitherToError $ over _Left fromString $ Aeson.eitherDecodeStrict a
 
 readPageKeys :: DynamoReadResult -> UserProgramStack [EventKey]
 readPageKeys (DynamoReadResult _key _version values) = do
-   body <- maybeToException "Error reading pageBody" $ view (ix Constants.pageBodyKey . avB) values 
+   body <- readField Constants.pageBodyKey avB values 
    feedEntries <- jsonDecode body
    return $ feedEntries >>= feedEntryToEventKeys
 
