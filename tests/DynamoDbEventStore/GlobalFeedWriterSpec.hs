@@ -3,7 +3,7 @@
 {-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE FlexibleContexts #-}
 
-module DynamoDbEventStore.GlobalFeedWriterSpec where
+module DynamoDbEventStore.GlobalFeedWriterSpec (tests) where
 
 import           BasicPrelude
 import           Control.Lens
@@ -39,16 +39,6 @@ newtype EventData = EventData Text deriving (Eq,Show)
 instance QC.Arbitrary EventData where
   arbitrary = EventData . T.pack <$> QC.arbitrary
   shrink (EventData xs) = EventData . T.pack <$> QC.shrink (T.unpack xs)
-
-selectListItem :: [a] -> QC.Gen (a, [a])
-selectListItem xs = do
-  itemIndex <- QC.choose (0, length xs - 1)
-  return (xs !! itemIndex, take itemIndex xs ++ drop (itemIndex + 1) xs)
-
-splitList :: [a] -> QC.Gen ([a],[a])
-splitList xs = do
-  splitIndex <- QC.choose (1, length xs)
-  return (take splitIndex xs, drop splitIndex xs)
 
 uniqueList :: Ord a => [a] -> [a]
 uniqueList = Set.toList . Set.fromList
@@ -205,9 +195,6 @@ prop_ScanUnpagedShouldBeEmpty (UploadList uploadList) =
      where
        check (_, testState) = scanUnpaged testState === []
        scanUnpaged = evalProgram "scanUnpaged" scanNeedsPaging'
-
-eventDataToByteString :: EventData -> LByteString
-eventDataToByteString (EventData ed) = (TL.encodeUtf8 . TL.fromStrict) ed
 
 type EventWriter = StreamId -> [(Text, LByteString)] -> DynamoCmdM ()
 
