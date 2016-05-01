@@ -21,15 +21,15 @@ import qualified Data.Text               as T
 import           Control.Monad.Trans.AWS
 import           Network.AWS.DynamoDB
 
-runDynamoLocal :: Env -> MyAwsStack a -> IO (Either String a)
+runDynamoLocal :: Env -> MyAwsStack a -> IO (Either Text a)
 runDynamoLocal env x = do
   let dynamo = setEndpoint False "localhost" 8000 dynamoDB
   runResourceT $ runAWST env $ reconfigure dynamo $ runExceptT x
 
-runDynamoCloud :: Env -> MyAwsStack a -> IO (Either String a)
+runDynamoCloud :: Env -> MyAwsStack a -> IO (Either Text a)
 runDynamoCloud env x = runResourceT $ runAWST env $ runExceptT x
 
-runMyAws :: (MyAwsStack a -> ExceptT String IO a) -> Text -> DynamoCmdM a -> ExceptT String IO a
+runMyAws :: (MyAwsStack a -> ExceptT Text IO a) -> Text -> DynamoCmdM a -> ExceptT Text IO a
 runMyAws runner tableName program = 
   runner $ runProgram tableName program
 
@@ -38,7 +38,7 @@ printEvent a = do
   liftIO . print . show $ a
   return a
 
-runEventStoreAction :: (forall a. DynamoCmdM a -> ExceptT String IO a) -> EventStoreAction -> ActionM ()
+runEventStoreAction :: (forall a. DynamoCmdM a -> ExceptT Text IO a) -> EventStoreAction -> ActionM ()
 runEventStoreAction runner (PostEvent req) = do
   let program = postEventRequestProgram req
   a <- liftIO $ runExceptT $ runner program
@@ -78,13 +78,13 @@ httpPort = 2113
 httpHost :: String
 httpHost = "127.0.0.1"
 
-toExceptT :: forall a.( MyAwsStack a -> IO (Either String a)) -> (MyAwsStack a -> ExceptT String IO a)
+toExceptT :: forall a.( MyAwsStack a -> IO (Either Text a)) -> (MyAwsStack a -> ExceptT Text IO a)
 toExceptT runner a = do
   result <- liftIO $ runner a
   case result of Left s -> throwError s
                  Right r -> return r
 
-start :: Config -> ExceptT String IO ()
+start :: Config -> ExceptT Text IO ()
 start parsedConfig = do
   let tableName = (T.pack . configTableName) parsedConfig
   env <- newEnv Sydney Discover
@@ -95,21 +95,28 @@ start parsedConfig = do
     (putStrLn "Creating table..." >> runner (buildTable tableName) >> putStrLn "Table created")
   if tableAlreadyExists || shouldCreateTable then runApp runner tableName else failNoTable
   where
-   runApp :: (forall a. MyAwsStack a -> ExceptT String IO a) -> Text -> ExceptT String IO ()
+   runApp :: (forall a. MyAwsStack a -> ExceptT Text IO a) -> Text -> ExceptT Text IO ()
    runApp runner tableName = do
      let runner' = runMyAws runner tableName
-     _ <- lift $ forkIO $ void $ runExceptT $ runner' GlobalFeedWriter.main
+     exitMVar <- lift newEmptyMVar
+     _ <- lift $ forkIO $ do
+       result <- runExceptT $ runner' GlobalFeedWriter.main
+       putMVar exitMVar result
      let warpSettings = setPort httpPort $ setHost (fromString httpHost) defaultSettings
      putStrLn $ "Server listenting on: http://" <> fromString httpHost <> ":" <> show httpPort
-     lift $ scottyApp (app (printEvent >=> runEventStoreAction runner')) >>= runSettings warpSettings
-     return ()
+     _ <- lift $ forkIO $ void $ scottyApp (app (printEvent >=> runEventStoreAction runner')) >>= runSettings warpSettings
+     programResult <- liftIO $ takeMVar exitMVar
+     print programResult
+     case programResult of (Left err)         -> throwError err
+                           (Right (Left err)) -> throwError err
+                           _                  -> return ()
    failNoTable = putStrLn "Table does not exist"
 
-checkForFailureOnExit :: ExceptT String IO () -> IO ()
+checkForFailureOnExit :: ExceptT Text IO () -> IO ()
 checkForFailureOnExit a = do
   result <- runExceptT a
   case result of Left m -> do
-                             putStrLn $ "Error: " <> fromString m
+                             putStrLn $ "Error: " <> m
                              exitWith $ ExitFailure 1
                  Right () -> return ()
 main :: IO ()

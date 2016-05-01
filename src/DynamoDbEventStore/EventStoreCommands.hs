@@ -31,7 +31,6 @@ module DynamoDbEventStore.EventStoreCommands(
   ) where
 import           BasicPrelude
 import           Control.Lens hiding ((.=))
-import qualified Data.Text as T
 import           Control.Monad.Free.Church
 import           Control.Monad.Free.TH
 import           GHC.Natural
@@ -153,10 +152,10 @@ makeFree ''DynamoCmd
 
 type DynamoCmdM = F DynamoCmd
 
-readField :: Monoid a => Text -> Lens' AttributeValue (Maybe a) -> DynamoValues -> Either String a
+readField :: Monoid a => Text -> Lens' AttributeValue (Maybe a) -> DynamoValues -> Either Text a
 readField fieldName fieldType values = 
    maybeToEither $ view (ix fieldName . fieldType) values 
    where 
-     maybeToEither Nothing  = Left $ "Error reading field: " <> T.unpack fieldName
+     maybeToEither Nothing  = Left $ "Error reading field: " <> fieldName
      maybeToEither (Just x) = Right x
 

@@ -49,20 +49,20 @@ itemAttribute :: Text -> Lens' AttributeValue (Maybe v) -> v -> (Text, Attribute
 itemAttribute key l value =
   (key, set l (Just value) attributeValue)
 
-readExcept :: (Read a) => String -> Text -> Either String a
+readExcept :: (Read a) => Text -> Text -> Either Text a
 readExcept err t = 
   let 
     parsed = readMay t
   in case parsed of Nothing  -> Left err
                     (Just a) -> Right a
 
-fromAttributesToDynamoKey :: HM.HashMap Text AttributeValue -> Either String DynamoKey
+fromAttributesToDynamoKey :: HM.HashMap Text AttributeValue -> Either Text DynamoKey
 fromAttributesToDynamoKey allValues = do
   streamId <- readField fieldStreamId avS allValues 
   eventNumber <- readField fieldEventNumber avN allValues >>= readExcept "Error parsing eventNumber"
   return (DynamoKey streamId eventNumber)
 
-toDynamoReadResult :: HM.HashMap Text AttributeValue -> Either String DynamoReadResult
+toDynamoReadResult :: HM.HashMap Text AttributeValue -> Either Text DynamoReadResult
 toDynamoReadResult allValues = do
   let 
     values = 
@@ -74,7 +74,7 @@ toDynamoReadResult allValues = do
   version <- readField fieldVersion avN allValues >>= readExcept "Error parsing version"
   return DynamoReadResult { dynamoReadResultKey = eventKey, dynamoReadResultVersion = version, dynamoReadResultValue = values }
 
-allErrors :: (MonadError String m) => [Either String a] -> m [a]
+allErrors :: (MonadError Text m) => [Either Text a] -> m [a]
 allErrors l =
   let
     loop ((Left s):_)   _   = throwError s
@@ -86,7 +86,7 @@ eitherToExcept :: (MonadError e m) => Either e a -> m a
 eitherToExcept (Left s) = throwError s
 eitherToExcept (Right a) = return a
 
-runCmd :: (Typeable m, MonadCatch m, MonadAWS m, MonadIO m, MonadError String m, MonadResource m, MonadReader r m, HasEnv r) => Text -> DynamoCmd (m a) -> m a
+runCmd :: (Typeable m, MonadCatch m, MonadAWS m, MonadIO m, MonadError Text m, MonadResource m, MonadReader r m, HasEnv r) => Text -> DynamoCmd (m a) -> m a
 runCmd _ (Wait' milliseconds n) = do
   liftIO $ threadDelay (milliseconds * 1000)
   n
@@ -97,7 +97,7 @@ runCmd tn (ReadFromDynamo' eventKey n) = do
   result <- getResult resp
   n $ result
   where
-    getResult :: (MonadError String m) => GetItemResponse -> m (Maybe DynamoReadResult)
+    getResult :: (MonadError Text m) => GetItemResponse -> m (Maybe DynamoReadResult)
     getResult r = 
       let item = view girsItem r
       in 
@@ -183,20 +183,20 @@ doesTableExist tableName =
       let tableDesc = view drsTable resp
       return $ isJust tableDesc
 
-evalProgram :: DynamoCmdM a -> IO (Either String a)
+evalProgram :: DynamoCmdM a -> IO (Either Text a)
 evalProgram program = do
   tableNameId :: Int <- getStdRandom (randomR (1,9999999999))
   let tableName = "testtable-" ++ show tableNameId
   _ <- runLocalDynamo $ buildTable tableName
   runLocalDynamo $ runProgram tableName program
 
-runLocalDynamo :: MyAwsStack b -> IO (Either String b)
+runLocalDynamo :: MyAwsStack b -> IO (Either Text b)
 runLocalDynamo x = do
   let dynamo = setEndpoint False "localhost" 8000 dynamoDB
   env <- newEnv Sydney (FromEnv "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" Nothing)
   runResourceT $ runAWST env $ reconfigure dynamo $ runExceptT x
 
-type MyAwsStack = (ExceptT String) (AWST (ResourceT IO))
+type MyAwsStack = (ExceptT Text) (AWST (ResourceT IO))
 
 runProgram :: Text -> DynamoCmdM a -> MyAwsStack a
 runProgram tableName = iterM (runCmd tableName)

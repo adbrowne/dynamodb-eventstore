@@ -25,6 +25,7 @@ import           Control.Monad.Except
 import           BasicPrelude
 import           Control.Lens hiding ((.=))
 import           Safe
+import qualified Data.Text as T
 import           TextShow hiding (fromString)
 import           Pipes
 import qualified Pipes.Prelude as P
@@ -155,14 +156,14 @@ postEventRequestProgram (PostEventRequest sId ev eventEntries) = runExceptT $ do
     toEventResult DynamoWriteFailure = WriteError
     toEventResult DynamoWriteWrongVersion = EventExists
 
-fromEitherError :: String -> Either String a -> a
-fromEitherError context  (Left err) = error (context <> " " <> err)
+fromEitherError :: Text -> Either Text a -> a
+fromEitherError context  (Left err) = error (T.unpack (context <> " " <> err))
 fromEitherError _context (Right a)  = a
 
 toRecordedEvent :: Text -> DynamoReadResult -> [RecordedEvent]
 toRecordedEvent sId (DynamoReadResult key _version values) = fromEitherError "toRecordedEvent" $ do
   eventBody <- readField fieldBody avB values 
-  (eventEntries :: [EventEntry]) <- Serialize.decode eventBody
+  (eventEntries :: [EventEntry]) <- over _Left T.pack $ Serialize.decode eventBody
   let firstEventNumber = dynamoKeyEventNumber key
   let eventEntriesWithEventNumber = zip [firstEventNumber..] eventEntries
   let recordedEvents = fmap (\(eventNumber, EventEntry {..}) -> RecordedEvent sId eventNumber (BL.toStrict eventEntryData) (eventTypeToText eventEntryType)) eventEntriesWithEventNumber
