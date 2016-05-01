@@ -124,9 +124,9 @@ postEventRequestProgram (PostEventRequest _sId _ev []) = return $ Left "PostRequ
 postEventRequestProgram (PostEventRequest sId ev eventEntries) = runExceptT $ do
   dynamoKeyOrError <- getDynamoKey sId ev
   case dynamoKeyOrError of Left a -> return a
-                           Right dynamoKey -> lift $ writeMyEvent dynamoKey
+                           Right dynamoKey -> writeMyEvent dynamoKey
   where
-    writeMyEvent :: DynamoKey -> DynamoCmdM EventWriteResult
+    writeMyEvent :: DynamoKey -> ExceptT Text DynamoCmdM EventWriteResult
     writeMyEvent dynamoKey = do
       let values = HM.singleton fieldBody (set avB (Just (Serialize.encode eventEntries)) attributeValue) & 
                    HM.insert Constants.needsPagingKey (set avS (Just "True") attributeValue) &
