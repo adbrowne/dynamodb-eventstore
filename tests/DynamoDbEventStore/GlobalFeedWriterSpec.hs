@@ -113,7 +113,7 @@ prop_EventShouldAppearInGlobalFeedInStreamOrder (UploadList uploadList) =
       ]
   in QC.forAll (runPrograms programs) check
      where
-       check (_, testState) = QC.forAll (runReadAllProgram testState) (\feedItems -> ((globalRecordedEventListToMap <$>) <$> feedItems) === (Right $ Right $ globalFeedFromUploadList uploadList))
+       check (_, testState) = QC.forAll (runReadAllProgram testState) (\feedItems -> (globalRecordedEventListToMap <$> feedItems) === (Right $ globalFeedFromUploadList uploadList))
        runReadAllProgram = runProgramGenerator "readAllRequestProgram" (getReadAllRequestProgram ReadAllRequest)
 
 expectedEventsFromUploadList :: UploadList -> [(Text, Int64, EventData)]
@@ -134,9 +134,7 @@ prop_AllEventsCanBeReadIndividually (UploadList uploadItems) =
     lookupBodies testState = fmap (\(streamId, eventNumber, _) -> (streamId, eventNumber, lookupBody testState streamId eventNumber)) expectedEvents
     lookupBody :: TestState ->  Text -> Int64 -> (Maybe EventData)
     lookupBody testState streamId eventNumber =
-      let result = evalProgram "LookupEvent" (getReadEventRequestProgram $ ReadEventRequest streamId eventNumber) testState
-      in case result of (Left _)  -> Nothing
-                        (Right a) -> (EventData . T.decodeUtf8 . recordedEventData) <$> a
+      (EventData . T.decodeUtf8 . recordedEventData) <$> evalProgram "LookupEvent" (getReadEventRequestProgram $ ReadEventRequest streamId eventNumber) testState
   in QC.forAll (runPrograms programs) check
 
 prop_ConflictingWritesWillNotSucceed :: QC.Property
@@ -149,8 +147,8 @@ prop_ConflictingWritesWillNotSucceed =
   in QC.forAll (runPrograms programs) check
      where
        check (writeResults, _testState) = (foldl' sumIfSuccess 0 writeResults) === 1
-       sumIfSuccess :: Int -> Either ProgramError (Either Text EventWriteResult) -> Int
-       sumIfSuccess s (Right (Right WriteSuccess)) = s + 1
+       sumIfSuccess :: Int -> Either Text EventWriteResult -> Int
+       sumIfSuccess s (Right WriteSuccess) = s + 1
        sumIfSuccess s _            = s
 
 getStreamRecordedEvents :: Text -> DynamoCmdM [RecordedEvent]
@@ -193,7 +191,7 @@ prop_EventsShouldAppearInTheirSteamsInOrder (UploadList uploadList) =
       ("GlobalFeedWriter2", (GlobalFeedWriter.main, 100)) ]
   in QC.forAll (runPrograms programs) check
      where
-       check (_, testState) = runReadEachStream testState === (Right $ globalFeedFromUploadList uploadList)
+       check (_, testState) = runReadEachStream testState === globalFeedFromUploadList uploadList
        runReadEachStream = evalProgram "readEachStream" (readEachStream uploadList)
 
 prop_ScanUnpagedShouldBeEmpty :: UploadList -> QC.Property
@@ -205,7 +203,7 @@ prop_ScanUnpagedShouldBeEmpty (UploadList uploadList) =
       ("GlobalFeedWriter2", (GlobalFeedWriter.main, 100)) ]
   in QC.forAll (runPrograms programs) check
      where
-       check (_, testState) = scanUnpaged testState === (Right [])
+       check (_, testState) = scanUnpaged testState === []
        scanUnpaged = evalProgram "scanUnpaged" scanNeedsPaging'
 
 eventDataToByteString :: EventData -> LByteString
@@ -254,7 +252,7 @@ writtenEventsAppearInReadStream writer =
         recordedEventData = T.encodeUtf8 "My Content2", 
         recordedEventType = "MyEvent2"} ] 
     result = evalProgram "writeThenRead" (writeThenRead streamId eventDatas writer) emptyTestState
-  in assertEqual "Returned events should match input events" (Right expectedResult) result
+  in assertEqual "Returned events should match input events" expectedResult result
 
 prop_NoWriteRequestCanCausesAFatalErrorInGlobalFeedWriter :: [PostEventRequest] -> QC.Property
 prop_NoWriteRequestCanCausesAFatalErrorInGlobalFeedWriter events =
@@ -274,14 +272,14 @@ cannotWriteEventsOutOfOrder =
   let 
     postEventRequest = PostEventRequest { perStreamId = "MyStream", perExpectedVersion = Just 1, perEvents = [EventEntry (TL.encodeUtf8 "My Content") "MyEvent"] }
     result = evalProgram "writeEvent" (postEventRequestProgram postEventRequest) emptyTestState
-  in assertEqual "Should return an error" (Right (Right WrongExpectedVersion)) result
+  in assertEqual "Should return an error" (Right WrongExpectedVersion) result
 
 canWriteFirstEvent :: Assertion
 canWriteFirstEvent =
   let 
     postEventRequest = PostEventRequest { perStreamId = "MyStream", perExpectedVersion = Just (-1), perEvents = [EventEntry (TL.encodeUtf8 "My Content") "MyEvent"] }
     result = evalProgram "writeEvent" (postEventRequestProgram postEventRequest) emptyTestState
-  in assertEqual "Should return success" (Right (Right WriteSuccess)) result
+  in assertEqual "Should return success" (Right WriteSuccess) result
 
 canWriteMultipleEvents :: Assertion
 canWriteMultipleEvents =
@@ -289,7 +287,7 @@ canWriteMultipleEvents =
     multiPostEventRequest = PostEventRequest { perStreamId = "MyStream", perExpectedVersion = Just (-1), perEvents = [EventEntry (TL.encodeUtf8 "My Content") "MyEvent", EventEntry (TL.encodeUtf8 "My Content2") "MyEvent2"] }
     subsequentPostEventRequest = PostEventRequest { perStreamId = "MyStream", perExpectedVersion = Just 1, perEvents = [EventEntry (TL.encodeUtf8 "My Content") "MyEvent"] }
     result = evalProgram "writeEvent" (postEventRequestProgram multiPostEventRequest >> postEventRequestProgram subsequentPostEventRequest) emptyTestState
-  in assertEqual "Should return success" (Right (Right WriteSuccess)) result
+  in assertEqual "Should return success" (Right WriteSuccess) result
 
 eventNumbersCorrectForMultipleEvents :: Assertion
 eventNumbersCorrectForMultipleEvents =
@@ -298,8 +296,8 @@ eventNumbersCorrectForMultipleEvents =
     multiPostEventRequest = PostEventRequest { perStreamId = streamId, perExpectedVersion = Just (-1), perEvents = [EventEntry (TL.encodeUtf8 "My Content") "MyEvent", EventEntry (TL.encodeUtf8 "My Content2") "MyEvent2"] }
     subsequentPostEventRequest = PostEventRequest { perStreamId = streamId, perExpectedVersion = Just 1, perEvents = [EventEntry (TL.encodeUtf8 "My Content") "MyEvent"] }
     result = evalProgram "writeEvent" (postEventRequestProgram multiPostEventRequest >> postEventRequestProgram subsequentPostEventRequest >> getStreamRecordedEvents streamId) emptyTestState
-    eventNumbers = (recordedEventNumber <$>) <$> result
-  in assertEqual "Should return success" (Right [0,1,2]) eventNumbers
+    eventNumbers = recordedEventNumber <$> result
+  in assertEqual "Should return success" [0,1,2] eventNumbers
 
 errorThrownIfTryingToWriteAnEventInAMultipleGap :: Assertion
 errorThrownIfTryingToWriteAnEventInAMultipleGap =
@@ -308,7 +306,7 @@ errorThrownIfTryingToWriteAnEventInAMultipleGap =
     multiPostEventRequest = PostEventRequest { perStreamId = streamId, perExpectedVersion = Just (-1), perEvents = [EventEntry (TL.encodeUtf8 "My Content") "MyEvent", EventEntry (TL.encodeUtf8 "My Content2") "MyEvent2"] }
     subsequentPostEventRequest = PostEventRequest { perStreamId = streamId, perExpectedVersion = Just (-1), perEvents = [EventEntry (TL.encodeUtf8 "My Content") "MyEvent"] }
     result = evalProgram "writeEvents" (postEventRequestProgram multiPostEventRequest >> postEventRequestProgram subsequentPostEventRequest) emptyTestState
-  in assertEqual "Should return failure" (Right (Right EventExists)) result
+  in assertEqual "Should return failure" (Right EventExists) result
 
 tests :: [TestTree]
 tests = [

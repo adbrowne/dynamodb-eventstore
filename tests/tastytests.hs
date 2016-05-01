@@ -3,8 +3,6 @@
 module Main where
 
 import           BasicPrelude
-import qualified Prelude as P
-import           Control.Lens
 import qualified DynamoCmdAmazonkaTests
 import           DynamoDbEventStore.EventStoreCommands
 import           DynamoDbEventStore.GlobalFeedWriterSpec as GlobalFeedWriterSpec
@@ -18,8 +16,8 @@ import           WebserverSpec
 
 
 testInterpreter :: DynamoCmdM a -> IO (Either String a)
-testInterpreter program = do 
-  return $ over _Left P.show $ TestInterpreter.evalProgram "Test Program" program TestInterpreter.emptyTestState
+testInterpreter program =
+  return $ Right $ TestInterpreter.evalProgram "Test Program" program TestInterpreter.emptyTestState
 
 main :: IO ()
 main = do
