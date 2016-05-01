@@ -112,6 +112,7 @@ Test-Suite tasty
                        tasty-quickcheck >= 0.8,
                        text-show >= 2,
                        QuickCheck,
+                       either,
                        random,
                        containers >= 0.5,
                        aeson,

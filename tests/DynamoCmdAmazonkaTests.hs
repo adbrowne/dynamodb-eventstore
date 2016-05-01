@@ -30,7 +30,7 @@ testWrite = writeToDynamo' testKey
 sampleRead :: DynamoCmdM (Maybe DynamoReadResult)
 sampleRead = readFromDynamo' testKey
 
-tests :: (forall a. DynamoCmdM a -> IO (Either String a)) -> [TestTree]
+tests :: (forall a. DynamoCmdM a -> IO (Either Text a)) -> [TestTree]
 tests evalProgram =
   [
     testCase "Can read event" $

@@ -15,7 +15,7 @@ import qualified WebserverInternalSpec
 import           WebserverSpec
 
 
-testInterpreter :: DynamoCmdM a -> IO (Either String a)
+testInterpreter :: DynamoCmdM a -> IO (Either Text a)
 testInterpreter program =
   return $ Right $ TestInterpreter.evalProgram "Test Program" program TestInterpreter.emptyTestState
 

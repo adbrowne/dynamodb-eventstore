@@ -13,6 +13,8 @@ import qualified Test.Tasty.QuickCheck as QC
 import           Test.Tasty.HUnit
 import           Control.Monad.State
 import           Control.Monad.Loops
+import           Control.Monad.Except
+import           Data.Either.Combinators
 import qualified Data.Text             as T
 import qualified Data.Text.Encoding             as T
 import qualified Data.Text.Lazy        as TL
@@ -119,12 +121,12 @@ prop_AllEventsCanBeReadIndividually (UploadList uploadItems) =
       ("Publisher", (publisher uploadItems,100))
       ]
     expectedEvents = expectedEventsFromUploadList (UploadList uploadItems)
-    check (_, testState) = lookupBodies testState === ((_3 %~ Just) <$> expectedEvents)
-    lookupBodies :: TestState -> [(Text, Int64, Maybe EventData)]
+    check (_, testState) = lookupBodies testState === ((_3 %~ (Right . Just)) <$> expectedEvents)
+    lookupBodies :: TestState -> [(Text, Int64, Either Text (Maybe EventData))]
     lookupBodies testState = fmap (\(streamId, eventNumber, _) -> (streamId, eventNumber, lookupBody testState streamId eventNumber)) expectedEvents
-    lookupBody :: TestState ->  Text -> Int64 -> (Maybe EventData)
+    lookupBody :: TestState ->  Text -> Int64 -> (Either Text (Maybe EventData))
     lookupBody testState streamId eventNumber =
-      (EventData . T.decodeUtf8 . recordedEventData) <$> evalProgram "LookupEvent" (getReadEventRequestProgram $ ReadEventRequest streamId eventNumber) testState
+      ((EventData . T.decodeUtf8 . recordedEventData) <$>) <$> evalProgram "LookupEvent" (getReadEventRequestProgram $ ReadEventRequest streamId eventNumber) testState
   in QC.forAll (runPrograms programs) check
 
 prop_ConflictingWritesWillNotSucceed :: QC.Property
@@ -141,31 +143,31 @@ prop_ConflictingWritesWillNotSucceed =
        sumIfSuccess s (Right WriteSuccess) = s + 1
        sumIfSuccess s _            = s
 
-getStreamRecordedEvents :: Text -> DynamoCmdM [RecordedEvent]
+getStreamRecordedEvents :: Text -> ExceptT Text DynamoCmdM [RecordedEvent]
 getStreamRecordedEvents streamId = do
    recordedEvents <- concat <$> unfoldrM getEventSet Nothing 
    return $ reverse recordedEvents
    where
-    getEventSet :: Maybe Int64 -> DynamoCmdM (Maybe ([RecordedEvent], Maybe Int64)) 
+    getEventSet :: Maybe Int64 -> ExceptT Text DynamoCmdM (Maybe ([RecordedEvent], Maybe Int64)) 
     getEventSet startEvent = 
       if ((< 0) <$> startEvent) == Just True then
         return Nothing
       else do
-        recordedEvents <- getReadStreamRequestProgram (ReadStreamRequest streamId startEvent)
+        recordedEvents <- (lift $ getReadStreamRequestProgram (ReadStreamRequest streamId startEvent)) >>= eitherToError
         if null recordedEvents then
           return Nothing
         else 
           return $ Just (recordedEvents, (Just . (\x -> x - 1) . recordedEventNumber . last) recordedEvents)
 
-readEachStream :: [UploadItem] -> DynamoCmdM (Map.Map Text (Seq.Seq Int64))
+readEachStream :: [UploadItem] -> ExceptT Text DynamoCmdM (Map.Map Text (Seq.Seq Int64))
 readEachStream uploadItems = 
   foldM readStream Map.empty streams
   where 
-    readStream :: Map.Map Text (Seq.Seq Int64) -> Text -> DynamoCmdM (Map.Map Text (Seq.Seq Int64))
+    readStream :: Map.Map Text (Seq.Seq Int64) -> Text -> ExceptT Text DynamoCmdM (Map.Map Text (Seq.Seq Int64))
     readStream m streamId = do
       eventIds <- getEventIds streamId
       return $ Map.insert streamId eventIds m
-    getEventIds :: Text -> DynamoCmdM (Seq.Seq Int64)
+    getEventIds :: Text -> ExceptT Text DynamoCmdM (Seq.Seq Int64)
     getEventIds streamId = do
        recordedEvents <- getStreamRecordedEvents streamId
        return $ Seq.fromList $ recordedEventNumber <$> recordedEvents
@@ -181,8 +183,8 @@ prop_EventsShouldAppearInTheirSteamsInOrder (UploadList uploadList) =
       ("GlobalFeedWriter2", (GlobalFeedWriter.main, 100)) ]
   in QC.forAll (runPrograms programs) check
      where
-       check (_, testState) = runReadEachStream testState === globalFeedFromUploadList uploadList
-       runReadEachStream = evalProgram "readEachStream" (readEachStream uploadList)
+       check (_, testState) = runReadEachStream testState === (Right $ globalFeedFromUploadList uploadList)
+       runReadEachStream = evalProgram "readEachStream" (runExceptT (readEachStream uploadList))
 
 prop_ScanUnpagedShouldBeEmpty :: UploadList -> QC.Property
 prop_ScanUnpagedShouldBeEmpty (UploadList uploadList) =
@@ -216,9 +218,9 @@ writeEventsWithNoExpectedVersions (StreamId streamId) events =
       result <- postEventRequestProgram (PostEventRequest streamId Nothing [EventEntry ed (EventType et)])
       when (result /= Right WriteSuccess) $ error "Bad write result"
 
-writeThenRead :: StreamId -> [(Text, LByteString)] -> EventWriter -> DynamoCmdM [RecordedEvent]
+writeThenRead :: StreamId -> [(Text, LByteString)] -> EventWriter -> ExceptT Text DynamoCmdM [RecordedEvent]
 writeThenRead (StreamId streamId) events writer = do
-  writer (StreamId streamId) events
+  lift $ writer (StreamId streamId) events
   getStreamRecordedEvents streamId
   
 writtenEventsAppearInReadStream :: EventWriter -> Assertion
@@ -226,7 +228,7 @@ writtenEventsAppearInReadStream writer =
   let 
     streamId = StreamId "MyStream"
     eventDatas = [("MyEvent", TL.encodeUtf8 "My Content"), ("MyEvent2", TL.encodeUtf8 "My Content2")]
-    expectedResult = [
+    expectedResult = Right [
       RecordedEvent { 
         recordedEventStreamId = "MyStream", 
         recordedEventNumber = 0, 
@@ -238,7 +240,7 @@ writtenEventsAppearInReadStream writer =
         recordedEventNumber = 1, 
         recordedEventData = T.encodeUtf8 "My Content2", 
         recordedEventType = "MyEvent2"} ] 
-    result = evalProgram "writeThenRead" (writeThenRead streamId eventDatas writer) emptyTestState
+    result = evalProgram "writeThenRead" (runExceptT $ writeThenRead streamId eventDatas writer) emptyTestState
   in assertEqual "Returned events should match input events" expectedResult result
 
 prop_NoWriteRequestCanCausesAFatalErrorInGlobalFeedWriter :: [PostEventRequest] -> QC.Property
@@ -282,9 +284,9 @@ eventNumbersCorrectForMultipleEvents =
     streamId = "MyStream"
     multiPostEventRequest = PostEventRequest { perStreamId = streamId, perExpectedVersion = Just (-1), perEvents = [EventEntry (TL.encodeUtf8 "My Content") "MyEvent", EventEntry (TL.encodeUtf8 "My Content2") "MyEvent2"] }
     subsequentPostEventRequest = PostEventRequest { perStreamId = streamId, perExpectedVersion = Just 1, perEvents = [EventEntry (TL.encodeUtf8 "My Content") "MyEvent"] }
-    result = evalProgram "writeEvent" (postEventRequestProgram multiPostEventRequest >> postEventRequestProgram subsequentPostEventRequest >> getStreamRecordedEvents streamId) emptyTestState
-    eventNumbers = recordedEventNumber <$> result
-  in assertEqual "Should return success" [0,1,2] eventNumbers
+    result = evalProgram "writeEvent" (runExceptT $ lift (postEventRequestProgram multiPostEventRequest) >> lift (postEventRequestProgram subsequentPostEventRequest) >> getStreamRecordedEvents streamId) emptyTestState
+    eventNumbers = (recordedEventNumber <$>) <$> result
+  in assertEqual "Should return success" (Right [0,1,2]) eventNumbers
 
 errorThrownIfTryingToWriteAnEventInAMultipleGap :: Assertion
 errorThrownIfTryingToWriteAnEventInAMultipleGap =
