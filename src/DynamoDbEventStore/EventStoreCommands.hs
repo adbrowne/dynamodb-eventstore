@@ -33,6 +33,7 @@ import           BasicPrelude
 import           Control.Lens hiding ((.=))
 import           Control.Monad.Free.Church
 import           Control.Monad.Free.TH
+import           Control.Monad.Except
 import           GHC.Natural
 
 import           Data.Aeson
@@ -152,10 +153,10 @@ makeFree ''DynamoCmd
 
 type DynamoCmdM = F DynamoCmd
 
-readField :: Monoid a => Text -> Lens' AttributeValue (Maybe a) -> DynamoValues -> Either Text a
+readField :: (MonadError Text m, Monoid a) => Text -> Lens' AttributeValue (Maybe a) -> DynamoValues -> m a
 readField fieldName fieldType values = 
    maybeToEither $ view (ix fieldName . fieldType) values 
    where 
-     maybeToEither Nothing  = Left $ "Error reading field: " <> fieldName
-     maybeToEither (Just x) = Right x
+     maybeToEither Nothing  = throwError $ "Error reading field: " <> fieldName
+     maybeToEither (Just x) = return x
 

@@ -22,12 +22,12 @@ module DynamoDbEventStore.EventStoreActions(
 
 import           Data.Either.Combinators
 import           Control.Monad.Except
+import           Control.Monad.Trans.List
 import           BasicPrelude
 import           Control.Lens hiding ((.=))
 import           Safe
-import qualified Data.Text as T
 import           TextShow hiding (fromString)
-import           Pipes
+import           Pipes hiding (ListT, runListT)
 import qualified Pipes.Prelude as P
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.Text.Lazy as TL
@@ -156,29 +156,33 @@ postEventRequestProgram (PostEventRequest sId ev eventEntries) = runExceptT $ do
     toEventResult DynamoWriteFailure = WriteError
     toEventResult DynamoWriteWrongVersion = EventExists
 
-fromEitherError :: Text -> Either Text a -> a
-fromEitherError context  (Left err) = error (T.unpack (context <> " " <> err))
-fromEitherError _context (Right a)  = a
+binaryDeserialize :: (MonadError Text m, Serialize.Serialize a) => ByteString -> m a
+binaryDeserialize x = do
+  let value = Serialize.decode x
+  case value of Left err    -> throwError (fromString err)
+                Right v     -> return v
 
-toRecordedEvent :: Text -> DynamoReadResult -> [RecordedEvent]
-toRecordedEvent sId (DynamoReadResult key _version values) = fromEitherError "toRecordedEvent" $ do
+toRecordedEvent :: Text -> DynamoReadResult -> ListT (ExceptT Text DynamoCmdM) [RecordedEvent]
+toRecordedEvent sId (DynamoReadResult key _version values) = do
   eventBody <- readField fieldBody avB values 
-  (eventEntries :: [EventEntry]) <- over _Left T.pack $ Serialize.decode eventBody
+  (eventEntries :: [EventEntry]) <- binaryDeserialize eventBody
   let firstEventNumber = dynamoKeyEventNumber key
   let eventEntriesWithEventNumber = zip [firstEventNumber..] eventEntries
   let recordedEvents = fmap (\(eventNumber, EventEntry {..}) -> RecordedEvent sId eventNumber (BL.toStrict eventEntryData) (eventTypeToText eventEntryType)) eventEntriesWithEventNumber
   return $ reverse recordedEvents
 
-getReadEventRequestProgram :: ReadEventRequest -> DynamoCmdM (Maybe RecordedEvent)
-getReadEventRequestProgram (ReadEventRequest sId eventNumber) = do
-  readResults <- queryBackward' (Constants.streamDynamoKeyPrefix <> sId) 1 (Just $ eventNumber + 1)
-  let events = readResults >>= toRecordedEvent sId
+getReadEventRequestProgram :: ReadEventRequest -> DynamoCmdM (Either Text (Maybe RecordedEvent))
+getReadEventRequestProgram (ReadEventRequest sId eventNumber) = runExceptT $ do
+  (readResults :: [DynamoReadResult]) <- lift $ queryBackward' (Constants.streamDynamoKeyPrefix <> sId) 1 (Just $ eventNumber + 1)
+  allEvents <- runListT $ forM readResults (toRecordedEvent sId)
+  let (events :: [RecordedEvent]) = join (join allEvents)
   return $ find ((== eventNumber) . recordedEventNumber) events
 
-getReadStreamRequestProgram :: ReadStreamRequest -> DynamoCmdM [RecordedEvent]
-getReadStreamRequestProgram (ReadStreamRequest sId startEventNumber) = do
-  readResults <- queryBackward' (Constants.streamDynamoKeyPrefix <> sId) 10 ((+1) <$> startEventNumber)
-  return $ readResults >>= toRecordedEvent sId
+getReadStreamRequestProgram :: ReadStreamRequest -> DynamoCmdM (Either Text [RecordedEvent])
+getReadStreamRequestProgram (ReadStreamRequest sId startEventNumber) = runExceptT $ do
+  readResults <- lift $ queryBackward' (Constants.streamDynamoKeyPrefix <> sId) 10 ((+1) <$> startEventNumber)
+  allEvents <- runListT $ forM readResults (toRecordedEvent sId)
+  return $ join (join allEvents)
 
 getPageDynamoKey :: Int -> DynamoKey 
 getPageDynamoKey pageNumber =
