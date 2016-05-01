@@ -174,7 +174,6 @@ setPulseStatus programName isActive = do
 
 runCmd :: Text -> DynamoCmdMFree r -> InterpreterApp m r (Either (Either ProgramError r) (DynamoCmdMFree r))
 runCmd _ (Free.Pure r) = return $ Left (Right r)
-runCmd _ (Free.Free (FatalError' msg)) = const (Left $ Left FatalError) <$> addLog ("Fatal Error" <> msg)
 runCmd _ (Free.Free (Wait' _ r)) = Right <$> return r
 runCmd _ (Free.Free (QueryBackward' key maxEvents start r)) = Right <$> uses (loopStateTestState . testStateDynamo) (r . queryBackward key maxEvents start) 
 runCmd _ (Free.Free (WriteToDynamo' key values version r)) = Right <$> writeToDynamo key values version r

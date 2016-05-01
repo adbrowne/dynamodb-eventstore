@@ -11,7 +11,6 @@ module DynamoDbEventStore.EventStoreCommands(
   StreamId(..),
   LogLevel(..),
   log',
-  fatalError',
   writeToDynamo',
   readFromDynamo',
   wait',
@@ -140,8 +139,6 @@ data DynamoCmd next =
   Wait'
     Int
     next |
-  FatalError'
-    Text |
   SetPulseStatus'
     Bool
     next |

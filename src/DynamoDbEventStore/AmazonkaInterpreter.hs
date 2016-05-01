@@ -17,7 +17,6 @@ import           Control.Monad.Catch
 import qualified Data.HashMap.Strict     as HM
 import           Control.Lens
 import           Data.List.NonEmpty      (NonEmpty (..))
-import qualified Data.Text               as T
 import           TextShow
 import qualified DynamoDbEventStore.Constants as Constants
 import           System.Random
@@ -149,7 +148,6 @@ runCmd tn (ScanNeedsPaging' n) =
              scan tn
              & set sIndexName (Just unpagedIndexName)
         allErrors (fmap fromAttributesToDynamoKey (view srsItems resp)) >>= n
-runCmd _tn (FatalError' message) = error $ T.unpack ("FatalError': " <> show message)
 runCmd _tn (SetPulseStatus' _ n) = n
 runCmd _tn (Log' _level msg n) = do
   liftIO $ print msg

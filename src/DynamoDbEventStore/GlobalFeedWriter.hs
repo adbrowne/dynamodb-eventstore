@@ -219,7 +219,7 @@ updateGlobalFeed itemKey@DynamoKey { dynamoKeyKey = itemHashKey, dynamoKeyEventN
       updateGlobalFeed itemKey
     onPageResult pageNumber DynamoWriteSuccess = 
       void $ setEventEntryPage itemKey pageNumber
-    onPageResult pageNumber DynamoWriteFailure = lift $ fatalError' ("DynamoWriteFailure on writing page: " <> show pageNumber)
+    onPageResult pageNumber DynamoWriteFailure = throwError ("DynamoWriteFailure on writing page: " <> show pageNumber)
 
 type GlobalFeedWriterStack = ExceptT Text DynamoCmdM
 
