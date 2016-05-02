@@ -105,7 +105,7 @@ prop_EventShouldAppearInGlobalFeedInStreamOrder (UploadList uploadList) =
       ]
   in QC.forAll (runPrograms programs) check
      where
-       check (_, testState) = QC.forAll (runReadAllProgram testState) (\feedItems -> (globalRecordedEventListToMap <$> feedItems) === (Right $ globalFeedFromUploadList uploadList))
+       check (_, testRunState) = QC.forAll (runReadAllProgram testRunState) (\feedItems -> (globalRecordedEventListToMap <$> feedItems) === (Right $ globalFeedFromUploadList uploadList))
        runReadAllProgram = runProgramGenerator "readAllRequestProgram" (getReadAllRequestProgram ReadAllRequest)
 
 expectedEventsFromUploadList :: UploadList -> [(Text, Int64, EventData)]
@@ -121,12 +121,12 @@ prop_AllEventsCanBeReadIndividually (UploadList uploadItems) =
       ("Publisher", (publisher uploadItems,100))
       ]
     expectedEvents = expectedEventsFromUploadList (UploadList uploadItems)
-    check (_, testState) = lookupBodies testState === ((_3 %~ (Right . Just)) <$> expectedEvents)
+    check (_, testRunState) = lookupBodies testRunState === ((_3 %~ (Right . Just)) <$> expectedEvents)
     lookupBodies :: TestState -> [(Text, Int64, Either Text (Maybe EventData))]
-    lookupBodies testState = fmap (\(streamId, eventNumber, _) -> (streamId, eventNumber, lookupBody testState streamId eventNumber)) expectedEvents
+    lookupBodies testRunState = fmap (\(streamId, eventNumber, _) -> (streamId, eventNumber, lookupBody testRunState streamId eventNumber)) expectedEvents
     lookupBody :: TestState ->  Text -> Int64 -> (Either Text (Maybe EventData))
-    lookupBody testState streamId eventNumber =
-      ((EventData . T.decodeUtf8 . recordedEventData) <$>) <$> evalProgram "LookupEvent" (getReadEventRequestProgram $ ReadEventRequest streamId eventNumber) testState
+    lookupBody testRunState streamId eventNumber =
+      ((EventData . T.decodeUtf8 . recordedEventData) <$>) <$> evalProgram "LookupEvent" (getReadEventRequestProgram $ ReadEventRequest streamId eventNumber) testRunState
   in QC.forAll (runPrograms programs) check
 
 prop_ConflictingWritesWillNotSucceed :: QC.Property
@@ -183,7 +183,7 @@ prop_EventsShouldAppearInTheirSteamsInOrder (UploadList uploadList) =
       ("GlobalFeedWriter2", (GlobalFeedWriter.main, 100)) ]
   in QC.forAll (runPrograms programs) check
      where
-       check (_, testState) = runReadEachStream testState === (Right $ globalFeedFromUploadList uploadList)
+       check (_, testRunState) = runReadEachStream testRunState === (Right $ globalFeedFromUploadList uploadList)
        runReadEachStream = evalProgram "readEachStream" (runExceptT (readEachStream uploadList))
 
 prop_ScanUnpagedShouldBeEmpty :: UploadList -> QC.Property
@@ -195,7 +195,7 @@ prop_ScanUnpagedShouldBeEmpty (UploadList uploadList) =
       ("GlobalFeedWriter2", (GlobalFeedWriter.main, 100)) ]
   in QC.forAll (runPrograms programs) check
      where
-       check (_, testState) = scanUnpaged testState === []
+       check (_, testRunState) = scanUnpaged testRunState === []
        scanUnpaged = evalProgram "scanUnpaged" scanNeedsPaging'
 
 type EventWriter = StreamId -> [(Text, LByteString)] -> DynamoCmdM ()
@@ -288,6 +288,16 @@ eventNumbersCorrectForMultipleEvents =
     eventNumbers = (recordedEventNumber <$>) <$> result
   in assertEqual "Should return success" (Right [0,1,2]) eventNumbers
 
+whenIndexing1000ItemsIopsIsMinimal :: Assertion
+whenIndexing1000ItemsIopsIsMinimal = 
+  let 
+    streamId = "MyStream"
+    requests = replicate 1000 $ postEventRequestProgram $ PostEventRequest { perStreamId = streamId, perExpectedVersion = Nothing, perEvents = [EventEntry (TL.encodeUtf8 "My Content") "MyEvent"] }
+    writeState = execProgram "writeEvents" (forM_ requests id) emptyTestState 
+    afterIndexState = execProgramUntilIdle "indexer" GlobalFeedWriter.main (view testState writeState)
+    expectedWriteState = Map.fromList [((UnpagedRead,"indexer"), 1)]
+  in assertEqual "Should be small iops" expectedWriteState (view iopCounts afterIndexState)
+
 errorThrownIfTryingToWriteAnEventInAMultipleGap :: Assertion
 errorThrownIfTryingToWriteAnEventInAMultipleGap =
   let 
@@ -313,6 +323,7 @@ tests = [
       testCase "Unit - Cannot write event if previous one does not exist" cannotWriteEventsOutOfOrder,
       testCase "Unit - Can write first event" canWriteFirstEvent,
       testCase "Unit - Can write multiple events" canWriteMultipleEvents,
+      testCase "Unit - Check Iops usage" whenIndexing1000ItemsIopsIsMinimal,
       testCase "Unit - Error thrown if trying to write an event in a multiple gap" errorThrownIfTryingToWriteAnEventInAMultipleGap,
       testCase "Unit - EventNumbers are calculated when there are multiple events" eventNumbersCorrectForMultipleEvents
   ]

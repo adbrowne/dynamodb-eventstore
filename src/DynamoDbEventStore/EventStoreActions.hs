@@ -102,9 +102,6 @@ data ReadEventRequest = ReadEventRequest {
 
 data ReadAllRequest = ReadAllRequest deriving (Show)
 
-fieldBody :: Text
-fieldBody = "Body"
-
 data EventWriteResult = WriteSuccess | WrongExpectedVersion | EventExists | WriteError deriving (Eq, Show)
 
 type UserProgramStack = ExceptT Text DynamoCmdM
@@ -132,7 +129,7 @@ postEventRequestProgram (PostEventRequest sId ev eventEntries) = runExceptT $ do
   where
     writeMyEvent :: DynamoKey -> ExceptT Text DynamoCmdM EventWriteResult
     writeMyEvent dynamoKey = do
-      let values = HM.singleton fieldBody (set avB (Just (Serialize.encode eventEntries)) attributeValue) & 
+      let values = HM.singleton Constants.pageBodyKey (set avB (Just (Serialize.encode eventEntries)) attributeValue) & 
                    HM.insert Constants.needsPagingKey (set avS (Just "True") attributeValue) &
                    HM.insert Constants.eventCountKey (set avN (Just ((showt . length) eventEntries)) attributeValue)
       writeResult <- GlobalFeedWriter.dynamoWriteWithRetry dynamoKey values 0 
@@ -166,7 +163,7 @@ binaryDeserialize x = do
 
 toRecordedEvent :: DynamoReadResult -> (ExceptT Text DynamoCmdM) [RecordedEvent]
 toRecordedEvent (DynamoReadResult (DynamoKey dynamoHashKey firstEventNumber) _version values) = do
-  eventBody <- readField fieldBody avB values 
+  eventBody <- readField Constants.pageBodyKey avB values 
   let streamId = T.drop (T.length Constants.streamDynamoKeyPrefix) dynamoHashKey
   (eventEntries :: [EventEntry]) <- binaryDeserialize eventBody
   let eventEntriesWithEventNumber = zip [firstEventNumber..] eventEntries

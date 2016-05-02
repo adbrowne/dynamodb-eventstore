@@ -3,9 +3,12 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 
-module DynamoDbEventStore.DynamoCmdInterpreter(TestState(..), runPrograms, runProgramGenerator, runProgram, emptyTestState, evalProgram, execProgram, LoopState(..)) where
+module DynamoDbEventStore.DynamoCmdInterpreter(TestState(..), runPrograms, runProgramGenerator, runProgram, emptyTestState, evalProgram, execProgram, execProgramUntilIdle, LoopState(..), testState, iopCounts, IopsCategory(..)) where
 
 import           BasicPrelude
 import           GHC.Natural
@@ -43,21 +46,28 @@ data LoopState r = LoopState {
   _loopStateProgramResults :: Map Text r
 }
 
+data IopsCategory = UnpagedRead | UnpagedWrite | TableRead | TableWrite deriving (Eq, Show, Ord)
+
 data TestState = TestState {
   _testStateDynamo :: TestDynamoTable,
-  _testStateLog :: Seq Text
+  _testStateLog :: Seq Text,
+  _testStateIopCounts :: Map (IopsCategory, Text) Int
 } deriving (Eq)
 
 instance P.Show TestState where
   show a = 
     "Dynamo: \n" <> P.show (_testStateDynamo a) <> "\n" <> "Log: \n" <> foldl' (\s l -> s <> "\n" <> P.show l) "" (_testStateLog a)
 
+$(makeFields ''TestState)
+$(makeFields ''LoopState)
+$(makeLenses ''TestState)
 $(makeLenses ''LoopState)
 
-$(makeLenses ''TestState)
+instance HasIopCounts (LoopState a) (Map (IopsCategory, Text) Int) where
+  iopCounts = loopStateTestState . testStateIopCounts
 
 emptyTestState :: TestState
-emptyTestState = TestState mempty mempty
+emptyTestState = TestState mempty mempty mempty
 
 type InterpreterApp m a r = RandomFailure m => (StateT (LoopState a) m) r
 
@@ -204,18 +214,18 @@ updateLoopState programName result =
 
 iterateApp :: InterpreterApp QC.Gen a ()
 iterateApp = do
- programs <- use loopStatePrograms
- (programId, programState) <- lift . QC.elements $ Map.toList programs
+ p <- use loopStatePrograms
+ (programId, programState) <- lift . QC.elements $ Map.toList p
  stepProgram programId programState
 
 incrimentIterations :: InterpreterApp m a ()
 incrimentIterations = loopStateIterations %= (+ 1)
 
 runPrograms :: Map Text (DynamoCmdM a, Int) -> QC.Gen (Map Text a, TestState)
-runPrograms programs =
+runPrograms ps =
   over _2 (view loopStateTestState) <$> runStateT loop initialState
   where
-        runningPrograms = fmap (\(p,maxIdleIterations) -> RunningProgramState (Church.fromF p) maxIdleIterations) programs
+        runningPrograms = fmap (\(p,maxIdleIterations) -> RunningProgramState (Church.fromF p) maxIdleIterations) ps
         initialState = LoopState 0 (LoopActive mempty) emptyTestState runningPrograms mempty
         loop :: InterpreterApp QC.Gen a (Map Text a)
         loop = do
@@ -225,26 +235,40 @@ runPrograms programs =
              else iterateApp >> incrimentIterations >> loop
 
 runProgramGenerator :: Text -> DynamoCmdM a -> TestState -> QC.Gen a
-runProgramGenerator programId program testState =
+runProgramGenerator programId program initialTestState =
   evalStateT (loop $ Right (Church.fromF program)) initialState
   where
         runningPrograms = Map.singleton programId (RunningProgramState (Church.fromF program) 0)
-        initialState = LoopState 0 (LoopActive mempty) testState runningPrograms mempty
+        initialState = LoopState 0 (LoopActive mempty) initialTestState runningPrograms mempty
         loop :: Either r (DynamoCmdMFree r) -> InterpreterApp QC.Gen r r
         loop (Left x) = return x
         loop (Right n) = runCmd programId n >>= loop
 
 runProgram :: Text -> DynamoCmdM a -> TestState -> (a, LoopState a)
-runProgram programId program testState =
+runProgram programId program initialTestState =
   runIdentity $ runStateT (loop $ Right (Church.fromF program)) initialState
   where
         runningPrograms = Map.singleton programId (RunningProgramState (Church.fromF program) 0)
-        initialState = LoopState 0 (LoopActive mempty) testState runningPrograms mempty
+        initialState = LoopState 0 (LoopActive mempty) initialTestState runningPrograms mempty
         loop :: Either r (DynamoCmdMFree r) -> InterpreterApp Identity r r
         loop (Left x) = return x
         loop (Right n) = runCmd programId n >>= loop
 
+execProgramUntilIdle :: Text -> DynamoCmdM a -> TestState -> (LoopState a)
+execProgramUntilIdle programId program initialTestState =
+  runIdentity $ execStateT (loop $ Right (Church.fromF program)) initialState
+  where
+        runningPrograms = Map.singleton programId (RunningProgramState (Church.fromF program) 0)
+        initialState = LoopState 0 (LoopActive mempty) initialTestState runningPrograms mempty
+        loop :: Either r (DynamoCmdMFree r) -> InterpreterApp Identity r (Maybe r)
+        loop (Left x) = return $ Just x
+        loop (Right n) = do
+          complete <- isComplete
+          if complete
+              then return Nothing
+              else runCmd programId n >>= loop
+
 evalProgram :: Text -> DynamoCmdM a -> TestState -> a
-evalProgram programId program testState = fst $ runProgram programId program testState
+evalProgram programId program initialTestState = fst $ runProgram programId program initialTestState
 execProgram :: Text -> DynamoCmdM a -> TestState -> (LoopState a)
-execProgram programId program testState = snd $ runProgram programId program testState
+execProgram programId program initialTestState = snd $ runProgram programId program initialTestState
