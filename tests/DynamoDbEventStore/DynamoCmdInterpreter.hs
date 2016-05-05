@@ -248,7 +248,7 @@ iterateApp = do
  stepProgram programId programState
 
 incrimentIterations :: InterpreterApp m a ()
-incrimentIterations = loopStateIterations %= (+ 1)
+incrimentIterations = loopStateIterations += 1
 
 runPrograms :: Map ProgramId (DynamoCmdM a, Int) -> QC.Gen (Map ProgramId a, TestState)
 runPrograms ps =
