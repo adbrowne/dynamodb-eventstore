@@ -7,6 +7,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module DynamoDbEventStore.DynamoCmdInterpreter(TestState(..), runPrograms, runProgramGenerator, runProgram, emptyTestState, evalProgram, execProgram, execProgramUntilIdle, LoopState(..), testState, iopCounts, IopsCategory(..), IopsOperation(..)) where
 
@@ -35,22 +36,24 @@ data RunningProgramState r = RunningProgramState {
 }
 
 data LoopActivity = 
-  LoopActive { _loopActiveIdleCount :: Map Text Bool } |
-  LoopAllIdle { _loopAllIdleIterationsRemaining :: Map Text Int }
+  LoopActive { _loopActiveIdleCount :: Map ProgramId Bool } |
+  LoopAllIdle { _loopAllIdleIterationsRemaining :: Map ProgramId Int }
 
 data LoopState r = LoopState {
   _loopStateIterations :: Int,
   _loopStateActivity :: LoopActivity,
   _loopStateTestState :: TestState,
-  _loopStatePrograms :: Map Text (RunningProgramState r),
-  _loopStateProgramResults :: Map Text r
+  _loopStatePrograms :: Map ProgramId (RunningProgramState r),
+  _loopStateProgramResults :: Map ProgramId r
 }
+
+newtype ProgramId = ProgramId Text deriving (Eq, Show, Ord, IsString)
 
 data IopsCategory = UnpagedRead | UnpagedWrite | TableRead | TableWrite deriving (Eq, Show, Ord)
 
 data IopsOperation = IopsScanUnpaged | IopsGetItem | IopsQuery | IopsWrite deriving (Eq, Show, Ord)
 
-type IopsTable = Map (IopsCategory, IopsOperation, Text) Int
+type IopsTable = Map (IopsCategory, IopsOperation, ProgramId) Int
 
 data TestState = TestState {
   _testStateDynamo :: TestDynamoTable,
@@ -70,7 +73,7 @@ $(makeLenses ''LoopState)
 instance HasIopCounts (LoopState a) IopsTable where
   iopCounts = loopStateTestState . testStateIopCounts
 
-addIops :: (HasIopCounts s IopsTable, MonadState s m) => IopsCategory -> IopsOperation -> Text -> Int -> m ()
+addIops :: (HasIopCounts s IopsTable, MonadState s m) => IopsCategory -> IopsOperation -> ProgramId -> Int -> m ()
 addIops category operation programId i = iopCounts %= Map.insertWith (+) (category, operation, programId) i
 
 emptyTestState :: TestState
@@ -116,14 +119,14 @@ potentialFailure failurePercent onFailure onSuccess = do
      then onFailure
      else onSuccess
 
-writeToDynamo :: DynamoKey -> DynamoValues -> DynamoVersion -> (DynamoWriteResult -> n)  -> InterpreterApp m a n
+writeToDynamo :: DynamoKey -> DynamoValues -> DynamoVersion -> (DynamoWriteResult -> n) -> InterpreterApp m a n
 writeToDynamo key values version next =
   potentialFailure 25 onFailure onSuccess
   where
     onFailure =
       addLog "Random write failure" $> next DynamoWriteFailure
     onSuccess = do
-      addIops TableWrite IopsWrite "SomeProgram" 1
+      addIops TableWrite IopsWrite (ProgramId "SomeProgram") 1
       currentEntry <- Map.lookup key <$> use (loopStateTestState . testStateDynamo)
       let currentVersion = fst <$> currentEntry
       writeVersion version currentVersion
@@ -142,7 +145,7 @@ writeToDynamo key values version next =
 
 getReadResult :: DynamoKey -> (Maybe DynamoReadResult -> n) -> InterpreterApp m a n
 getReadResult key n = do
-  addIops TableRead IopsGetItem "SomeProgram" 1
+  addIops TableRead IopsGetItem (ProgramId "SomeProgram") 1
   entry <- uses (testState . testStateDynamo) $ Map.lookup key
   return $ n $ (\(version, values) -> DynamoReadResult key version values) <$> entry
 
@@ -157,7 +160,7 @@ getUptoItem p =
 queryBackward :: Text -> Natural -> Maybe Int64 -> ([DynamoReadResult] -> n) -> InterpreterApp m a n
 queryBackward streamId maxEvents startEvent r =  do
   results <- uses (loopStateTestState . testStateDynamo) runQuery
-  addIops TableRead IopsQuery "SomeProgram" $ length results
+  addIops TableRead IopsQuery (ProgramId "SomeProgram") $ length results
   return $ r results 
   where 
     runQuery table = take (fromIntegral maxEvents) $ reverse $ eventsBeforeStart startEvent table
@@ -173,7 +176,7 @@ queryBackward streamId maxEvents startEvent r =  do
 scanNeedsPaging :: ([DynamoKey] -> n) -> InterpreterApp m a n
 scanNeedsPaging n = do
    results <- uses (testState . testStateDynamo) getEntries
-   addIops UnpagedRead IopsScanUnpaged "SomeProgram" $ length results
+   addIops UnpagedRead IopsScanUnpaged (ProgramId "SomeProgram") $ length results
    return $ n results
    where 
      getEntries = 
@@ -181,14 +184,14 @@ scanNeedsPaging n = do
          entryNeedsPaging = HM.member Constants.needsPagingKey . snd
        in Map.keys . Map.filter entryNeedsPaging
 
-setPulseStatus :: Text -> Bool -> InterpreterApp m a ()
+setPulseStatus :: ProgramId -> Bool -> InterpreterApp m a ()
 setPulseStatus programName isActive = do
   allInactiveState <- uses loopStatePrograms initialAllInactive
   loopStateActivity %= updatePulseStatus (LoopAllIdle allInactiveState) isActive
   where 
-    allInactive :: Map Text Bool -> Bool
+    allInactive :: Map ProgramId Bool -> Bool
     allInactive m = Map.filter id m == mempty
-    initialAllInactive :: Map Text (RunningProgramState a) -> Map Text Int
+    initialAllInactive :: Map ProgramId (RunningProgramState a) -> Map ProgramId Int
     initialAllInactive = fmap runningProgramStateMaxIdle
     updatePulseStatus :: LoopActivity -> Bool -> LoopActivity -> LoopActivity
     updatePulseStatus allInactiveState _ LoopActive { _loopActiveIdleCount = idleCount } =
@@ -197,7 +200,7 @@ setPulseStatus programName isActive = do
     updatePulseStatus _ True LoopAllIdle { _loopAllIdleIterationsRemaining = _idleRemaining } = LoopActive mempty
     updatePulseStatus _ False LoopAllIdle { _loopAllIdleIterationsRemaining = idleRemaining } = LoopAllIdle $ Map.adjust (\x -> x - 1) programName idleRemaining
 
-runCmd :: Text -> DynamoCmdMFree r -> InterpreterApp m r (Either r (DynamoCmdMFree r))
+runCmd :: ProgramId -> DynamoCmdMFree r -> InterpreterApp m r (Either r (DynamoCmdMFree r))
 runCmd _ (Free.Pure r) = return $ Left r
 runCmd _ (Free.Free (Wait' _ r)) = Right <$> return r
 runCmd _ (Free.Free (QueryBackward' key maxEvents start r)) = Right <$> queryBackward key maxEvents start r
@@ -207,7 +210,7 @@ runCmd _ (Free.Free (Log' _ msg r)) = Right <$> (addLog msg >> return r)
 runCmd programId (Free.Free (SetPulseStatus' isActive r)) = Right <$> (setPulseStatus programId isActive >> return r)
 runCmd _ (Free.Free (ScanNeedsPaging' r)) = Right <$> scanNeedsPaging r
 
-stepProgram :: Text -> RunningProgramState r -> InterpreterApp m r () 
+stepProgram :: ProgramId -> RunningProgramState r -> InterpreterApp m r () 
 stepProgram programId ps = do
   cmdResult <- runCmd programId $ runningProgramStateNext ps
   bigBanana cmdResult
@@ -219,7 +222,7 @@ stepProgram programId ps = do
     setNextProgram :: DynamoCmdMFree r -> RunningProgramState r
     setNextProgram n = ps { runningProgramStateNext = n }
 
-updateLoopState :: Text -> Either r (RunningProgramState r) -> InterpreterApp m r ()
+updateLoopState :: ProgramId -> Either r (RunningProgramState r) -> InterpreterApp m r ()
 updateLoopState programName result = 
   loopStatePrograms %= updateProgramEntry result >>
   loopStateProgramResults %= updateProgramResults result
@@ -238,20 +241,20 @@ iterateApp = do
 incrimentIterations :: InterpreterApp m a ()
 incrimentIterations = loopStateIterations %= (+ 1)
 
-runPrograms :: Map Text (DynamoCmdM a, Int) -> QC.Gen (Map Text a, TestState)
+runPrograms :: Map ProgramId (DynamoCmdM a, Int) -> QC.Gen (Map ProgramId a, TestState)
 runPrograms ps =
   over _2 (view loopStateTestState) <$> runStateT loop initialState
   where
         runningPrograms = fmap (\(p,maxIdleIterations) -> RunningProgramState (Church.fromF p) maxIdleIterations) ps
         initialState = LoopState 0 (LoopActive mempty) emptyTestState runningPrograms mempty
-        loop :: InterpreterApp QC.Gen a (Map Text a)
+        loop :: InterpreterApp QC.Gen a (Map ProgramId a)
         loop = do
           complete <- isComplete
           if complete
              then use loopStateProgramResults
              else iterateApp >> incrimentIterations >> loop
 
-runProgramGenerator :: Text -> DynamoCmdM a -> TestState -> QC.Gen a
+runProgramGenerator :: ProgramId -> DynamoCmdM a -> TestState -> QC.Gen a
 runProgramGenerator programId program initialTestState =
   evalStateT (loop $ Right (Church.fromF program)) initialState
   where
@@ -261,7 +264,7 @@ runProgramGenerator programId program initialTestState =
         loop (Left x) = return x
         loop (Right n) = runCmd programId n >>= loop
 
-runProgram :: Text -> DynamoCmdM a -> TestState -> (a, LoopState a)
+runProgram :: ProgramId -> DynamoCmdM a -> TestState -> (a, LoopState a)
 runProgram programId program initialTestState =
   runIdentity $ runStateT (loop $ Right (Church.fromF program)) initialState
   where
@@ -271,7 +274,7 @@ runProgram programId program initialTestState =
         loop (Left x) = return x
         loop (Right n) = runCmd programId n >>= loop
 
-execProgramUntilIdle :: Text -> DynamoCmdM a -> TestState -> (LoopState a)
+execProgramUntilIdle :: ProgramId -> DynamoCmdM a -> TestState -> (LoopState a)
 execProgramUntilIdle programId program initialTestState =
   runIdentity $ execStateT (loop $ Right (Church.fromF program)) initialState
   where
@@ -285,7 +288,7 @@ execProgramUntilIdle programId program initialTestState =
               then return Nothing
               else runCmd programId n >>= loop
 
-evalProgram :: Text -> DynamoCmdM a -> TestState -> a
+evalProgram :: ProgramId -> DynamoCmdM a -> TestState -> a
 evalProgram programId program initialTestState = fst $ runProgram programId program initialTestState
-execProgram :: Text -> DynamoCmdM a -> TestState -> (LoopState a)
+execProgram :: ProgramId -> DynamoCmdM a -> TestState -> (LoopState a)
 execProgram programId program initialTestState = snd $ runProgram programId program initialTestState
