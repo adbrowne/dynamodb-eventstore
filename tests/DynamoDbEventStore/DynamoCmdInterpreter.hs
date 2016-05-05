@@ -247,9 +247,6 @@ iterateApp = do
  (programId, programState) <- lift . QC.elements $ Map.toList p
  stepProgram programId programState
 
-incrimentIterations :: InterpreterApp m a ()
-incrimentIterations = loopStateIterations += 1
-
 runPrograms :: Map ProgramId (DynamoCmdM a, Int) -> QC.Gen (Map ProgramId a, TestState)
 runPrograms ps =
   over _2 (view loopStateTestState) <$> runStateT loop initialState
@@ -261,7 +258,7 @@ runPrograms ps =
           complete <- isComplete
           if complete
              then use loopStateProgramResults
-             else iterateApp >> incrimentIterations >> loop
+             else iterateApp >> loopStateIterations += 1 >> loop
 
 runProgramGenerator :: ProgramId -> DynamoCmdM a -> TestState -> QC.Gen a
 runProgramGenerator programId program initialTestState =
