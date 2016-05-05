@@ -16,6 +16,7 @@ import           GHC.Natural
 import qualified Prelude as P
 import           Control.Lens
 import           Control.Monad.State
+import           Control.Monad.Reader
 import           Data.Functor (($>))
 import qualified Data.HashMap.Lazy as HM
 import qualified Control.Monad.Free.Church as Church
@@ -73,16 +74,23 @@ $(makeLenses ''LoopState)
 instance HasIopCounts (LoopState a) IopsTable where
   iopCounts = loopStateTestState . testStateIopCounts
 
-addIops :: (HasIopCounts s IopsTable, MonadState s m) => IopsCategory -> IopsOperation -> ProgramId -> Int -> m ()
-addIops category operation programId i = iopCounts %= Map.insertWith (+) (category, operation, programId) i
+addIops :: (MonadState s m, HasIopCounts s IopsTable, MonadReader ProgramId m) => IopsCategory -> IopsOperation -> Int -> m ()
+addIops category operation i = do
+  (programId :: ProgramId) <- ask
+  iopCounts %= Map.insertWith (+) (category, operation, programId) i
 
 emptyTestState :: TestState
 emptyTestState = TestState mempty mempty mempty
 
 type InterpreterApp m a r = RandomFailure m => (StateT (LoopState a) m) r
 
+type InterpreterOperationStack m a r = RandomFailure m => ReaderT ProgramId (StateT (LoopState a) m) r
+
 maxIterations :: Int
 maxIterations = 100000
+
+subOperation :: ProgramId -> InterpreterOperationStack m a r -> InterpreterApp m a r
+subOperation programId p = runReaderT p programId
 
 isComplete :: InterpreterApp m a Bool
 isComplete = do
@@ -95,7 +103,7 @@ isComplete = do
     allOverMaxIdle (LoopActive _) = False
     allOverMaxIdle (LoopAllIdle status) = Map.filter (>0) status == mempty
 
-addLog :: Text -> InterpreterApp m a ()
+addLog :: Text -> InterpreterOperationStack m a ()
 addLog m =
   let
     appendMessage = flip (|>) m
@@ -112,21 +120,24 @@ instance RandomFailure QC.Gen where
 instance RandomFailure Identity where
    checkFail _ = return False
 
-potentialFailure :: Double -> InterpreterApp m a r -> InterpreterApp m a r -> InterpreterApp m a r
+instance (Monad m, RandomFailure m) => RandomFailure (ReaderT ProgramId (StateT (LoopState a) m)) where
+   checkFail p = lift . lift $ checkFail p
+
+potentialFailure :: Double -> InterpreterOperationStack m a r -> InterpreterOperationStack m a r -> InterpreterOperationStack m a r
 potentialFailure failurePercent onFailure onSuccess = do
-   didFail <- lift $ checkFail failurePercent
+   didFail <- checkFail failurePercent
    if didFail
      then onFailure
      else onSuccess
 
-writeToDynamo :: DynamoKey -> DynamoValues -> DynamoVersion -> (DynamoWriteResult -> n) -> InterpreterApp m a n
+writeToDynamo :: DynamoKey -> DynamoValues -> DynamoVersion -> (DynamoWriteResult -> n) -> InterpreterOperationStack m a n
 writeToDynamo key values version next =
   potentialFailure 25 onFailure onSuccess
   where
     onFailure =
       addLog "Random write failure" $> next DynamoWriteFailure
     onSuccess = do
-      addIops TableWrite IopsWrite (ProgramId "SomeProgram") 1
+      addIops TableWrite IopsWrite 1
       currentEntry <- Map.lookup key <$> use (loopStateTestState . testStateDynamo)
       let currentVersion = fst <$> currentEntry
       writeVersion version currentVersion
@@ -143,9 +154,9 @@ writeToDynamo key values version next =
        _ <- loopStateTestState . testStateDynamo %= Map.insert key (newVersion, values)
        return $ next DynamoWriteSuccess
 
-getReadResult :: DynamoKey -> (Maybe DynamoReadResult -> n) -> InterpreterApp m a n
+getReadResult :: DynamoKey -> (Maybe DynamoReadResult -> n) -> InterpreterOperationStack m a n
 getReadResult key n = do
-  addIops TableRead IopsGetItem (ProgramId "SomeProgram") 1
+  addIops TableRead IopsGetItem 1
   entry <- uses (testState . testStateDynamo) $ Map.lookup key
   return $ n $ (\(version, values) -> DynamoReadResult key version values) <$> entry
 
@@ -157,10 +168,10 @@ getUptoItem p =
             | p x = Nothing
             | otherwise = Just (x, xs)
 
-queryBackward :: Text -> Natural -> Maybe Int64 -> ([DynamoReadResult] -> n) -> InterpreterApp m a n
+queryBackward :: Text -> Natural -> Maybe Int64 -> ([DynamoReadResult] -> n) -> InterpreterOperationStack m a n
 queryBackward streamId maxEvents startEvent r =  do
   results <- uses (loopStateTestState . testStateDynamo) runQuery
-  addIops TableRead IopsQuery (ProgramId "SomeProgram") $ length results
+  addIops TableRead IopsQuery $ length results
   return $ r results 
   where 
     runQuery table = take (fromIntegral maxEvents) $ reverse $ eventsBeforeStart startEvent table
@@ -173,10 +184,10 @@ queryBackward streamId maxEvents startEvent r =  do
         eventList = (sortOn fst . Map.toList) filteredMap
       in (\(key, (version, values)) -> DynamoReadResult key version values) <$> eventList
 
-scanNeedsPaging :: ([DynamoKey] -> n) -> InterpreterApp m a n
+scanNeedsPaging :: ([DynamoKey] -> n) -> InterpreterOperationStack m a n
 scanNeedsPaging n = do
    results <- uses (testState . testStateDynamo) getEntries
-   addIops UnpagedRead IopsScanUnpaged (ProgramId "SomeProgram") $ length results
+   addIops UnpagedRead IopsScanUnpaged $ length results
    return $ n results
    where 
      getEntries = 
@@ -203,12 +214,12 @@ setPulseStatus programName isActive = do
 runCmd :: ProgramId -> DynamoCmdMFree r -> InterpreterApp m r (Either r (DynamoCmdMFree r))
 runCmd _ (Free.Pure r) = return $ Left r
 runCmd _ (Free.Free (Wait' _ r)) = Right <$> return r
-runCmd _ (Free.Free (QueryBackward' key maxEvents start r)) = Right <$> queryBackward key maxEvents start r
-runCmd _ (Free.Free (WriteToDynamo' key values version r)) = Right <$> writeToDynamo key values version r
-runCmd _ (Free.Free (ReadFromDynamo' key r)) = Right <$> getReadResult key r
-runCmd _ (Free.Free (Log' _ msg r)) = Right <$> (addLog msg >> return r)
+runCmd programId (Free.Free (QueryBackward' key maxEvents start r)) = Right <$> (subOperation programId $ queryBackward key maxEvents start r)
+runCmd programId (Free.Free (WriteToDynamo' key values version r)) = Right <$> (subOperation programId $ writeToDynamo key values version r)
+runCmd programId (Free.Free (ReadFromDynamo' key r)) = Right <$> (subOperation programId $ getReadResult key r)
+runCmd programId (Free.Free (Log' _ msg r)) = Right <$> subOperation programId (addLog msg >> return r)
 runCmd programId (Free.Free (SetPulseStatus' isActive r)) = Right <$> (setPulseStatus programId isActive >> return r)
-runCmd _ (Free.Free (ScanNeedsPaging' r)) = Right <$> scanNeedsPaging r
+runCmd programId (Free.Free (ScanNeedsPaging' r)) = Right <$> subOperation programId (scanNeedsPaging r)
 
 stepProgram :: ProgramId -> RunningProgramState r -> InterpreterApp m r () 
 stepProgram programId ps = do

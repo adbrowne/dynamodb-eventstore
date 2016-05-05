@@ -295,7 +295,13 @@ whenIndexing1000ItemsIopsIsMinimal =
     requests = replicate 1000 $ postEventRequestProgram $ PostEventRequest { perStreamId = streamId, perExpectedVersion = Nothing, perEvents = [EventEntry (TL.encodeUtf8 "My Content") "MyEvent"] }
     writeState = execProgram "writeEvents" (forM_ requests id) emptyTestState 
     afterIndexState = execProgramUntilIdle "indexer" GlobalFeedWriter.main (view testState writeState)
-    expectedWriteState = Map.fromList [((UnpagedRead, IopsScanUnpaged, "indexer"), 1)]
+    expectedWriteState = Map.fromList [
+      ((UnpagedRead,IopsScanUnpaged,"indexer"),1000)
+     ,((TableRead,IopsGetItem,"indexer"),106986)
+     ,((TableRead,IopsQuery,"indexer"),999)
+     ,((TableRead,IopsQuery,"writeEvents"),999)
+     ,((TableWrite,IopsWrite,"indexer"),3089)
+     ,((TableWrite,IopsWrite,"writeEvents"),1000)]
   in assertEqual "Should be small iops" expectedWriteState (view iopCounts afterIndexState)
 
 errorThrownIfTryingToWriteAnEventInAMultipleGap :: Assertion
