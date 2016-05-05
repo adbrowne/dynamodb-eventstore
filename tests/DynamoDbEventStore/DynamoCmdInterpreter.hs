@@ -89,7 +89,7 @@ type InterpreterOperationStack m a r = RandomFailure m => ReaderT ProgramId (Sta
 maxIterations :: Int
 maxIterations = 100000
 
-isComplete :: InterpreterApp m a Bool
+isComplete :: (MonadState (LoopState a) m) => m Bool
 isComplete = do
   allProgramsComplete <- uses loopStatePrograms Map.null
   tooManyIterations <- uses loopStateIterations (> maxIterations)
@@ -209,22 +209,19 @@ setPulseStatus isActive = do
     updatePulseStatus _ _ True LoopAllIdle { _loopAllIdleIterationsRemaining = _idleRemaining } = LoopActive mempty
     updatePulseStatus programId _ False LoopAllIdle { _loopAllIdleIterationsRemaining = idleRemaining } = LoopAllIdle $ Map.adjust (\x -> x - 1) programId idleRemaining
 
-subOperation :: ProgramId -> InterpreterOperationStack m r (DynamoCmdMFree r) -> InterpreterApp m r (Either r (DynamoCmdMFree r))
-subOperation programId p = Right <$> runReaderT p programId
-
-runCmd :: ProgramId -> DynamoCmdMFree r -> InterpreterApp m r (Either r (DynamoCmdMFree r))
-runCmd _ (Free.Pure r) = return $ Left r
-runCmd _ (Free.Free (Wait' _ r)) = Right <$> return r
-runCmd programId (Free.Free (QueryBackward' key maxEvents start r)) = subOperation programId $ queryBackward key maxEvents start r
-runCmd programId (Free.Free (WriteToDynamo' key values version r)) = subOperation programId $ writeToDynamo key values version r
-runCmd programId (Free.Free (ReadFromDynamo' key r)) = subOperation programId $ getReadResult key r
-runCmd programId (Free.Free (Log' _ msg r)) = subOperation programId $ addLog msg >> return r
-runCmd programId (Free.Free (SetPulseStatus' isActive r)) = subOperation programId $ setPulseStatus isActive >> return r
-runCmd programId (Free.Free (ScanNeedsPaging' r)) = subOperation programId $ scanNeedsPaging r
+runCmd :: DynamoCmdMFree r -> InterpreterOperationStack m r (Either r (DynamoCmdMFree r))
+runCmd (Free.Pure r) = return $ Left r
+runCmd (Free.Free (Wait' _ r)) = Right <$> return r
+runCmd (Free.Free (QueryBackward' key maxEvents start r)) = Right <$> queryBackward key maxEvents start r
+runCmd (Free.Free (WriteToDynamo' key values version r)) = Right <$> writeToDynamo key values version r
+runCmd (Free.Free (ReadFromDynamo' key r)) = Right <$> getReadResult key r
+runCmd (Free.Free (Log' _ msg r)) = Right <$> (addLog msg >> return r)
+runCmd (Free.Free (SetPulseStatus' isActive r)) = Right <$> (setPulseStatus isActive >> return r)
+runCmd (Free.Free (ScanNeedsPaging' r)) = Right <$> scanNeedsPaging r
 
 stepProgram :: ProgramId -> RunningProgramState r -> InterpreterApp m r () 
 stepProgram programId ps = do
-  cmdResult <- runCmd programId $ runningProgramStateNext ps
+  cmdResult <- runReaderT (runCmd $ runningProgramStateNext ps) programId
   bigBanana cmdResult
   where
     bigBanana :: Either r (DynamoCmdMFree r) -> InterpreterApp m r ()
@@ -268,37 +265,37 @@ runPrograms ps =
 
 runProgramGenerator :: ProgramId -> DynamoCmdM a -> TestState -> QC.Gen a
 runProgramGenerator programId program initialTestState =
-  evalStateT (loop $ Right (Church.fromF program)) initialState
+  evalStateT (runReaderT (loop $ Right (Church.fromF program)) programId) initialState
   where
         runningPrograms = Map.singleton programId (RunningProgramState (Church.fromF program) 0)
         initialState = LoopState 0 (LoopActive mempty) initialTestState runningPrograms mempty
-        loop :: Either r (DynamoCmdMFree r) -> InterpreterApp QC.Gen r r
+        loop :: Either r (DynamoCmdMFree r) -> InterpreterOperationStack QC.Gen r r
         loop (Left x) = return x
-        loop (Right n) = runCmd programId n >>= loop
+        loop (Right n) = runCmd n >>= loop
 
 runProgram :: ProgramId -> DynamoCmdM a -> TestState -> (a, LoopState a)
 runProgram programId program initialTestState =
-  runIdentity $ runStateT (loop $ Right (Church.fromF program)) initialState
+  runIdentity $ runStateT (runReaderT (loop $ Right (Church.fromF program)) programId) initialState
   where
         runningPrograms = Map.singleton programId (RunningProgramState (Church.fromF program) 0)
         initialState = LoopState 0 (LoopActive mempty) initialTestState runningPrograms mempty
-        loop :: Either r (DynamoCmdMFree r) -> InterpreterApp Identity r r
+        loop :: Either r (DynamoCmdMFree r) -> InterpreterOperationStack Identity r r
         loop (Left x) = return x
-        loop (Right n) = runCmd programId n >>= loop
+        loop (Right n) = runCmd n >>= loop
 
 execProgramUntilIdle :: ProgramId -> DynamoCmdM a -> TestState -> (LoopState a)
 execProgramUntilIdle programId program initialTestState =
-  runIdentity $ execStateT (loop $ Right (Church.fromF program)) initialState
+  runIdentity $ execStateT (runReaderT (loop $ Right (Church.fromF program)) programId) initialState
   where
         runningPrograms = Map.singleton programId (RunningProgramState (Church.fromF program) 0)
         initialState = LoopState 0 (LoopActive mempty) initialTestState runningPrograms mempty
-        loop :: Either r (DynamoCmdMFree r) -> InterpreterApp Identity r (Maybe r)
+        loop :: Either r (DynamoCmdMFree r) -> InterpreterOperationStack Identity r (Maybe r)
         loop (Left x) = return $ Just x
         loop (Right n) = do
           complete <- isComplete
           if complete
               then return Nothing
-              else runCmd programId n >>= loop
+              else runCmd n >>= loop
 
 evalProgram :: ProgramId -> DynamoCmdM a -> TestState -> a
 evalProgram programId program initialTestState = fst $ runProgram programId program initialTestState
