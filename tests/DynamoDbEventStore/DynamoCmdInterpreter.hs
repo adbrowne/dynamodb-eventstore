@@ -8,7 +8,7 @@
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 
-module DynamoDbEventStore.DynamoCmdInterpreter(TestState(..), runPrograms, runProgramGenerator, runProgram, emptyTestState, evalProgram, execProgram, execProgramUntilIdle, LoopState(..), testState, iopCounts, IopsCategory(..)) where
+module DynamoDbEventStore.DynamoCmdInterpreter(TestState(..), runPrograms, runProgramGenerator, runProgram, emptyTestState, evalProgram, execProgram, execProgramUntilIdle, LoopState(..), testState, iopCounts, IopsCategory(..), IopsOperation(..)) where
 
 import           BasicPrelude
 import           GHC.Natural
@@ -48,10 +48,14 @@ data LoopState r = LoopState {
 
 data IopsCategory = UnpagedRead | UnpagedWrite | TableRead | TableWrite deriving (Eq, Show, Ord)
 
+data IopsOperation = IopsScanUnpaged | IopsGetItem | IopsQuery | IopsWrite deriving (Eq, Show, Ord)
+
+type IopsTable = Map (IopsCategory, IopsOperation, Text) Int
+
 data TestState = TestState {
   _testStateDynamo :: TestDynamoTable,
   _testStateLog :: Seq Text,
-  _testStateIopCounts :: Map (IopsCategory, Text) Int
+  _testStateIopCounts :: IopsTable
 } deriving (Eq)
 
 instance P.Show TestState where
@@ -63,8 +67,11 @@ $(makeFields ''LoopState)
 $(makeLenses ''TestState)
 $(makeLenses ''LoopState)
 
-instance HasIopCounts (LoopState a) (Map (IopsCategory, Text) Int) where
+instance HasIopCounts (LoopState a) IopsTable where
   iopCounts = loopStateTestState . testStateIopCounts
+
+addIops :: (HasIopCounts s IopsTable, MonadState s m) => IopsCategory -> IopsOperation -> Text -> Int -> m ()
+addIops category operation programId i = iopCounts %= Map.insertWith (+) (category, operation, programId) i
 
 emptyTestState :: TestState
 emptyTestState = TestState mempty mempty mempty
@@ -116,6 +123,7 @@ writeToDynamo key values version next =
     onFailure =
       addLog "Random write failure" $> next DynamoWriteFailure
     onSuccess = do
+      addIops TableWrite IopsWrite "SomeProgram" 1
       currentEntry <- Map.lookup key <$> use (loopStateTestState . testStateDynamo)
       let currentVersion = fst <$> currentEntry
       writeVersion version currentVersion
@@ -132,10 +140,11 @@ writeToDynamo key values version next =
        _ <- loopStateTestState . testStateDynamo %= Map.insert key (newVersion, values)
        return $ next DynamoWriteSuccess
 
-getReadResult :: DynamoKey -> TestDynamoTable -> Maybe DynamoReadResult
-getReadResult key table = do
-  (version, values) <- Map.lookup key table
-  return $ DynamoReadResult key version values
+getReadResult :: DynamoKey -> (Maybe DynamoReadResult -> n) -> InterpreterApp m a n
+getReadResult key n = do
+  addIops TableRead IopsGetItem "SomeProgram" 1
+  entry <- uses (testState . testStateDynamo) $ Map.lookup key
+  return $ n $ (\(version, values) -> DynamoReadResult key version values) <$> entry
 
 getUptoItem :: (a -> Bool) -> [a] -> [a]
 getUptoItem p =
@@ -145,24 +154,32 @@ getUptoItem p =
             | p x = Nothing
             | otherwise = Just (x, xs)
 
-queryBackward :: Text -> Natural -> Maybe Int64 -> TestDynamoTable -> [DynamoReadResult]
-queryBackward streamId maxEvents startEvent table = 
-  take (fromIntegral maxEvents) $ reverse $ eventsBeforeStart startEvent 
+queryBackward :: Text -> Natural -> Maybe Int64 -> ([DynamoReadResult] -> n) -> InterpreterApp m a n
+queryBackward streamId maxEvents startEvent r =  do
+  results <- uses (loopStateTestState . testStateDynamo) runQuery
+  addIops TableRead IopsQuery "SomeProgram" $ length results
+  return $ r results 
   where 
+    runQuery table = take (fromIntegral maxEvents) $ reverse $ eventsBeforeStart startEvent table
     dynamoReadResultToEventNumber (DynamoReadResult (DynamoKey _key eventNumber) _version _values) = eventNumber
-    eventsBeforeStart Nothing = allEvents
-    eventsBeforeStart (Just start) = getUptoItem (\a -> dynamoReadResultToEventNumber a >= start) allEvents
-    allEvents = 
+    eventsBeforeStart Nothing table = allEvents table
+    eventsBeforeStart (Just start) table = getUptoItem (\a -> dynamoReadResultToEventNumber a >= start) (allEvents table)
+    allEvents table = 
       let 
         filteredMap = Map.filterWithKey (\(DynamoKey hashKey _rangeKey) _value -> hashKey == streamId) table
         eventList = (sortOn fst . Map.toList) filteredMap
       in (\(key, (version, values)) -> DynamoReadResult key version values) <$> eventList
 
-scanNeedsPaging :: TestDynamoTable -> [DynamoKey]
-scanNeedsPaging = 
-   let 
-     entryNeedsPaging = HM.member Constants.needsPagingKey . snd
-   in Map.keys . Map.filter entryNeedsPaging
+scanNeedsPaging :: ([DynamoKey] -> n) -> InterpreterApp m a n
+scanNeedsPaging n = do
+   results <- uses (testState . testStateDynamo) getEntries
+   addIops UnpagedRead IopsScanUnpaged "SomeProgram" $ length results
+   return $ n results
+   where 
+     getEntries = 
+       let 
+         entryNeedsPaging = HM.member Constants.needsPagingKey . snd
+       in Map.keys . Map.filter entryNeedsPaging
 
 setPulseStatus :: Text -> Bool -> InterpreterApp m a ()
 setPulseStatus programName isActive = do
@@ -183,12 +200,12 @@ setPulseStatus programName isActive = do
 runCmd :: Text -> DynamoCmdMFree r -> InterpreterApp m r (Either r (DynamoCmdMFree r))
 runCmd _ (Free.Pure r) = return $ Left r
 runCmd _ (Free.Free (Wait' _ r)) = Right <$> return r
-runCmd _ (Free.Free (QueryBackward' key maxEvents start r)) = Right <$> uses (loopStateTestState . testStateDynamo) (r . queryBackward key maxEvents start) 
+runCmd _ (Free.Free (QueryBackward' key maxEvents start r)) = Right <$> queryBackward key maxEvents start r
 runCmd _ (Free.Free (WriteToDynamo' key values version r)) = Right <$> writeToDynamo key values version r
-runCmd _ (Free.Free (ReadFromDynamo' key r)) = Right <$> uses (loopStateTestState . testStateDynamo) (r . getReadResult key)
+runCmd _ (Free.Free (ReadFromDynamo' key r)) = Right <$> getReadResult key r
 runCmd _ (Free.Free (Log' _ msg r)) = Right <$> (addLog msg >> return r)
 runCmd programId (Free.Free (SetPulseStatus' isActive r)) = Right <$> (setPulseStatus programId isActive >> return r)
-runCmd _ (Free.Free (ScanNeedsPaging' r)) = Right <$> uses (loopStateTestState . testStateDynamo) (r . scanNeedsPaging)
+runCmd _ (Free.Free (ScanNeedsPaging' r)) = Right <$> scanNeedsPaging r
 
 stepProgram :: Text -> RunningProgramState r -> InterpreterApp m r () 
 stepProgram programId ps = do
