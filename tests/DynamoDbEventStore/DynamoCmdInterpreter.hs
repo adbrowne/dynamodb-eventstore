@@ -89,9 +89,6 @@ type InterpreterOperationStack m a r = RandomFailure m => ReaderT ProgramId (Sta
 maxIterations :: Int
 maxIterations = 100000
 
-subOperation :: ProgramId -> InterpreterOperationStack m a r -> InterpreterApp m a r
-subOperation programId p = runReaderT p programId
-
 isComplete :: InterpreterApp m a Bool
 isComplete = do
   allProgramsComplete <- uses loopStatePrograms Map.null
@@ -212,15 +209,18 @@ setPulseStatus isActive = do
     updatePulseStatus _ _ True LoopAllIdle { _loopAllIdleIterationsRemaining = _idleRemaining } = LoopActive mempty
     updatePulseStatus programId _ False LoopAllIdle { _loopAllIdleIterationsRemaining = idleRemaining } = LoopAllIdle $ Map.adjust (\x -> x - 1) programId idleRemaining
 
+subOperation :: ProgramId -> InterpreterOperationStack m r (DynamoCmdMFree r) -> InterpreterApp m r (Either r (DynamoCmdMFree r))
+subOperation programId p = Right <$> runReaderT p programId
+
 runCmd :: ProgramId -> DynamoCmdMFree r -> InterpreterApp m r (Either r (DynamoCmdMFree r))
 runCmd _ (Free.Pure r) = return $ Left r
 runCmd _ (Free.Free (Wait' _ r)) = Right <$> return r
-runCmd programId (Free.Free (QueryBackward' key maxEvents start r)) = Right <$> (subOperation programId $ queryBackward key maxEvents start r)
-runCmd programId (Free.Free (WriteToDynamo' key values version r)) = Right <$> (subOperation programId $ writeToDynamo key values version r)
-runCmd programId (Free.Free (ReadFromDynamo' key r)) = Right <$> (subOperation programId $ getReadResult key r)
-runCmd programId (Free.Free (Log' _ msg r)) = Right <$> subOperation programId (addLog msg >> return r)
-runCmd programId (Free.Free (SetPulseStatus' isActive r)) = Right <$> subOperation programId (setPulseStatus isActive >> return r)
-runCmd programId (Free.Free (ScanNeedsPaging' r)) = Right <$> subOperation programId (scanNeedsPaging r)
+runCmd programId (Free.Free (QueryBackward' key maxEvents start r)) = subOperation programId $ queryBackward key maxEvents start r
+runCmd programId (Free.Free (WriteToDynamo' key values version r)) = subOperation programId $ writeToDynamo key values version r
+runCmd programId (Free.Free (ReadFromDynamo' key r)) = subOperation programId $ getReadResult key r
+runCmd programId (Free.Free (Log' _ msg r)) = subOperation programId $ addLog msg >> return r
+runCmd programId (Free.Free (SetPulseStatus' isActive r)) = subOperation programId $ setPulseStatus isActive >> return r
+runCmd programId (Free.Free (ScanNeedsPaging' r)) = subOperation programId $ scanNeedsPaging r
 
 stepProgram :: ProgramId -> RunningProgramState r -> InterpreterApp m r () 
 stepProgram programId ps = do
