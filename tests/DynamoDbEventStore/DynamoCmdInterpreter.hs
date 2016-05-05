@@ -104,10 +104,10 @@ isComplete = do
     allOverMaxIdle (LoopAllIdle status) = Map.filter (>0) status == mempty
 
 addLog :: Text -> InterpreterOperationStack m a ()
-addLog m =
-  let
-    appendMessage = flip (|>) m
-  in (loopStateTestState . testStateLog) %= appendMessage
+addLog m = do
+  (ProgramId programId) <- ask
+  let appendMessage = flip (|>) (programId <> ": " <> m)
+  (loopStateTestState . testStateLog) %= appendMessage
 
 class Monad m => RandomFailure m where
   checkFail :: Double -> m Bool 
