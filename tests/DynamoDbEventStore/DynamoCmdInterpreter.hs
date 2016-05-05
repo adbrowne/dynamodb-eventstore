@@ -195,21 +195,22 @@ scanNeedsPaging n = do
          entryNeedsPaging = HM.member Constants.needsPagingKey . snd
        in Map.keys . Map.filter entryNeedsPaging
 
-setPulseStatus :: ProgramId -> Bool -> InterpreterApp m a ()
-setPulseStatus programName isActive = do
+setPulseStatus :: Bool -> InterpreterOperationStack m a ()
+setPulseStatus isActive = do
+  programId <- ask
   allInactiveState <- uses loopStatePrograms initialAllInactive
-  loopStateActivity %= updatePulseStatus (LoopAllIdle allInactiveState) isActive
+  loopStateActivity %= updatePulseStatus programId (LoopAllIdle allInactiveState) isActive
   where 
     allInactive :: Map ProgramId Bool -> Bool
     allInactive m = Map.filter id m == mempty
     initialAllInactive :: Map ProgramId (RunningProgramState a) -> Map ProgramId Int
     initialAllInactive = fmap runningProgramStateMaxIdle
-    updatePulseStatus :: LoopActivity -> Bool -> LoopActivity -> LoopActivity
-    updatePulseStatus allInactiveState _ LoopActive { _loopActiveIdleCount = idleCount } =
-      let updated = Map.alter (const (Just isActive)) programName idleCount
+    updatePulseStatus :: ProgramId -> LoopActivity -> Bool -> LoopActivity -> LoopActivity
+    updatePulseStatus programId allInactiveState _ LoopActive { _loopActiveIdleCount = idleCount } =
+      let updated = Map.alter (const (Just isActive)) programId idleCount
       in if allInactive updated then allInactiveState else LoopActive updated
-    updatePulseStatus _ True LoopAllIdle { _loopAllIdleIterationsRemaining = _idleRemaining } = LoopActive mempty
-    updatePulseStatus _ False LoopAllIdle { _loopAllIdleIterationsRemaining = idleRemaining } = LoopAllIdle $ Map.adjust (\x -> x - 1) programName idleRemaining
+    updatePulseStatus _ _ True LoopAllIdle { _loopAllIdleIterationsRemaining = _idleRemaining } = LoopActive mempty
+    updatePulseStatus programId _ False LoopAllIdle { _loopAllIdleIterationsRemaining = idleRemaining } = LoopAllIdle $ Map.adjust (\x -> x - 1) programId idleRemaining
 
 runCmd :: ProgramId -> DynamoCmdMFree r -> InterpreterApp m r (Either r (DynamoCmdMFree r))
 runCmd _ (Free.Pure r) = return $ Left r
@@ -218,7 +219,7 @@ runCmd programId (Free.Free (QueryBackward' key maxEvents start r)) = Right <$> 
 runCmd programId (Free.Free (WriteToDynamo' key values version r)) = Right <$> (subOperation programId $ writeToDynamo key values version r)
 runCmd programId (Free.Free (ReadFromDynamo' key r)) = Right <$> (subOperation programId $ getReadResult key r)
 runCmd programId (Free.Free (Log' _ msg r)) = Right <$> subOperation programId (addLog msg >> return r)
-runCmd programId (Free.Free (SetPulseStatus' isActive r)) = Right <$> (setPulseStatus programId isActive >> return r)
+runCmd programId (Free.Free (SetPulseStatus' isActive r)) = Right <$> subOperation programId (setPulseStatus isActive >> return r)
 runCmd programId (Free.Free (ScanNeedsPaging' r)) = Right <$> subOperation programId (scanNeedsPaging r)
 
 stepProgram :: ProgramId -> RunningProgramState r -> InterpreterApp m r () 
