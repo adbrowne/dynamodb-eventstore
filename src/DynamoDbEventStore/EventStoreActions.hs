@@ -15,6 +15,7 @@ module DynamoDbEventStore.EventStoreActions(
   EventEntry(..),
   EventStoreAction(..),
   EventWriteResult(..),
+  EventStoreResponse(..),
   postEventRequestProgram,
   getReadStreamRequestProgram,
   getReadEventRequestProgram,
@@ -74,6 +75,10 @@ instance Serialize.Serialize EventEntry
 instance Serialize.Serialize EventType where
   put (EventType t) = (Serialize.put . encodeUtf8) t
   get = EventType . decodeUtf8 <$> Serialize.get 
+
+data EventStoreResponse = EventStoreResponse {
+  eventStoreResponseToText :: Text
+}
 
 data PostEventRequest = PostEventRequest {
    perStreamId        :: Text,

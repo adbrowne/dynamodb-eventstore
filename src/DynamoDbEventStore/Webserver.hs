@@ -70,21 +70,21 @@ positiveInt64Parser =
      | a <= maxInt64 = return (fromInteger a)
      | otherwise = fail "too large"
 
-fromEither :: Either a a -> a
-fromEither (Left a) = a
-fromEither (Right a) = a
+toResult :: Either LText (IO (Either Text EventStoreResponse)) -> ActionM()
+toResult (Left err) = error400 err
+toResult (Right esResult) = do
+  result <- liftIO esResult
+  case result of (Left err) -> error400 $ TL.fromStrict err
+                 (Right a) -> html $ TL.fromStrict $ eventStoreResponseToText a
 
-toResult :: Either LText (ActionM ()) -> ActionM ()
-toResult = fromEither . left error400
-
-showEventResponse :: Show a => a -> ActionM ()
-showEventResponse = html . TL.fromStrict . show
+showEventResponse :: Show a => a -> IO (Either Text EventStoreResponse)
+showEventResponse a = return . Right $ EventStoreResponse (show a)
 
 notEmpty :: Text -> Either LText Text
 notEmpty "" = Left "streamId required"
 notEmpty t = Right t
 
-app :: (EventStoreAction -> ActionM ()) -> ScottyM ()
+app :: (EventStoreAction -> IO (Either Text EventStoreResponse)) -> ScottyM ()
 app process = do
   post "/streams/:streamId" $ do
     streamId <- param "streamId"

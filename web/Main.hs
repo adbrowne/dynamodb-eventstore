@@ -6,7 +6,6 @@ module Main where
 
 import           BasicPrelude
 import           System.Exit
-import qualified Data.Text.Lazy as TL
 import           Control.Monad.Except
 import           Network.Wai.Handler.Warp
 import           Web.Scotty
@@ -33,28 +32,28 @@ runMyAws :: (MyAwsStack a -> ExceptT Text IO a) -> Text -> DynamoCmdM a -> Excep
 runMyAws runner tableName program = 
   runner $ runProgram tableName program
 
-printEvent :: EventStoreAction -> ActionM EventStoreAction
+printEvent :: EventStoreAction -> IO EventStoreAction
 printEvent a = do
-  liftIO . print . show $ a
+  print . show $ a
   return a
 
-runEventStoreAction :: (forall a. DynamoCmdM a -> ExceptT Text IO a) -> EventStoreAction -> ActionM ()
+runEventStoreAction :: (forall a. DynamoCmdM a -> ExceptT Text IO a) -> EventStoreAction -> IO (Either Text EventStoreResponse)
 runEventStoreAction runner (PostEvent req) = do
   let program = postEventRequestProgram req
   a <- liftIO $ runExceptT $ runner program
-  (html . TL.fromStrict . show) a
+  return $ fmap (\x -> EventStoreResponse { eventStoreResponseToText = show x }) a
 runEventStoreAction runner (ReadStream req) = do
   let program = getReadStreamRequestProgram req
   a <- liftIO $ runExceptT $ runner program
-  json a
+  return $ fmap (\x -> EventStoreResponse { eventStoreResponseToText = show x }) a
 runEventStoreAction runner (ReadAll req) = do
   let program = getReadAllRequestProgram req
   a <- liftIO $ runExceptT $ runner program
-  json a
+  return $ fmap (\x -> EventStoreResponse { eventStoreResponseToText = show x }) a
 runEventStoreAction runner (ReadEvent req) = do
   let program = getReadEventRequestProgram req
   a <- liftIO $ runExceptT $ runner program
-  json a
+  return $ fmap (\x -> EventStoreResponse { eventStoreResponseToText = show x }) a
 runEventStoreAction _ (SubscribeAll _) = error "SubscribeAll not implemented" 
 
 data Config = Config 
