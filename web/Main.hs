@@ -58,6 +58,7 @@ runEventStoreAction _ (SubscribeAll _) = error "SubscribeAll not implemented"
 
 data Config = Config 
   { configTableName :: String,
+    configPort :: Int,
     configLocalDynamoDB :: Bool,
     configCreateTable :: Bool }
 
@@ -66,13 +67,15 @@ config = Config
    <$> strOption (long "tableName"
        <> metavar "TABLENAME"
        <> help "DynamoDB table name")
+   <*> option auto (long "port"
+       <> value 2113
+       <> short 'p'
+       <> metavar "PORT"
+       <> help "HTTP port")
    <*> flag False True
        (long "dynamoLocal" <> help "Use dynamodb local")
    <*> flag False True
        (long "createTable" <> short 'c' <> help "Create table if it does not exist")
-
-httpPort :: Int
-httpPort = 2113
 
 httpHost :: String
 httpHost = "127.0.0.1"
@@ -101,6 +104,7 @@ start parsedConfig = do
      _ <- lift $ forkIO $ do
        result <- runExceptT $ runner' GlobalFeedWriter.main
        putMVar exitMVar result
+     let httpPort = (configPort parsedConfig)
      let warpSettings = setPort httpPort $ setHost (fromString httpHost) defaultSettings
      putStrLn $ "Server listenting on: http://" <> fromString httpHost <> ":" <> show httpPort
      _ <- lift $ forkIO $ void $ scottyApp (app (printEvent >=> runEventStoreAction runner')) >>= runSettings warpSettings
