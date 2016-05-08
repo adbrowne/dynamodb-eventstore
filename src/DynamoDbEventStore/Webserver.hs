@@ -9,8 +9,12 @@ import           Control.Arrow             (left)
 import           Data.Attoparsec.Text.Lazy
 import           Data.Char                 (isDigit)
 import qualified Data.Text.Lazy            as TL
+import qualified Data.Text.Lazy.Encoding   as TL
+import qualified Data.Vector               as V
+import           Data.Aeson
 import           Network.HTTP.Types.Status
 import           DynamoDbEventStore.EventStoreActions
+import           DynamoDbEventStore.EventStoreCommands
 
 data ExpectedVersion = ExpectedVersion Int
   deriving (Show)
@@ -70,21 +74,49 @@ positiveInt64Parser =
      | a <= maxInt64 = return (fromInteger a)
      | otherwise = fail "too large"
 
-toResult :: Either LText (IO (Either Text EventStoreResponse)) -> ActionM()
+readEventResultJsonValue :: Text -> RecordedEvent -> Value
+readEventResultJsonValue baseUri recordedEvent = 
+  let
+    streamId = recordedEventStreamId recordedEvent
+    eventNumber = (show . recordedEventNumber) recordedEvent 
+    eventUri = baseUri <> "/" <> streamId <> "/" <> eventNumber
+    title = "title" .= (eventNumber <>  "@" <> streamId)
+    summary = "summary" .= recordedEventType recordedEvent
+    content = "content" .= object [
+        "eventStreamId" .= recordedEventStreamId recordedEvent 
+      , "eventNumber" .= recordedEventNumber recordedEvent
+      , "eventType" .= recordedEventType recordedEvent
+      ]
+    links = "links" .= (Array . V.fromList) [
+            object [ "relation" .= ("edit" :: Text), "uri" .= eventUri]
+         ,  object [ "relation" .= ("alternative" :: Text), "uri" .= eventUri]
+      ]
+  in object [title, summary, content, links]
+
+eventStoreActionResultToText :: ResponseEncoding -> EventStoreActionResult -> ActionM()
+eventStoreActionResultToText _ (TextResult r) = (raw . TL.encodeUtf8 . TL.fromStrict) r
+eventStoreActionResultToText AtomJsonEncoding (PostEventResult r) = (raw . TL.encodeUtf8 . TL.fromStrict) $ show r
+eventStoreActionResultToText AtomJsonEncoding (ReadEventResult (Right (Just r))) = (raw . encode . (readEventResultJsonValue "http://localhost:2114")) r
+eventStoreActionResultToText AtomJsonEncoding (ReadEventResult (Right Nothing)) = (status $ mkStatus 404 (toByteString "Not Found")) >> raw "{}"
+eventStoreActionResultToText AtomJsonEncoding _ = error "todo EventStoreActionResult"
+
+data ResponseEncoding = AtomJsonEncoding
+
+toResult :: Either LText (IO (Either Text EventStoreActionResult)) -> ActionM()
 toResult (Left err) = error400 err
 toResult (Right esResult) = do
   result <- liftIO esResult
-  case result of (Left err) -> error400 $ TL.fromStrict err
-                 (Right a) -> html $ TL.fromStrict $ eventStoreResponseToText a
+  case result of (Left err) -> (error400 . TL.fromStrict) err
+                 (Right a) -> (eventStoreActionResultToText AtomJsonEncoding) a
 
-showEventResponse :: Show a => a -> IO (Either Text EventStoreResponse)
-showEventResponse a = return . Right $ EventStoreResponse (show a)
+showEventResponse :: Show a => a -> IO (Either Text EventStoreActionResult)
+showEventResponse a = return . Right $ TextResult (show a)
 
 notEmpty :: Text -> Either LText Text
 notEmpty "" = Left "streamId required"
 notEmpty t = Right t
 
-app :: (EventStoreAction -> IO (Either Text EventStoreResponse)) -> ScottyM ()
+app :: (EventStoreAction -> IO (Either Text EventStoreActionResult)) -> ScottyM ()
 app process = do
   post "/streams/:streamId" $ do
     streamId <- param "streamId"

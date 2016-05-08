@@ -37,23 +37,19 @@ printEvent a = do
   print . show $ a
   return a
 
-runEventStoreAction :: (forall a. DynamoCmdM a -> ExceptT Text IO a) -> EventStoreAction -> IO (Either Text EventStoreResponse)
-runEventStoreAction runner (PostEvent req) = do
+runEventStoreAction :: (forall a. DynamoCmdM a -> ExceptT Text IO a) -> EventStoreAction -> IO (Either Text EventStoreActionResult)
+runEventStoreAction runner (PostEvent req) =
   let program = postEventRequestProgram req
-  a <- liftIO $ runExceptT $ runner program
-  return $ fmap (\x -> EventStoreResponse { eventStoreResponseToText = show x }) a
-runEventStoreAction runner (ReadStream req) = do
+  in liftIO $ runExceptT $ (PostEventResult <$> runner program)
+runEventStoreAction runner (ReadStream req) = 
   let program = getReadStreamRequestProgram req
-  a <- liftIO $ runExceptT $ runner program
-  return $ fmap (\x -> EventStoreResponse { eventStoreResponseToText = show x }) a
-runEventStoreAction runner (ReadAll req) = do
+  in liftIO $ runExceptT $ ReadStreamResult <$> runner program
+runEventStoreAction runner (ReadAll req) =
   let program = getReadAllRequestProgram req
-  a <- liftIO $ runExceptT $ runner program
-  return $ fmap (\x -> EventStoreResponse { eventStoreResponseToText = show x }) a
-runEventStoreAction runner (ReadEvent req) = do
+  in liftIO $ runExceptT $ ReadAllResult <$> runner program
+runEventStoreAction runner (ReadEvent req) =
   let program = getReadEventRequestProgram req
-  a <- liftIO $ runExceptT $ runner program
-  return $ fmap (\x -> EventStoreResponse { eventStoreResponseToText = show x }) a
+  in liftIO $ runExceptT $ ReadEventResult <$> runner program
 runEventStoreAction _ (SubscribeAll _) = error "SubscribeAll not implemented" 
 
 data Config = Config 
