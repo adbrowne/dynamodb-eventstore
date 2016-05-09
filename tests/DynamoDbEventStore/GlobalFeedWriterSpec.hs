@@ -31,7 +31,7 @@ import qualified Data.Set as Set
 import           DynamoDbEventStore.EventStoreCommands
 import           DynamoDbEventStore.EventStoreActions
 import qualified DynamoDbEventStore.GlobalFeedWriter as GlobalFeedWriter
-import           DynamoDbEventStore.GlobalFeedWriter (FeedEntry())
+import           DynamoDbEventStore.GlobalFeedWriter (FeedEntry(),EventStoreActionError(..))
 import           DynamoDbEventStore.DynamoCmdInterpreter
 
 type UploadItem = (Text,Int64,UTCTime,NonEmpty EventData)
@@ -73,14 +73,14 @@ instance QC.Arbitrary UploadList where
         (p :: [()]) <- cappedList 100
         mapM (\_ -> (:|) <$> QC.arbitrary <*> cappedList 9) p
 
-writeEvent :: (Text, Int64, UTCTime, NonEmpty EventData) -> DynamoCmdM (Either Text EventWriteResult)
+writeEvent :: (Text, Int64, UTCTime, NonEmpty EventData) -> DynamoCmdM (Either EventStoreActionError EventWriteResult)
 writeEvent (stream, eventNumber, eventTime, eventBodies) = 
   let 
     eventEntries = (\(EventData body) -> EventEntry (TL.encodeUtf8 . TL.fromStrict $ body) "") <$> eventBodies
   in
     postEventRequestProgram (PostEventRequest stream (Just eventNumber) eventTime eventEntries)
 
-publisher :: [(Text,Int64,UTCTime,NonEmpty EventData)] -> DynamoCmdM (Either Text ())
+publisher :: [(Text,Int64,UTCTime,NonEmpty EventData)] -> DynamoCmdM (Either EventStoreActionError ())
 publisher xs = Right <$> forM_ xs writeEvent
 
 globalFeedFromUploadList :: [UploadItem] -> Map.Map Text (Seq.Seq Int64)
@@ -130,9 +130,9 @@ prop_AllEventsCanBeReadIndividually (UploadList uploadItems) =
       ]
     expectedEvents = expectedEventsFromUploadList (UploadList uploadItems)
     check (_, testRunState) = lookupBodies testRunState === ((_3 %~ (Right . Just)) <$> expectedEvents)
-    lookupBodies :: TestState -> [(Text, Int64, Either Text (Maybe EventData))]
+    lookupBodies :: TestState -> [(Text, Int64, Either EventStoreActionError (Maybe EventData))]
     lookupBodies testRunState = fmap (\(streamId, eventNumber, _) -> (streamId, eventNumber, lookupBody testRunState streamId eventNumber)) expectedEvents
-    lookupBody :: TestState ->  Text -> Int64 -> (Either Text (Maybe EventData))
+    lookupBody :: TestState ->  Text -> Int64 -> (Either EventStoreActionError (Maybe EventData))
     lookupBody testRunState streamId eventNumber =
       ((EventData . T.decodeUtf8 . recordedEventData) <$>) <$> evalProgram "LookupEvent" (getReadEventRequestProgram $ ReadEventRequest streamId eventNumber) testRunState
   in QC.forAll (runPrograms programs) check
@@ -147,16 +147,16 @@ prop_ConflictingWritesWillNotSucceed =
   in QC.forAll (runPrograms programs) check
      where
        check (writeResults, _testState) = (foldl' sumIfSuccess 0 writeResults) === 1
-       sumIfSuccess :: Int -> Either Text EventWriteResult -> Int
+       sumIfSuccess :: Int -> Either e EventWriteResult -> Int
        sumIfSuccess s (Right WriteSuccess) = s + 1
        sumIfSuccess s _            = s
 
-getStreamRecordedEvents :: Text -> ExceptT Text DynamoCmdM [RecordedEvent]
+getStreamRecordedEvents :: Text -> ExceptT EventStoreActionError DynamoCmdM [RecordedEvent]
 getStreamRecordedEvents streamId = do
    recordedEvents <- concat <$> unfoldrM getEventSet Nothing 
    return $ reverse recordedEvents
    where
-    getEventSet :: Maybe Int64 -> ExceptT Text DynamoCmdM (Maybe ([RecordedEvent], Maybe Int64)) 
+    getEventSet :: Maybe Int64 -> ExceptT EventStoreActionError DynamoCmdM (Maybe ([RecordedEvent], Maybe Int64)) 
     getEventSet startEvent = 
       if ((< 0) <$> startEvent) == Just True then
         return Nothing
@@ -167,15 +167,15 @@ getStreamRecordedEvents streamId = do
         else 
           return $ Just (recordedEvents, (Just . (\x -> x - 1) . recordedEventNumber . last) recordedEvents)
 
-readEachStream :: [UploadItem] -> ExceptT Text DynamoCmdM (Map.Map Text (Seq.Seq Int64))
+readEachStream :: [UploadItem] -> ExceptT EventStoreActionError DynamoCmdM (Map.Map Text (Seq.Seq Int64))
 readEachStream uploadItems = 
   foldM readStream Map.empty streams
   where 
-    readStream :: Map.Map Text (Seq.Seq Int64) -> Text -> ExceptT Text DynamoCmdM (Map.Map Text (Seq.Seq Int64))
+    readStream :: Map.Map Text (Seq.Seq Int64) -> Text -> ExceptT EventStoreActionError DynamoCmdM (Map.Map Text (Seq.Seq Int64))
     readStream m streamId = do
       eventIds <- getEventIds streamId
       return $ Map.insert streamId eventIds m
-    getEventIds :: Text -> ExceptT Text DynamoCmdM (Seq.Seq Int64)
+    getEventIds :: Text -> ExceptT EventStoreActionError DynamoCmdM (Seq.Seq Int64)
     getEventIds streamId = do
        recordedEvents <- getStreamRecordedEvents streamId
        return $ Seq.fromList $ recordedEventNumber <$> recordedEvents
@@ -226,7 +226,7 @@ writeEventsWithNoExpectedVersions (StreamId streamId) events =
       result <- postEventRequestProgram (PostEventRequest streamId Nothing sampleTime (EventEntry ed (EventType et) :| []))
       when (result /= Right WriteSuccess) $ error "Bad write result"
 
-writeThenRead :: StreamId -> [(Text, LByteString)] -> EventWriter -> ExceptT Text DynamoCmdM [RecordedEvent]
+writeThenRead :: StreamId -> [(Text, LByteString)] -> EventWriter -> ExceptT EventStoreActionError DynamoCmdM [RecordedEvent]
 writeThenRead (StreamId streamId) events writer = do
   lift $ writer (StreamId streamId) events
   getStreamRecordedEvents streamId

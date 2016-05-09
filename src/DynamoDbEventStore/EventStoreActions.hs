@@ -38,12 +38,13 @@ import qualified Data.List.NonEmpty as NonEmpty
 import           Data.Time.Format
 import           Data.Time.Clock
 import qualified Data.Text.Lazy.Encoding as TL
-import           DynamoDbEventStore.EventStoreCommands
+import           DynamoDbEventStore.EventStoreCommands hiding (readField)
 import qualified Data.HashMap.Strict     as HM
 import           Network.AWS.DynamoDB
 import           Text.Printf (printf)
 import qualified DynamoDbEventStore.Constants as Constants
 import qualified DynamoDbEventStore.GlobalFeedWriter as GlobalFeedWriter
+import           DynamoDbEventStore.GlobalFeedWriter (EventStoreActionError(..))
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck.Instances()
 import qualified Data.Aeson as Aeson
@@ -82,10 +83,10 @@ instance Serialize.Serialize EventType where
   get = EventType . decodeUtf8 <$> Serialize.get 
 
 data EventStoreActionResult =
-  PostEventResult (Either Text EventWriteResult)
-  | ReadStreamResult (Either Text [RecordedEvent])
-  | ReadAllResult (Either Text [EventKey])
-  | ReadEventResult (Either Text (Maybe RecordedEvent))
+  PostEventResult (Either EventStoreActionError EventWriteResult)
+  | ReadStreamResult (Either EventStoreActionError [RecordedEvent])
+  | ReadAllResult (Either EventStoreActionError [EventKey])
+  | ReadEventResult (Either EventStoreActionError (Maybe RecordedEvent))
   | TextResult Text
 
 data PostEventRequest = PostEventRequest {
@@ -119,7 +120,14 @@ data ReadAllRequest = ReadAllRequest deriving (Show)
 
 data EventWriteResult = WriteSuccess | WrongExpectedVersion | EventExists | WriteError deriving (Eq, Show)
 
-type UserProgramStack = ExceptT Text DynamoCmdM
+type UserProgramStack = ExceptT EventStoreActionError DynamoCmdM
+
+readField :: (MonadError EventStoreActionError m, Monoid a) => Text -> Lens' AttributeValue (Maybe a) -> DynamoValues -> m a
+readField fieldName fieldType values = 
+   maybeToEither $ view (ix fieldName . fieldType) values 
+   where 
+     maybeToEither Nothing  = throwError $ EventStoreActionErrorFieldMissing fieldName
+     maybeToEither (Just x) = return x
 
 ensureExpectedVersion :: DynamoKey -> UserProgramStack Bool
 ensureExpectedVersion (DynamoKey _streamId (-1)) = return True
@@ -135,13 +143,13 @@ ensureExpectedVersion (DynamoKey streamId expectedEventNumber) = do
 dynamoReadResultToEventNumber :: DynamoReadResult -> Int64
 dynamoReadResultToEventNumber (DynamoReadResult (DynamoKey _key eventNumber) _version _values) = eventNumber
 
-postEventRequestProgram :: PostEventRequest -> DynamoCmdM (Either Text EventWriteResult)
+postEventRequestProgram :: PostEventRequest -> DynamoCmdM (Either EventStoreActionError EventWriteResult)
 postEventRequestProgram (PostEventRequest sId ev eventTime eventEntries) = runExceptT $ do
   dynamoKeyOrError <- getDynamoKey sId ev
   case dynamoKeyOrError of Left a -> return a
                            Right dynamoKey -> writeMyEvent dynamoKey
   where
-    writeMyEvent :: DynamoKey -> ExceptT Text DynamoCmdM EventWriteResult
+    writeMyEvent :: DynamoKey -> ExceptT EventStoreActionError DynamoCmdM EventWriteResult
     writeMyEvent dynamoKey = do
       let timeFormatted = fromString $ formatTime defaultTimeLocale rfc822DateFormat eventTime
       let values = HM.singleton Constants.pageBodyKey (set avB (Just ((Serialize.encode . NonEmpty.toList) eventEntries)) attributeValue) & 
@@ -171,19 +179,19 @@ postEventRequestProgram (PostEventRequest sId ev eventTime eventEntries) = runEx
     toEventResult DynamoWriteFailure = WriteError
     toEventResult DynamoWriteWrongVersion = EventExists
 
-binaryDeserialize :: (MonadError Text m, Serialize.Serialize a) => ByteString -> m a
-binaryDeserialize x = do
+binaryDeserialize :: (MonadError EventStoreActionError m, Serialize.Serialize a) => DynamoKey -> ByteString -> m a
+binaryDeserialize key x = do
   let value = Serialize.decode x
-  case value of Left err    -> throwError (fromString err)
+  case value of Left err    -> throwError (EventStoreActionErrorBodyDecode key err)
                 Right v     -> return v
 
-toRecordedEvent :: DynamoReadResult -> (ExceptT Text DynamoCmdM) [RecordedEvent]
-toRecordedEvent (DynamoReadResult (DynamoKey dynamoHashKey firstEventNumber) _version values) = do
+toRecordedEvent :: DynamoReadResult -> (ExceptT EventStoreActionError DynamoCmdM) [RecordedEvent]
+toRecordedEvent (DynamoReadResult key@(DynamoKey dynamoHashKey firstEventNumber) _version values) = do
   eventBody <- readField Constants.pageBodyKey avB values 
   eventTimeText <- readField Constants.eventCreatedKey avS values
   eventTime <- parseTimeM True defaultTimeLocale rfc822DateFormat (T.unpack eventTimeText)
   let streamId = T.drop (T.length Constants.streamDynamoKeyPrefix) dynamoHashKey
-  (eventEntries :: [EventEntry]) <- binaryDeserialize eventBody
+  (eventEntries :: [EventEntry]) <- binaryDeserialize key eventBody
   let eventEntriesWithEventNumber = zip [firstEventNumber..] eventEntries
   let recordedEvents = fmap (\(eventNumber, EventEntry {..}) -> RecordedEvent streamId eventNumber (BL.toStrict eventEntryData) (eventTypeToText eventEntryType) eventTime) eventEntriesWithEventNumber
   return $ reverse recordedEvents
@@ -218,12 +226,12 @@ recordedEventProducer streamId lastEvent batchSize =
     filterLastEvent Nothing = P.filter (const True)
     filterLastEvent (Just v) = P.filter ((<= v) . recordedEventNumber) 
 
-getReadEventRequestProgram :: ReadEventRequest -> DynamoCmdM (Either Text (Maybe RecordedEvent))
+getReadEventRequestProgram :: ReadEventRequest -> DynamoCmdM (Either EventStoreActionError (Maybe RecordedEvent))
 getReadEventRequestProgram (ReadEventRequest sId eventNumber) = runExceptT $ do
   (events :: [RecordedEvent]) <- P.toListM $ recordedEventProducer (StreamId sId) (Just $ eventNumber + 1) 1
   return $ find ((== eventNumber) . recordedEventNumber) events
 
-getReadStreamRequestProgram :: ReadStreamRequest -> DynamoCmdM (Either Text [RecordedEvent])
+getReadStreamRequestProgram :: ReadStreamRequest -> DynamoCmdM (Either EventStoreActionError [RecordedEvent])
 getReadStreamRequestProgram (ReadStreamRequest sId startEventNumber) = 
   runExceptT $ P.toListM $ recordedEventProducer (StreamId sId) ((+1) <$> startEventNumber) 10
 
@@ -236,8 +244,8 @@ feedEntryToEventKeys :: GlobalFeedWriter.FeedEntry -> [EventKey]
 feedEntryToEventKeys GlobalFeedWriter.FeedEntry { GlobalFeedWriter.feedEntryStream = streamId, GlobalFeedWriter.feedEntryNumber = eventNumber, GlobalFeedWriter.feedEntryCount = entryCount } = 
   (\number -> EventKey(streamId, number)) <$> (take entryCount [eventNumber..])
 
-jsonDecode :: (Aeson.FromJSON a, MonadError Text m) => ByteString -> m a
-jsonDecode a = eitherToError $ over _Left fromString $ Aeson.eitherDecodeStrict a
+jsonDecode :: (Aeson.FromJSON a, MonadError EventStoreActionError m) => ByteString -> m a
+jsonDecode a = eitherToError $ over _Left EventStoreActionErrorJsonDecodeError $ Aeson.eitherDecodeStrict a
 
 readPageKeys :: DynamoReadResult -> UserProgramStack [EventKey]
 readPageKeys (DynamoReadResult _key _version values) = do
@@ -253,5 +261,5 @@ getPagesAfter startPage = do
                    forM_ pageKeys yield >> getPagesAfter (startPage + 1)
                  Nothing        -> return ()
 
-getReadAllRequestProgram :: ReadAllRequest -> DynamoCmdM (Either Text [EventKey])
+getReadAllRequestProgram :: ReadAllRequest -> DynamoCmdM (Either EventStoreActionError [EventKey])
 getReadAllRequestProgram ReadAllRequest = runExceptT $ P.toListM (getPagesAfter 0)

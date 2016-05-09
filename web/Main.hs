@@ -107,7 +107,7 @@ start parsedConfig = do
      programResult <- liftIO $ takeMVar exitMVar
      print programResult
      case programResult of (Left err)         -> throwError err
-                           (Right (Left err)) -> throwError err
+                           (Right (Left err)) -> throwError $ "GlobalFeedWriterError " <>  show err
                            _                  -> return ()
    failNoTable = putStrLn "Table does not exist"
 

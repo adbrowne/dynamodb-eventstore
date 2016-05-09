@@ -2,7 +2,15 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE FlexibleContexts #-}
 
-module DynamoDbEventStore.GlobalFeedWriter (main, FeedEntry(FeedEntry), feedEntryStream, feedEntryNumber, feedEntryCount, dynamoWriteWithRetry, entryEventCount) where
+module DynamoDbEventStore.GlobalFeedWriter (
+  main, 
+  FeedEntry(FeedEntry), 
+  feedEntryStream, 
+  feedEntryNumber, 
+  feedEntryCount, 
+  dynamoWriteWithRetry, 
+  entryEventCount, 
+  EventStoreActionError(..)) where
 
 import           BasicPrelude
 import           Safe
@@ -20,6 +28,15 @@ import qualified Data.Aeson as Aeson
 import           Text.Printf (printf)
 import qualified Test.QuickCheck as QC
 
+data EventStoreActionError = 
+  EventStoreActionErrorFieldMissing Text |
+  EventStoreActionErrorCouldNotReadEventCount (Maybe Text) |
+  EventStoreActionErrorJsonDecodeError String |
+  EventStoreActionErrorBodyDecode DynamoKey String |
+  EventStoreActionErrorEventDoesNotExist DynamoKey | 
+  EventStoreActionErrorOnWritingPage Int
+  deriving (Show, Eq)
+  
 data FeedEntry = FeedEntry {
   feedEntryStream :: StreamId,
   feedEntryNumber :: Int64,
@@ -50,10 +67,10 @@ data FeedPage = FeedPage {
   feedPageVersion    :: Int
 }
 
-dynamoWriteWithRetry :: DynamoKey -> DynamoValues -> Int -> GlobalFeedWriterStack DynamoWriteResult
+dynamoWriteWithRetry :: DynamoKey -> DynamoValues -> Int -> ExceptT e DynamoCmdM DynamoWriteResult
 dynamoWriteWithRetry key value version = loop 0 DynamoWriteFailure
   where
-    loop :: Int -> DynamoWriteResult -> GlobalFeedWriterStack DynamoWriteResult
+    loop :: Int -> DynamoWriteResult -> ExceptT e DynamoCmdM DynamoWriteResult
     loop 100 previousResult = return previousResult
     loop count DynamoWriteFailure = (lift $ writeToDynamo' key value version) >>= loop (count  + 1)
     loop _ previousResult = return previousResult
@@ -95,14 +112,14 @@ entryIsPaged dynamoItem =
     HM.member Constants.needsPagingKey &
     not
 
-entryEventCount :: (MonadError Text m) => DynamoReadResult -> m Int
+entryEventCount :: (MonadError EventStoreActionError m) => DynamoReadResult -> m Int
 entryEventCount dynamoItem = 
   let 
     value = dynamoItem &
               dynamoReadResultValue &
               view (ix Constants.eventCountKey . avN) 
     parsedValue = value >>= (Safe.readMay . T.unpack)
-  in case parsedValue of Nothing  -> throwError $ "Unable to parse eventEntryCount: " <> show value
+  in case parsedValue of Nothing  -> throwError $ EventStoreActionErrorCouldNotReadEventCount value 
                          (Just x) -> return x 
 
 readPageBody :: DynamoValues -> Seq.Seq FeedEntry
@@ -149,7 +166,7 @@ readFromDynamoMustExist :: DynamoKey -> GlobalFeedWriterStack DynamoReadResult
 readFromDynamoMustExist key = do
   r <- readFromDynamo' key
   case r of Just x -> return x
-            Nothing -> throwError $ "Could not find item: " <> show key
+            Nothing -> throwError $ EventStoreActionErrorEventDoesNotExist key
 
 emptyFeedPage :: Int -> FeedPage 
 emptyFeedPage pageNumber = FeedPage { feedPageNumber = pageNumber, feedPageEntries = Seq.empty, feedPageIsVerified = False, feedPageVersion = -1 }
@@ -219,9 +236,9 @@ updateGlobalFeed itemKey@DynamoKey { dynamoKeyKey = itemHashKey, dynamoKeyEventN
       updateGlobalFeed itemKey
     onPageResult pageNumber DynamoWriteSuccess = 
       void $ setEventEntryPage itemKey pageNumber
-    onPageResult pageNumber DynamoWriteFailure = throwError ("DynamoWriteFailure on writing page: " <> show pageNumber)
+    onPageResult pageNumber DynamoWriteFailure = throwError $ EventStoreActionErrorOnWritingPage pageNumber
 
-type GlobalFeedWriterStack = ExceptT Text DynamoCmdM
+type GlobalFeedWriterStack = ExceptT EventStoreActionError DynamoCmdM
 
 runLoop :: GlobalFeedWriterStack ()
 runLoop = do
@@ -230,7 +247,7 @@ runLoop = do
   when (null scanResult) (wait' 1000)
   setPulseStatus' $ case scanResult of [] -> False
                                        _  -> True
-main :: DynamoCmdM (Either Text ())
+main :: DynamoCmdM (Either EventStoreActionError ())
 main = do
   result <- runExceptT runLoop
   case result of (Left errMsg) -> return $ Left errMsg
