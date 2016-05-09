@@ -33,6 +33,8 @@ import           Pipes hiding (ListT, runListT)
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.Text.Lazy as TL
 import qualified Data.Text as T
+import           Data.List.NonEmpty (NonEmpty (..))
+import qualified Data.List.NonEmpty as NonEmpty
 import           Data.Time.Format
 import           Data.Time.Clock
 import qualified Data.Text.Lazy.Encoding as TL
@@ -90,7 +92,7 @@ data PostEventRequest = PostEventRequest {
    perStreamId        :: Text,
    perExpectedVersion :: Maybe Int64,
    perEventTime       :: UTCTime,
-   perEvents          :: [EventEntry]
+   perEvents          :: NonEmpty EventEntry
 } deriving (Show)
 
 instance QC.Arbitrary EventEntry where
@@ -101,7 +103,7 @@ instance QC.Arbitrary PostEventRequest where
   arbitrary = PostEventRequest <$> (fromString <$> QC.arbitrary)
                                <*> QC.arbitrary
                                <*> QC.arbitrary
-                               <*> QC.arbitrary
+                               <*> ((:|) <$> QC.arbitrary <*> QC.arbitrary)
 
 data ReadStreamRequest = ReadStreamRequest {
    rsrStreamId         :: Text,
@@ -134,7 +136,6 @@ dynamoReadResultToEventNumber :: DynamoReadResult -> Int64
 dynamoReadResultToEventNumber (DynamoReadResult (DynamoKey _key eventNumber) _version _values) = eventNumber
 
 postEventRequestProgram :: PostEventRequest -> DynamoCmdM (Either Text EventWriteResult)
-postEventRequestProgram (PostEventRequest _sId _ev _eventTime []) = return $ Left "PostRequest must have events"
 postEventRequestProgram (PostEventRequest sId ev eventTime eventEntries) = runExceptT $ do
   dynamoKeyOrError <- getDynamoKey sId ev
   case dynamoKeyOrError of Left a -> return a
@@ -143,7 +144,7 @@ postEventRequestProgram (PostEventRequest sId ev eventTime eventEntries) = runEx
     writeMyEvent :: DynamoKey -> ExceptT Text DynamoCmdM EventWriteResult
     writeMyEvent dynamoKey = do
       let timeFormatted = fromString $ formatTime defaultTimeLocale rfc822DateFormat eventTime
-      let values = HM.singleton Constants.pageBodyKey (set avB (Just (Serialize.encode eventEntries)) attributeValue) & 
+      let values = HM.singleton Constants.pageBodyKey (set avB (Just ((Serialize.encode . NonEmpty.toList) eventEntries)) attributeValue) & 
                    HM.insert Constants.needsPagingKey (set avS (Just "True") attributeValue) &
                    HM.insert Constants.eventCreatedKey (set avS (Just timeFormatted) attributeValue) &
                    HM.insert Constants.eventCountKey (set avN (Just ((showt . length) eventEntries)) attributeValue)

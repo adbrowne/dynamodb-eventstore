@@ -14,6 +14,7 @@ import           Control.Monad.Reader
 import qualified Data.Text.Lazy            as TL
 import qualified Data.Text.Lazy.Encoding   as TL
 import qualified Data.Vector               as V
+import           Data.List.NonEmpty (NonEmpty (..))
 import           Data.Time.Clock (UTCTime)
 import           Data.Time.Format
 import qualified Data.Time.Clock as Time
@@ -150,7 +151,7 @@ app process = do
           <$> pure streamId
           <*> expectedVersion
           <*> pure eventTime
-          <*> ((\x -> x:[]) <$> eventEntries)
+          <*> ((\x -> x:|[]) <$> eventEntries)
   get "/streams/:streamId/:eventNumber" $ do
     streamId <- param "streamId"
     eventNumber <- param "eventNumber"

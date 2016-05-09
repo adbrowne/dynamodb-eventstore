@@ -120,6 +120,7 @@ Test-Suite tasty
                        random,
                        containers >= 0.5,
                        aeson,
+                       semigroups,
                        unordered-containers,
                        hashable,
                        amazonka-dynamodb,
