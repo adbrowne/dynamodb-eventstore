@@ -99,7 +99,9 @@ runCmd _ (Wait' milliseconds n) = do
   n
 runCmd tn (ReadFromDynamo' eventKey n) = do
   let key = getDynamoKeyForEvent eventKey
-  let req = getItem tn & set giKey key
+  let req = getItem tn 
+            & set giKey key
+            & set giConsistentRead (Just True)
   resp <- send req
   result <- getResult resp
   n $ result
@@ -119,6 +121,7 @@ runCmd tn (QueryBackward' streamId limit exclusiveStartKey n) =
         resp <- send $
                 query tn
                 & (setStartKey exclusiveStartKey)
+                & (set qConsistentRead (Just True))
                 & (set qLimit (Just limit))
                 & (set qScanIndexForward (Just False))
                 & (set qExpressionAttributeValues (HM.fromList [(":streamId",set avS (Just streamId) attributeValue)]))
