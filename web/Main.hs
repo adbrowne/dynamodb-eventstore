@@ -14,6 +14,7 @@ import           Control.Concurrent
 import           DynamoDbEventStore.AmazonkaInterpreter
 import           DynamoDbEventStore.EventStoreActions
 import           DynamoDbEventStore.EventStoreCommands
+import           DynamoDbEventStore.GlobalFeedWriter (EventStoreActionError(..))
 import qualified DynamoDbEventStore.GlobalFeedWriter as GlobalFeedWriter
 import           Options.Applicative as Opt
 import qualified Data.Text               as T
@@ -28,7 +29,7 @@ runDynamoLocal env x = do
 runDynamoCloud :: Env -> MyAwsStack a -> IO (Either InterpreterError a)
 runDynamoCloud env x = runResourceT $ runAWST env $ runExceptT x
 
-runMyAws :: (MyAwsStack a -> ExceptT Text IO a) -> Text -> DynamoCmdM a -> ExceptT Text IO a
+runMyAws :: (MyAwsStack a -> ExceptT InterpreterError IO a) -> Text -> DynamoCmdM a -> ExceptT InterpreterError IO a
 runMyAws runner tableName program = 
   runner $ runProgram tableName program
 
@@ -37,7 +38,7 @@ printEvent a = do
   print . show $ a
   return a
 
-runEventStoreAction :: (forall a. DynamoCmdM a -> ExceptT Text IO a) -> EventStoreAction -> IO (Either Text EventStoreActionResult)
+runEventStoreAction :: (forall a. DynamoCmdM a -> ExceptT InterpreterError IO a) -> EventStoreAction -> IO (Either InterpreterError EventStoreActionResult)
 runEventStoreAction runner (PostEvent req) =
   let program = postEventRequestProgram req
   in liftIO $ runExceptT $ (PostEventResult <$> runner program)
@@ -76,24 +77,36 @@ config = Config
 httpHost :: String
 httpHost = "127.0.0.1"
 
-toExceptT :: forall a.( MyAwsStack a -> IO (Either InterpreterError a)) -> (MyAwsStack a -> ExceptT Text IO a)
+toExceptT :: forall a. (MyAwsStack a -> IO (Either InterpreterError a)) -> (MyAwsStack a -> ExceptT InterpreterError IO a)
 toExceptT runner a = do
   result <- liftIO $ runner a
-  case result of Left s -> throwError (show s)
+  case result of Left s -> throwError $ s
                  Right r -> return r
 
-start :: Config -> ExceptT Text IO ()
+toApplicationError :: forall a. (MyAwsStack a -> IO (Either InterpreterError a)) -> (MyAwsStack a -> ExceptT ApplicationError IO a)
+toApplicationError runner a = do
+  result <- liftIO $ runner a
+  case result of Left s -> throwError . ApplicationErrorInterpreter $ s
+                 Right r -> return r
+
+data ApplicationError =
+  ApplicationErrorInterpreter InterpreterError |
+  ApplicationErrorGlobalFeedWriter EventStoreActionError 
+  deriving Show
+
+start :: Config -> ExceptT ApplicationError IO ()
 start parsedConfig = do
   let tableName = (T.pack . configTableName) parsedConfig
   env <- newEnv Sydney Discover
-  let runner = toExceptT $ (if configLocalDynamoDB parsedConfig then runDynamoLocal else runDynamoCloud) env
-  tableAlreadyExists <- runner $ doesTableExist tableName
+  let interperter = (if configLocalDynamoDB parsedConfig then runDynamoLocal else runDynamoCloud) env
+  let runner = toExceptT interperter
+  tableAlreadyExists <- (toApplicationError interperter) $ doesTableExist tableName
   let shouldCreateTable = configCreateTable parsedConfig
   when (not tableAlreadyExists && shouldCreateTable) 
-    (putStrLn "Creating table..." >> runner (buildTable tableName) >> putStrLn "Table created")
+    (putStrLn "Creating table..." >> (toApplicationError interperter) (buildTable tableName) >> putStrLn "Table created")
   if tableAlreadyExists || shouldCreateTable then runApp runner tableName else failNoTable
   where
-   runApp :: (forall a. MyAwsStack a -> ExceptT Text IO a) -> Text -> ExceptT Text IO ()
+   runApp :: (forall a. MyAwsStack a -> ExceptT InterpreterError IO a) -> Text -> ExceptT ApplicationError IO ()
    runApp runner tableName = do
      let runner' = runMyAws runner tableName
      exitMVar <- lift newEmptyMVar
@@ -106,16 +119,16 @@ start parsedConfig = do
      _ <- lift $ forkIO $ void $ scottyApp (app (printEvent >=> runEventStoreAction runner')) >>= runSettings warpSettings
      programResult <- liftIO $ takeMVar exitMVar
      print programResult
-     case programResult of (Left err)         -> throwError err
-                           (Right (Left err)) -> throwError $ "GlobalFeedWriterError " <>  show err
+     case programResult of (Left err)         -> throwError $ ApplicationErrorInterpreter err
+                           (Right (Left err)) -> throwError $ ApplicationErrorGlobalFeedWriter err
                            _                  -> return ()
    failNoTable = putStrLn "Table does not exist"
 
-checkForFailureOnExit :: ExceptT Text IO () -> IO ()
+checkForFailureOnExit :: ExceptT ApplicationError IO () -> IO ()
 checkForFailureOnExit a = do
   result <- runExceptT a
   case result of Left m -> do
-                             putStrLn $ "Error: " <> m
+                             putStrLn $ "Error: " <> show m
                              exitWith $ ExitFailure 1
                  Right () -> return ()
 main :: IO ()

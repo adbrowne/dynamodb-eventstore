@@ -21,6 +21,7 @@ import qualified Data.Time.Clock as Time
 import           Data.Aeson
 import           Network.HTTP.Types.Status
 import           DynamoDbEventStore.EventStoreActions
+import           DynamoDbEventStore.AmazonkaInterpreter
 import           DynamoDbEventStore.EventStoreCommands
 
 data ExpectedVersion = ExpectedVersion Int
@@ -31,6 +32,9 @@ toByteString = encodeUtf8 . TL.toStrict
 
 error400 :: (MonadIO m, ScottyError e) => LText -> ActionT e m ()
 error400 err = status $ mkStatus 400 (toByteString err)
+
+error500 :: (MonadIO m, ScottyError e) => LText -> ActionT e m ()
+error500 err = status $ mkStatus 500 (toByteString err)
 
 runParser :: Parser a -> e -> LText -> Either e a
 runParser p e = left (const e) . eitherResult . parse p
@@ -111,14 +115,14 @@ eventStoreActionResultToText AtomJsonEncoding _ = error "todo EventStoreActionRe
 
 data ResponseEncoding = AtomJsonEncoding
 
-toResult :: (MonadIO m, ScottyError e) => Either LText (IO (Either Text EventStoreActionResult)) -> ActionT e m ()
+toResult :: (MonadIO m, ScottyError e) => Either LText (IO (Either InterpreterError EventStoreActionResult)) -> ActionT e m ()
 toResult (Left err) = error400 err
 toResult (Right esResult) = do
   result <- liftIO esResult
-  case result of (Left err) -> (error400 . TL.fromStrict) err
+  case result of (Left err) -> (error500 . TL.fromStrict . show) err
                  (Right a) -> (eventStoreActionResultToText AtomJsonEncoding) a
 
-showEventResponse :: Show a => a -> IO (Either Text EventStoreActionResult)
+showEventResponse :: Show a => a -> IO (Either InterpreterError EventStoreActionResult)
 showEventResponse a = return . Right $ TextResult (show a)
 
 notEmpty :: Text -> Either LText Text
@@ -134,7 +138,7 @@ instance MonadHasTime IO where
 instance (Monad m) => MonadHasTime (ReaderT UTCTime m) where
   getCurrentTime = ask
 
-app :: (MonadIO m, MonadHasTime m, ScottyError e) => (EventStoreAction -> IO (Either Text EventStoreActionResult)) -> ScottyT e m ()
+app :: (MonadIO m, MonadHasTime m, ScottyError e) => (EventStoreAction -> IO (Either InterpreterError EventStoreActionResult)) -> ScottyT e m ()
 app process = do
   post "/streams/:streamId" $ do
     streamId <- param "streamId"
