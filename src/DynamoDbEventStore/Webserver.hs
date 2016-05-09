@@ -1,16 +1,22 @@
-{-# LANGUAGE OverloadedStrings, ScopedTypeVariables #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE FlexibleInstances #-}
 
 module DynamoDbEventStore.Webserver(app, showEventResponse, positiveInt64Parser, runParser) where
 
 import           BasicPrelude
-import           Web.Scotty
+import           Web.Scotty.Trans
 
 import           Control.Arrow             (left)
 import           Data.Attoparsec.Text.Lazy
 import           Data.Char                 (isDigit)
+import           Control.Monad.Reader
 import qualified Data.Text.Lazy            as TL
 import qualified Data.Text.Lazy.Encoding   as TL
 import qualified Data.Vector               as V
+import           Data.Time.Clock (UTCTime)
+import           Data.Time.Format
+import qualified Data.Time.Clock as Time
 import           Data.Aeson
 import           Network.HTTP.Types.Status
 import           DynamoDbEventStore.EventStoreActions
@@ -22,7 +28,7 @@ data ExpectedVersion = ExpectedVersion Int
 toByteString :: LText -> ByteString
 toByteString = encodeUtf8 . TL.toStrict
 
-error400 :: LText -> ActionM ()
+error400 :: (MonadIO m, ScottyError e) => LText -> ActionT e m ()
 error400 err = status $ mkStatus 400 (toByteString err)
 
 runParser :: Parser a -> e -> LText -> Either e a
@@ -36,7 +42,7 @@ maybeToEither :: a -> Maybe b ->Either a b
 maybeToEither a Nothing = Left a
 maybeToEither _ (Just a) = Right a
 
-parseMandatoryHeader :: LText -> Parser a -> ActionM (Either LText a)
+parseMandatoryHeader :: (MonadIO m, ScottyError e) => LText -> Parser a -> ActionT e m (Either LText a)
 parseMandatoryHeader headerName parser = do
   headerText <- header headerName
   return $
@@ -46,7 +52,7 @@ parseMandatoryHeader headerName parser = do
     missingErrorText = headerError headerName "is missing"
     parseFailErrorText = headerError headerName "in wrong format"
 
-parseOptionalHeader :: LText -> Parser a -> ActionM (Either LText (Maybe a))
+parseOptionalHeader :: (MonadIO m, ScottyError e) => LText -> Parser a -> ActionT e m (Either LText (Maybe a))
 parseOptionalHeader headerName parser = do
   headerValue <- header headerName
   case headerValue of Nothing -> return $ Right Nothing
@@ -79,8 +85,10 @@ readEventResultJsonValue baseUri recordedEvent =
   let
     streamId = recordedEventStreamId recordedEvent
     eventNumber = (show . recordedEventNumber) recordedEvent 
+    eventCreated = recordedEventCreated recordedEvent
     eventUri = baseUri <> "/" <> streamId <> "/" <> eventNumber
     title = "title" .= (eventNumber <>  "@" <> streamId)
+    updated = "updated" .= (formatTime defaultTimeLocale (iso8601DateFormat (Just "%H:%M:%SZ")) eventCreated)
     summary = "summary" .= recordedEventType recordedEvent
     content = "content" .= object [
         "eventStreamId" .= recordedEventStreamId recordedEvent 
@@ -91,9 +99,9 @@ readEventResultJsonValue baseUri recordedEvent =
             object [ "relation" .= ("edit" :: Text), "uri" .= eventUri]
          ,  object [ "relation" .= ("alternative" :: Text), "uri" .= eventUri]
       ]
-  in object [title, summary, content, links]
+  in object [title, summary, content, links, updated]
 
-eventStoreActionResultToText :: ResponseEncoding -> EventStoreActionResult -> ActionM()
+eventStoreActionResultToText :: (MonadIO m, ScottyError e) => ResponseEncoding -> EventStoreActionResult -> ActionT e m ()
 eventStoreActionResultToText _ (TextResult r) = (raw . TL.encodeUtf8 . TL.fromStrict) r
 eventStoreActionResultToText AtomJsonEncoding (PostEventResult r) = (raw . TL.encodeUtf8 . TL.fromStrict) $ show r
 eventStoreActionResultToText AtomJsonEncoding (ReadEventResult (Right (Just r))) = (raw . encode . (readEventResultJsonValue "http://localhost:2114")) r
@@ -102,7 +110,7 @@ eventStoreActionResultToText AtomJsonEncoding _ = error "todo EventStoreActionRe
 
 data ResponseEncoding = AtomJsonEncoding
 
-toResult :: Either LText (IO (Either Text EventStoreActionResult)) -> ActionM()
+toResult :: (MonadIO m, ScottyError e) => Either LText (IO (Either Text EventStoreActionResult)) -> ActionT e m ()
 toResult (Left err) = error400 err
 toResult (Right esResult) = do
   result <- liftIO esResult
@@ -116,13 +124,23 @@ notEmpty :: Text -> Either LText Text
 notEmpty "" = Left "streamId required"
 notEmpty t = Right t
 
-app :: (EventStoreAction -> IO (Either Text EventStoreActionResult)) -> ScottyM ()
+class MonadHasTime m where
+  getCurrentTime :: m UTCTime
+
+instance MonadHasTime IO where
+  getCurrentTime = Time.getCurrentTime
+
+instance (Monad m) => MonadHasTime (ReaderT UTCTime m) where
+  getCurrentTime = ask
+
+app :: (MonadIO m, MonadHasTime m, ScottyError e) => (EventStoreAction -> IO (Either Text EventStoreActionResult)) -> ScottyT e m ()
 app process = do
   post "/streams/:streamId" $ do
     streamId <- param "streamId"
     expectedVersion <- parseOptionalHeader "ES-ExpectedVersion" positiveInt64Parser
     eventType <- parseMandatoryHeader "ES-EventType" textParser
     eventData <- body
+    eventTime <- lift getCurrentTime
     let eventEntries = 
           EventEntry
           <$> pure eventData
@@ -131,6 +149,7 @@ app process = do
           PostEventRequest
           <$> pure streamId
           <*> expectedVersion
+          <*> pure eventTime
           <*> ((\x -> x:[]) <$> eventEntries)
   get "/streams/:streamId/:eventNumber" $ do
     streamId <- param "streamId"

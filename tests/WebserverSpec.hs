@@ -1,12 +1,16 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 module WebserverSpec (postEventSpec, getStreamSpec, getEventSpec) where
 
 import           BasicPrelude
 import           Test.Tasty.Hspec
 import           Network.Wai.Test
 import           Network.Wai
+import           Control.Monad.Reader
+import           Data.Time.Clock
+import           Data.Time.Format
 import qualified DynamoDbEventStore.Webserver as W
-import qualified Web.Scotty as S
+import qualified Web.Scotty.Trans as S
 import qualified Network.HTTP.Types as H
 
 addEventPost :: [H.Header] -> Session SResponse
@@ -22,6 +26,11 @@ evHeader = "ES-ExpectedVersion"
 etHeader :: H.HeaderName
 etHeader = "ES-EventType"
 
+
+app :: IO Application
+app = do
+  sampleTime <- parseTimeM True defaultTimeLocale rfc822DateFormat "Sun, 08 May 2016 12:49:41 +0000"
+  S.scottyAppT (flip runReaderT sampleTime) (W.app W.showEventResponse :: S.ScottyT LText (ReaderT UTCTime IO) ()) 
 postEventSpec :: Spec
 postEventSpec = do
   let baseHeaders = [(etHeader, "MyEventType")]
@@ -35,14 +44,14 @@ postEventSpec = do
       waiCase requestWithExpectedVersion $ assertStatus 200
 
     it "responds with body" $
-      waiCase requestWithExpectedVersion $ assertBody "PostEvent (PostEventRequest {perStreamId = \"streamId\", perExpectedVersion = Just 1, perEvents = [EventEntry {eventEntryData = \"\", eventEntryType = EventType \"MyEventType\"}]})"
+      waiCase requestWithExpectedVersion $ assertBody "PostEvent (PostEventRequest {perStreamId = \"streamId\", perExpectedVersion = Just 1, perEventTime = 2016-05-08 12:49:41 UTC, perEvents = [EventEntry {eventEntryData = \"\", eventEntryType = EventType \"MyEventType\"}]})"
 
   describe "POST /streams/streamId without ExepectedVersion" $ do
     it "responds with 200" $
       waiCase requestWithoutExpectedVersion $ assertStatus 200
 
     it "responds with body" $
-      waiCase requestWithoutExpectedVersion $ assertBody "PostEvent (PostEventRequest {perStreamId = \"streamId\", perExpectedVersion = Nothing, perEvents = [EventEntry {eventEntryData = \"\", eventEntryType = EventType \"MyEventType\"}]})"
+      waiCase requestWithoutExpectedVersion $ assertBody "PostEvent (PostEventRequest {perStreamId = \"streamId\", perExpectedVersion = Nothing, perEventTime = 2016-05-08 12:49:41 UTC, perEvents = [EventEntry {eventEntryData = \"\", eventEntryType = EventType \"MyEventType\"}]})"
 
   describe "POST /streams/streamId without EventType" $
     it "responds with 400" $
@@ -56,7 +65,6 @@ postEventSpec = do
     it "responds with 400" $
       requestWithoutBadExpectedVersion `waiCase` assertStatus 400
   where
-    app = S.scottyApp (W.app W.showEventResponse)
     waiCase r assertion = do
       app' <- app
       flip runSession app' $ assertion =<< r
@@ -84,7 +92,6 @@ getStreamSpec = do
       waiCase getExample $ assertStatus 400
 
   where
-    app = S.scottyApp (W.app W.showEventResponse)
     waiCase r assertion = do
       app' <- app
       flip runSession app' $ assertion =<< r
@@ -107,7 +114,6 @@ getEventSpec = do
       waiCase getExample $ assertBody "ReadEvent (ReadEventRequest {rerStreamId = \"myStreamId\", rerEventNumber = 0})"
 
   where
-    app = S.scottyApp (W.app W.showEventResponse)
     waiCase r assertion = do
       app' <- app
       flip runSession app' $ assertion =<< r

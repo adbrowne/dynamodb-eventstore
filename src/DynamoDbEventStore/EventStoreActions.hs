@@ -33,6 +33,8 @@ import           Pipes hiding (ListT, runListT)
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.Text.Lazy as TL
 import qualified Data.Text as T
+import           Data.Time.Format
+import           Data.Time.Clock
 import qualified Data.Text.Lazy.Encoding as TL
 import           DynamoDbEventStore.EventStoreCommands
 import qualified Data.HashMap.Strict     as HM
@@ -41,6 +43,7 @@ import           Text.Printf (printf)
 import qualified DynamoDbEventStore.Constants as Constants
 import qualified DynamoDbEventStore.GlobalFeedWriter as GlobalFeedWriter
 import qualified Test.QuickCheck as QC
+import           Test.QuickCheck.Instances()
 import qualified Data.Aeson as Aeson
 import qualified Data.Serialize as Serialize
 import           GHC.Generics
@@ -86,6 +89,7 @@ data EventStoreActionResult =
 data PostEventRequest = PostEventRequest {
    perStreamId        :: Text,
    perExpectedVersion :: Maybe Int64,
+   perEventTime       :: UTCTime,
    perEvents          :: [EventEntry]
 } deriving (Show)
 
@@ -95,6 +99,7 @@ instance QC.Arbitrary EventEntry where
 
 instance QC.Arbitrary PostEventRequest where
   arbitrary = PostEventRequest <$> (fromString <$> QC.arbitrary)
+                               <*> QC.arbitrary
                                <*> QC.arbitrary
                                <*> QC.arbitrary
 
@@ -129,16 +134,18 @@ dynamoReadResultToEventNumber :: DynamoReadResult -> Int64
 dynamoReadResultToEventNumber (DynamoReadResult (DynamoKey _key eventNumber) _version _values) = eventNumber
 
 postEventRequestProgram :: PostEventRequest -> DynamoCmdM (Either Text EventWriteResult)
-postEventRequestProgram (PostEventRequest _sId _ev []) = return $ Left "PostRequest must have events"
-postEventRequestProgram (PostEventRequest sId ev eventEntries) = runExceptT $ do
+postEventRequestProgram (PostEventRequest _sId _ev _eventTime []) = return $ Left "PostRequest must have events"
+postEventRequestProgram (PostEventRequest sId ev eventTime eventEntries) = runExceptT $ do
   dynamoKeyOrError <- getDynamoKey sId ev
   case dynamoKeyOrError of Left a -> return a
                            Right dynamoKey -> writeMyEvent dynamoKey
   where
     writeMyEvent :: DynamoKey -> ExceptT Text DynamoCmdM EventWriteResult
     writeMyEvent dynamoKey = do
+      let timeFormatted = fromString $ formatTime defaultTimeLocale rfc822DateFormat eventTime
       let values = HM.singleton Constants.pageBodyKey (set avB (Just (Serialize.encode eventEntries)) attributeValue) & 
                    HM.insert Constants.needsPagingKey (set avS (Just "True") attributeValue) &
+                   HM.insert Constants.eventCreatedKey (set avS (Just timeFormatted) attributeValue) &
                    HM.insert Constants.eventCountKey (set avN (Just ((showt . length) eventEntries)) attributeValue)
       writeResult <- GlobalFeedWriter.dynamoWriteWithRetry dynamoKey values 0 
       return $ toEventResult writeResult
@@ -172,10 +179,12 @@ binaryDeserialize x = do
 toRecordedEvent :: DynamoReadResult -> (ExceptT Text DynamoCmdM) [RecordedEvent]
 toRecordedEvent (DynamoReadResult (DynamoKey dynamoHashKey firstEventNumber) _version values) = do
   eventBody <- readField Constants.pageBodyKey avB values 
+  eventTimeText <- readField Constants.eventCreatedKey avS values
+  eventTime <- parseTimeM True defaultTimeLocale rfc822DateFormat (T.unpack eventTimeText)
   let streamId = T.drop (T.length Constants.streamDynamoKeyPrefix) dynamoHashKey
   (eventEntries :: [EventEntry]) <- binaryDeserialize eventBody
   let eventEntriesWithEventNumber = zip [firstEventNumber..] eventEntries
-  let recordedEvents = fmap (\(eventNumber, EventEntry {..}) -> RecordedEvent streamId eventNumber (BL.toStrict eventEntryData) (eventTypeToText eventEntryType)) eventEntriesWithEventNumber
+  let recordedEvents = fmap (\(eventNumber, EventEntry {..}) -> RecordedEvent streamId eventNumber (BL.toStrict eventEntryData) (eventTypeToText eventEntryType) eventTime) eventEntriesWithEventNumber
   return $ reverse recordedEvents
 
 

@@ -39,6 +39,7 @@ import           GHC.Natural
 import           Data.Aeson
 import           GHC.Generics
 
+import           Data.Time.Clock
 import           TextShow.TH
 import qualified Data.HashMap.Strict     as HM
 import qualified Test.QuickCheck as QC
@@ -62,7 +63,8 @@ data RecordedEvent = RecordedEvent {
    recordedEventStreamId :: Text,
    recordedEventNumber   :: Int64,
    recordedEventData     :: ByteString,
-   recordedEventType     :: Text
+   recordedEventType     :: Text,
+   recordedEventCreated  :: UTCTime
 } deriving (Show, Eq, Ord)
 
 instance ToJSON RecordedEvent where
@@ -145,7 +147,7 @@ data DynamoCmd next =
   Log'
     LogLevel
     Text
-    next
+    next 
 
   deriving (Functor)
 

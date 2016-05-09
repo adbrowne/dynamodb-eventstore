@@ -18,6 +18,9 @@ pageDynamoKeyPrefix = "page$"
 streamDynamoKeyPrefix :: Text
 streamDynamoKeyPrefix = "stream$"
 
+eventCreatedKey :: Text
+eventCreatedKey = "EventCreated"
+
 pageBodyKey :: Text
 pageBodyKey = "Body"
 
