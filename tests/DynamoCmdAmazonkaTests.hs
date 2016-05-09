@@ -10,6 +10,7 @@ import           DynamoDbEventStore.EventStoreCommands
 import           Control.Lens
 import           Test.Tasty.HUnit
 import           Test.Tasty
+import           DynamoDbEventStore.AmazonkaInterpreter (InterpreterError)
 import qualified DynamoDbEventStore.Constants as Constants
 
 testStreamId :: Text
@@ -30,7 +31,7 @@ testWrite = writeToDynamo' testKey
 sampleRead :: DynamoCmdM (Maybe DynamoReadResult)
 sampleRead = readFromDynamo' testKey
 
-tests :: (forall a. DynamoCmdM a -> IO (Either Text a)) -> [TestTree]
+tests :: (forall a. DynamoCmdM a -> IO (Either InterpreterError a)) -> [TestTree]
 tests evalProgram =
   [
     testCase "Can read event" $

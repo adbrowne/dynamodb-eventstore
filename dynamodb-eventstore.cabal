@@ -73,6 +73,7 @@ executable web
                        text >= 1.2,
                        dynamodb-eventstore,
                        amazonka >= 1.0,
+                       lens,
                        mtl,
                        warp,
                        network-simple,

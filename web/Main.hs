@@ -20,12 +20,12 @@ import qualified Data.Text               as T
 import           Control.Monad.Trans.AWS
 import           Network.AWS.DynamoDB
 
-runDynamoLocal :: Env -> MyAwsStack a -> IO (Either Text a)
+runDynamoLocal :: Env -> MyAwsStack a -> IO (Either InterpreterError a)
 runDynamoLocal env x = do
   let dynamo = setEndpoint False "localhost" 8000 dynamoDB
   runResourceT $ runAWST env $ reconfigure dynamo $ runExceptT x
 
-runDynamoCloud :: Env -> MyAwsStack a -> IO (Either Text a)
+runDynamoCloud :: Env -> MyAwsStack a -> IO (Either InterpreterError a)
 runDynamoCloud env x = runResourceT $ runAWST env $ runExceptT x
 
 runMyAws :: (MyAwsStack a -> ExceptT Text IO a) -> Text -> DynamoCmdM a -> ExceptT Text IO a
@@ -76,10 +76,10 @@ config = Config
 httpHost :: String
 httpHost = "127.0.0.1"
 
-toExceptT :: forall a.( MyAwsStack a -> IO (Either Text a)) -> (MyAwsStack a -> ExceptT Text IO a)
+toExceptT :: forall a.( MyAwsStack a -> IO (Either InterpreterError a)) -> (MyAwsStack a -> ExceptT Text IO a)
 toExceptT runner a = do
   result <- liftIO $ runner a
-  case result of Left s -> throwError s
+  case result of Left s -> throwError (show s)
                  Right r -> return r
 
 start :: Config -> ExceptT Text IO ()
