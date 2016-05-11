@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE FlexibleContexts #-}
 
 module DynamoDbEventStore.GlobalFeedWriterSpec (tests) where
@@ -18,6 +19,7 @@ import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
 import           Data.Either.Combinators
 import           Data.Time.Clock
+import           Data.Time.Calendar
 import           Data.Time.Format
 import qualified Data.Text             as T
 import qualified Data.Text.Encoding             as T
@@ -53,13 +55,26 @@ instance QC.Arbitrary EventData where
 uniqueList :: Ord a => [a] -> [a]
 uniqueList = Set.toList . Set.fromList
 
+newtype SecondPrecisionUtcTime = SecondPrecisionUtcTime UTCTime
+
+instance QC.Arbitrary SecondPrecisionUtcTime where
+  arbitrary =
+    SecondPrecisionUtcTime <$> (UTCTime
+     <$> (QC.arbitrary  :: QC.Gen Day)
+     <*> (secondsToDiffTime <$> QC.choose (0, 86400)))
+     
 instance QC.Arbitrary UploadList where
   arbitrary = do
     (streams :: [StreamId]) <- uniqueList <$> cappedList 5
     (streamWithEvents :: [(StreamId, [NonEmpty EventData])]) <- mapM (\s -> puts >>= (\p -> return (s,p))) streams
-    (withTime :: [(StreamId, [NonEmpty EventData], ExtraEventFields)]) <- mapM (\(s,es) -> QC.arbitrary >>= (\t -> return (s,es,t))) streamWithEvents
+    (withTime :: [(StreamId, [NonEmpty EventData], ExtraEventFields)]) <- mapM (\(s,es) -> generateExtraFields >>= (\t -> return (s,es,t))) streamWithEvents
     return $ UploadList $ numberedPuts withTime 
     where
+      generateExtraFields :: QC.Gen ExtraEventFields
+      generateExtraFields =
+        (,) 
+        <$> ((\(SecondPrecisionUtcTime x) -> x) <$> QC.arbitrary)
+        <*> QC.arbitrary
       numberedPuts :: [(StreamId, [NonEmpty EventData], ExtraEventFields)] -> [(Text, Int64, ExtraEventFields, NonEmpty EventData)]
       numberedPuts xs = (\(StreamId s,d,t) -> banana s d t) =<< xs
       banana :: Text -> [NonEmpty EventData] -> ExtraEventFields -> [(Text,Int64, ExtraEventFields, NonEmpty EventData)]
@@ -117,11 +132,17 @@ prop_EventShouldAppearInGlobalFeedInStreamOrder (UploadList uploadList) =
        check (_, testRunState) = QC.forAll (runReadAllProgram testRunState) (\feedItems -> (globalRecordedEventListToMap <$> feedItems) === (Right $ globalFeedFromUploadList uploadList))
        runReadAllProgram = runProgramGenerator "readAllRequestProgram" (getReadAllRequestProgram ReadAllRequest)
 
-expectedEventsFromUploadList :: UploadList -> [(Text, Int64, EventData)]
+expectedEventsFromUploadList :: UploadList -> [RecordedEvent]
 expectedEventsFromUploadList (UploadList uploadItems) = do
-  (streamId, firstEventNumber, _eventTime, bodies) <- uploadItems
-  (eventNumber, eventData) <- zip [firstEventNumber+1..] (NonEmpty.toList bodies)
-  return (streamId, eventNumber, eventData)
+  (streamId, firstEventNumber, (eventTime, isJson), bodies) <- uploadItems
+  (eventNumber, EventData eventData) <- zip [firstEventNumber+1..] (NonEmpty.toList bodies)
+  return $ RecordedEvent { 
+    recordedEventStreamId = streamId,
+    recordedEventNumber = eventNumber,
+    recordedEventData = T.encodeUtf8 eventData,
+    recordedEventType = "",
+    recordedEventCreated = eventTime,
+    recordedEventIsJson = isJson }
 
 prop_AllEventsCanBeReadIndividually :: UploadList -> QC.Property
 prop_AllEventsCanBeReadIndividually (UploadList uploadItems) =
@@ -130,12 +151,10 @@ prop_AllEventsCanBeReadIndividually (UploadList uploadItems) =
       ("Publisher", (publisher uploadItems,100))
       ]
     expectedEvents = expectedEventsFromUploadList (UploadList uploadItems)
-    check (_, testRunState) = lookupBodies testRunState === ((_3 %~ (Right . Just)) <$> expectedEvents)
-    lookupBodies :: TestState -> [(Text, Int64, Either EventStoreActionError (Maybe EventData))]
-    lookupBodies testRunState = fmap (\(streamId, eventNumber, _) -> (streamId, eventNumber, lookupBody testRunState streamId eventNumber)) expectedEvents
-    lookupBody :: TestState ->  Text -> Int64 -> (Either EventStoreActionError (Maybe EventData))
+    check (_, testRunState) = lookupBodies testRunState === ((Right . Just) <$> expectedEvents)
+    lookupBodies testRunState = fmap (\RecordedEvent{..} -> (lookupBody testRunState recordedEventStreamId recordedEventNumber)) expectedEvents
     lookupBody testRunState streamId eventNumber =
-      ((EventData . T.decodeUtf8 . recordedEventData) <$>) <$> evalProgram "LookupEvent" (getReadEventRequestProgram $ ReadEventRequest streamId eventNumber) testRunState
+      (id <$>) <$> evalProgram "LookupEvent" (getReadEventRequestProgram $ ReadEventRequest streamId eventNumber) testRunState
   in QC.forAll (runPrograms programs) check
 
 prop_ConflictingWritesWillNotSucceed :: QC.Property
