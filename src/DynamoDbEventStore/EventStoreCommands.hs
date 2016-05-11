@@ -156,10 +156,11 @@ makeFree ''DynamoCmd
 
 type DynamoCmdM = F DynamoCmd
 
-readField :: (MonadError Text m, Monoid a) => Text -> Lens' AttributeValue (Maybe a) -> DynamoValues -> m a
-readField fieldName fieldType values = 
-   maybeToEither $ view (ix fieldName . fieldType) values 
+readField :: (MonadError e m) => (Text -> e) -> Text -> Lens' AttributeValue (Maybe a) -> DynamoValues -> m a
+readField toError fieldName fieldType values = 
+   let fieldValue = values ^? ix fieldName
+   in maybeToEither $ fieldValue >>= view fieldType
    where 
-     maybeToEither Nothing  = throwError $ "Error reading field: " <> fieldName
+     maybeToEither Nothing  = throwError $ toError fieldName
      maybeToEither (Just x) = return x
 

@@ -39,6 +39,7 @@ import           Data.Time.Format
 import           Data.Time.Clock
 import qualified Data.Text.Lazy.Encoding as TL
 import           DynamoDbEventStore.EventStoreCommands hiding (readField)
+import qualified DynamoDbEventStore.EventStoreCommands as EventStoreCommands
 import qualified Data.HashMap.Strict     as HM
 import           Network.AWS.DynamoDB
 import           Text.Printf (printf)
@@ -125,12 +126,8 @@ data EventWriteResult = WriteSuccess | WrongExpectedVersion | EventExists | Writ
 type UserProgramStack = ExceptT EventStoreActionError DynamoCmdM
 
 readField :: (MonadError EventStoreActionError m) => Text -> Lens' AttributeValue (Maybe a) -> DynamoValues -> m a
-readField fieldName fieldType values = 
-   let (fieldValue :: Maybe AttributeValue) = values ^? ix fieldName
-   in maybeToEither $ fieldValue >>= view fieldType
-   where 
-     maybeToEither Nothing  = throwError $ EventStoreActionErrorFieldMissing fieldName
-     maybeToEither (Just x) = return x
+readField = 
+   EventStoreCommands.readField EventStoreActionErrorFieldMissing
 
 ensureExpectedVersion :: DynamoKey -> UserProgramStack Bool
 ensureExpectedVersion (DynamoKey _streamId (-1)) = return True

@@ -21,6 +21,7 @@ import           TextShow
 import qualified DynamoDbEventStore.Constants as Constants
 import           System.Random
 import           DynamoDbEventStore.EventStoreCommands hiding (readField)
+import qualified DynamoDbEventStore.EventStoreCommands as EventStoreCommands
 
 import Network.AWS(MonadAWS)
 import Control.Monad.Trans.AWS
@@ -56,12 +57,9 @@ readExcept err t =
   in case parsed of Nothing  -> Left $ err t
                     (Just a) -> Right a
 
-readField :: (MonadError InterpreterError m, Monoid a) => Text -> Lens' AttributeValue (Maybe a) -> DynamoValues -> m a
-readField fieldName fieldType values = 
-   maybeToEither $ view (ix fieldName . fieldType) values 
-   where 
-     maybeToEither Nothing  = throwError $ FieldMissing fieldName
-     maybeToEither (Just x) = return x
+readField :: (MonadError InterpreterError m) => Text -> Lens' AttributeValue (Maybe a) -> DynamoValues -> m a
+readField = 
+   EventStoreCommands.readField FieldMissing
 
 fromAttributesToDynamoKey :: HM.HashMap Text AttributeValue -> Either InterpreterError DynamoKey
 fromAttributesToDynamoKey allValues = do
