@@ -34,7 +34,8 @@ import qualified DynamoDbEventStore.GlobalFeedWriter as GlobalFeedWriter
 import           DynamoDbEventStore.GlobalFeedWriter (FeedEntry(),EventStoreActionError(..))
 import           DynamoDbEventStore.DynamoCmdInterpreter
 
-type UploadItem = (Text,Int64,UTCTime,NonEmpty EventData)
+type ExtraEventFields = (UTCTime, Bool)
+type UploadItem = (Text,Int64,ExtraEventFields,NonEmpty EventData)
 newtype UploadList = UploadList [UploadItem] deriving (Show)
 
 sampleTime :: UTCTime
@@ -56,31 +57,31 @@ instance QC.Arbitrary UploadList where
   arbitrary = do
     (streams :: [StreamId]) <- uniqueList <$> cappedList 5
     (streamWithEvents :: [(StreamId, [NonEmpty EventData])]) <- mapM (\s -> puts >>= (\p -> return (s,p))) streams
-    (withTime :: [(StreamId, [NonEmpty EventData], UTCTime)]) <- mapM (\(s,es) -> QC.arbitrary >>= (\t -> return (s,es,t))) streamWithEvents
+    (withTime :: [(StreamId, [NonEmpty EventData], ExtraEventFields)]) <- mapM (\(s,es) -> QC.arbitrary >>= (\t -> return (s,es,t))) streamWithEvents
     return $ UploadList $ numberedPuts withTime 
     where
-      numberedPuts :: [(StreamId, [NonEmpty EventData], UTCTime)] -> [(Text, Int64, UTCTime, NonEmpty EventData)]
+      numberedPuts :: [(StreamId, [NonEmpty EventData], ExtraEventFields)] -> [(Text, Int64, ExtraEventFields, NonEmpty EventData)]
       numberedPuts xs = (\(StreamId s,d,t) -> banana s d t) =<< xs
-      banana :: Text -> [NonEmpty EventData] -> UTCTime -> [(Text,Int64, UTCTime, NonEmpty EventData)]
+      banana :: Text -> [NonEmpty EventData] -> ExtraEventFields -> [(Text,Int64, ExtraEventFields, NonEmpty EventData)]
       banana streamId xs t = reverse $ evalState (foldM (apple streamId t) [] xs) (-1)
-      apple :: Text -> UTCTime -> [(Text,Int64, UTCTime, NonEmpty EventData)] -> NonEmpty EventData -> State Int64 [(Text,Int64, UTCTime, NonEmpty EventData)]
-      apple streamId t xs x = do
+      apple :: Text -> ExtraEventFields -> [(Text,Int64, ExtraEventFields, NonEmpty EventData)] -> NonEmpty EventData -> State Int64 [(Text,Int64, ExtraEventFields, NonEmpty EventData)]
+      apple streamId extra xs x = do
         (eventNumber :: Int64) <- get
         put (eventNumber + (fromIntegral . length) x)
-        return $ (streamId, eventNumber, t, x):xs
+        return $ (streamId, eventNumber, extra, x):xs
       puts :: QC.Gen [NonEmpty EventData]
       puts = do 
         (p :: [()]) <- cappedList 100
         mapM (\_ -> (:|) <$> QC.arbitrary <*> cappedList 9) p
 
-writeEvent :: (Text, Int64, UTCTime, NonEmpty EventData) -> DynamoCmdM (Either EventStoreActionError EventWriteResult)
-writeEvent (stream, eventNumber, eventTime, eventBodies) = 
+writeEvent :: (Text, Int64, ExtraEventFields, NonEmpty EventData) -> DynamoCmdM (Either EventStoreActionError EventWriteResult)
+writeEvent (stream, eventNumber, (eventTime, isJson), eventBodies) = 
   let 
     eventEntries = (\(EventData body) -> EventEntry (TL.encodeUtf8 . TL.fromStrict $ body) "") <$> eventBodies
   in
-    postEventRequestProgram (PostEventRequest stream (Just eventNumber) eventTime eventEntries)
+    postEventRequestProgram (PostEventRequest stream (Just eventNumber) eventTime isJson eventEntries)
 
-publisher :: [(Text,Int64,UTCTime,NonEmpty EventData)] -> DynamoCmdM (Either EventStoreActionError ())
+publisher :: [(Text,Int64,ExtraEventFields,NonEmpty EventData)] -> DynamoCmdM (Either EventStoreActionError ())
 publisher xs = Right <$> forM_ xs writeEvent
 
 globalFeedFromUploadList :: [UploadItem] -> Map.Map Text (Seq.Seq Int64)
@@ -141,8 +142,8 @@ prop_ConflictingWritesWillNotSucceed :: QC.Property
 prop_ConflictingWritesWillNotSucceed =
   let
     programs = Map.fromList [
-        ("WriteOne", (writeEvent ("MyStream",-1,sampleTime,EventData "" :| [EventData ""]), 10))
-      , ("WriteTwo", (writeEvent ("MyStream",-1,sampleTime,EventData "" :| []), 10))
+        ("WriteOne", (writeEvent ("MyStream",-1, (sampleTime, False), EventData "" :| [EventData ""]), 10))
+      , ("WriteTwo", (writeEvent ("MyStream",-1, (sampleTime, False), EventData "" :| []), 10))
       ]
   in QC.forAll (runPrograms programs) check
      where
@@ -214,7 +215,7 @@ writeEventsWithExplicitExpectedVersions (StreamId streamId) events =
   where 
     writeSingleEvent (et, ed) = do
       eventNumber <- get
-      result <- lift $ postEventRequestProgram (PostEventRequest streamId (Just eventNumber) sampleTime (EventEntry ed (EventType et) :| []))
+      result <- lift $ postEventRequestProgram (PostEventRequest streamId (Just eventNumber) sampleTime False (EventEntry ed (EventType et) :| []))
       when (result /= Right WriteSuccess) $ error "Bad write result"
       put (eventNumber + 1)
 
@@ -223,7 +224,7 @@ writeEventsWithNoExpectedVersions (StreamId streamId) events =
   forM_ events writeSingleEvent
   where 
     writeSingleEvent (et, ed) = do
-      result <- postEventRequestProgram (PostEventRequest streamId Nothing sampleTime (EventEntry ed (EventType et) :| []))
+      result <- postEventRequestProgram (PostEventRequest streamId Nothing sampleTime False (EventEntry ed (EventType et) :| []))
       when (result /= Right WriteSuccess) $ error "Bad write result"
 
 writeThenRead :: StreamId -> [(Text, LByteString)] -> EventWriter -> ExceptT EventStoreActionError DynamoCmdM [RecordedEvent]
@@ -242,14 +243,17 @@ writtenEventsAppearInReadStream writer =
         recordedEventNumber = 0, 
         recordedEventData = T.encodeUtf8 "My Content", 
         recordedEventType = "MyEvent",
-        recordedEventCreated = sampleTime
+        recordedEventCreated = sampleTime,
+        recordedEventIsJson = False
       }, 
       RecordedEvent { 
         recordedEventStreamId = "MyStream", 
         recordedEventNumber = 1, 
         recordedEventData = T.encodeUtf8 "My Content2", 
         recordedEventType = "MyEvent2",
-        recordedEventCreated = sampleTime} ] 
+        recordedEventCreated = sampleTime,
+        recordedEventIsJson = False
+      } ] 
     result = evalProgram "writeThenRead" (runExceptT $ writeThenRead streamId eventDatas writer) emptyTestState
   in assertEqual "Returned events should match input events" expectedResult result
 
@@ -269,22 +273,22 @@ prop_NoWriteRequestCanCausesAFatalErrorInGlobalFeedWriter events =
 cannotWriteEventsOutOfOrder :: Assertion
 cannotWriteEventsOutOfOrder =
   let 
-    postEventRequest = PostEventRequest { perStreamId = "MyStream", perExpectedVersion = Just 1, perEventTime = sampleTime, perEvents = (EventEntry (TL.encodeUtf8 "My Content") "MyEvent" :| []) }
+    postEventRequest = PostEventRequest { perStreamId = "MyStream", perExpectedVersion = Just 1, perEventTime = sampleTime, perIsJson = False, perEvents = (EventEntry (TL.encodeUtf8 "My Content") "MyEvent" :| []) }
     result = evalProgram "writeEvent" (postEventRequestProgram postEventRequest) emptyTestState
   in assertEqual "Should return an error" (Right WrongExpectedVersion) result
 
 canWriteFirstEvent :: Assertion
 canWriteFirstEvent =
   let 
-    postEventRequest = PostEventRequest { perStreamId = "MyStream", perExpectedVersion = Just (-1), perEventTime = sampleTime, perEvents = (EventEntry (TL.encodeUtf8 "My Content") "MyEvent" :| []) }
+    postEventRequest = PostEventRequest { perStreamId = "MyStream", perExpectedVersion = Just (-1), perEventTime = sampleTime, perIsJson = False, perEvents = (EventEntry (TL.encodeUtf8 "My Content") "MyEvent" :| []) }
     result = evalProgram "writeEvent" (postEventRequestProgram postEventRequest) emptyTestState
   in assertEqual "Should return success" (Right WriteSuccess) result
 
 canWriteMultipleEvents :: Assertion
 canWriteMultipleEvents =
   let 
-    multiPostEventRequest = PostEventRequest { perStreamId = "MyStream", perExpectedVersion = Just (-1), perEventTime = sampleTime, perEvents = (EventEntry (TL.encodeUtf8 "My Content") "MyEvent" :| [EventEntry (TL.encodeUtf8 "My Content2") "MyEvent2"]) }
-    subsequentPostEventRequest = PostEventRequest { perStreamId = "MyStream", perExpectedVersion = Just 1, perEventTime = sampleTime, perEvents = (EventEntry (TL.encodeUtf8 "My Content") "MyEvent" :| []) }
+    multiPostEventRequest = PostEventRequest { perStreamId = "MyStream", perExpectedVersion = Just (-1), perEventTime = sampleTime, perIsJson = False, perEvents = (EventEntry (TL.encodeUtf8 "My Content") "MyEvent" :| [EventEntry (TL.encodeUtf8 "My Content2") "MyEvent2"]) }
+    subsequentPostEventRequest = PostEventRequest { perStreamId = "MyStream", perExpectedVersion = Just 1, perEventTime = sampleTime, perIsJson = False, perEvents = (EventEntry (TL.encodeUtf8 "My Content") "MyEvent" :| []) }
     result = evalProgram "writeEvent" (postEventRequestProgram multiPostEventRequest >> postEventRequestProgram subsequentPostEventRequest) emptyTestState
   in assertEqual "Should return success" (Right WriteSuccess) result
 
@@ -292,8 +296,8 @@ eventNumbersCorrectForMultipleEvents :: Assertion
 eventNumbersCorrectForMultipleEvents =
   let 
     streamId = "MyStream"
-    multiPostEventRequest = PostEventRequest { perStreamId = streamId, perExpectedVersion = Just (-1), perEventTime = sampleTime, perEvents = (EventEntry (TL.encodeUtf8 "My Content") "MyEvent" :| [EventEntry (TL.encodeUtf8 "My Content2") "MyEvent2"]) }
-    subsequentPostEventRequest = PostEventRequest { perStreamId = streamId, perExpectedVersion = Just 1, perEventTime = sampleTime, perEvents = (EventEntry (TL.encodeUtf8 "My Content") "MyEvent" :| []) }
+    multiPostEventRequest = PostEventRequest { perStreamId = streamId, perExpectedVersion = Just (-1), perEventTime = sampleTime, perIsJson = False, perEvents = (EventEntry (TL.encodeUtf8 "My Content") "MyEvent" :| [EventEntry (TL.encodeUtf8 "My Content2") "MyEvent2"]) }
+    subsequentPostEventRequest = PostEventRequest { perStreamId = streamId, perExpectedVersion = Just 1, perEventTime = sampleTime, perIsJson = False, perEvents = (EventEntry (TL.encodeUtf8 "My Content") "MyEvent" :| []) }
     result = evalProgram "writeEvent" (runExceptT $ lift (postEventRequestProgram multiPostEventRequest) >> lift (postEventRequestProgram subsequentPostEventRequest) >> getStreamRecordedEvents streamId) emptyTestState
     eventNumbers = (recordedEventNumber <$>) <$> result
   in assertEqual "Should return success" (Right [0,1,2]) eventNumbers
@@ -302,7 +306,7 @@ whenIndexing1000ItemsIopsIsMinimal :: Assertion
 whenIndexing1000ItemsIopsIsMinimal = 
   let 
     streamId = "MyStream"
-    requests = replicate 1000 $ postEventRequestProgram $ PostEventRequest { perStreamId = streamId, perExpectedVersion = Nothing, perEventTime = sampleTime, perEvents = (EventEntry (TL.encodeUtf8 "My Content") "MyEvent" :| []) }
+    requests = replicate 1000 $ postEventRequestProgram $ PostEventRequest { perStreamId = streamId, perExpectedVersion = Nothing, perEventTime = sampleTime, perIsJson = False, perEvents = (EventEntry (TL.encodeUtf8 "My Content") "MyEvent" :| []) }
     writeState = execProgram "writeEvents" (forM_ requests id) emptyTestState 
     afterIndexState = execProgramUntilIdle "indexer" GlobalFeedWriter.main (view testState writeState)
     expectedWriteState = Map.fromList [
@@ -318,8 +322,8 @@ errorThrownIfTryingToWriteAnEventInAMultipleGap :: Assertion
 errorThrownIfTryingToWriteAnEventInAMultipleGap =
   let 
     streamId = "MyStream"
-    multiPostEventRequest = PostEventRequest { perStreamId = streamId, perExpectedVersion = Just (-1), perEventTime = sampleTime, perEvents = (EventEntry (TL.encodeUtf8 "My Content") "MyEvent" :| [EventEntry (TL.encodeUtf8 "My Content2") "MyEvent2"]) }
-    subsequentPostEventRequest = PostEventRequest { perStreamId = streamId, perExpectedVersion = Just (-1), perEventTime = sampleTime, perEvents = (EventEntry (TL.encodeUtf8 "My Content") "MyEvent" :| []) }
+    multiPostEventRequest = PostEventRequest { perStreamId = streamId, perExpectedVersion = Just (-1), perEventTime = sampleTime, perIsJson = False, perEvents = (EventEntry (TL.encodeUtf8 "My Content") "MyEvent" :| [EventEntry (TL.encodeUtf8 "My Content2") "MyEvent2"]) }
+    subsequentPostEventRequest = PostEventRequest { perStreamId = streamId, perExpectedVersion = Just (-1), perEventTime = sampleTime, perIsJson = False, perEvents = (EventEntry (TL.encodeUtf8 "My Content") "MyEvent" :| []) }
     result = evalProgram "writeEvents" (postEventRequestProgram multiPostEventRequest >> postEventRequestProgram subsequentPostEventRequest) emptyTestState
   in assertEqual "Should return failure" (Right EventExists) result
 

@@ -155,6 +155,7 @@ app process = do
           <$> pure streamId
           <*> expectedVersion
           <*> pure eventTime
+          <*> pure False
           <*> ((\x -> x:|[]) <$> eventEntries)
   get "/streams/:streamId/:eventNumber" $ do
     streamId <- param "streamId"

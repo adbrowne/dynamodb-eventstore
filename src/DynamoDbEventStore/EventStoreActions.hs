@@ -93,6 +93,7 @@ data PostEventRequest = PostEventRequest {
    perStreamId        :: Text,
    perExpectedVersion :: Maybe Int64,
    perEventTime       :: UTCTime,
+   perIsJson          :: Bool,
    perEvents          :: NonEmpty EventEntry
 } deriving (Show)
 
@@ -102,6 +103,7 @@ instance QC.Arbitrary EventEntry where
 
 instance QC.Arbitrary PostEventRequest where
   arbitrary = PostEventRequest <$> (fromString <$> QC.arbitrary)
+                               <*> QC.arbitrary
                                <*> QC.arbitrary
                                <*> QC.arbitrary
                                <*> ((:|) <$> QC.arbitrary <*> QC.arbitrary)
@@ -122,9 +124,10 @@ data EventWriteResult = WriteSuccess | WrongExpectedVersion | EventExists | Writ
 
 type UserProgramStack = ExceptT EventStoreActionError DynamoCmdM
 
-readField :: (MonadError EventStoreActionError m, Monoid a) => Text -> Lens' AttributeValue (Maybe a) -> DynamoValues -> m a
+readField :: (MonadError EventStoreActionError m) => Text -> Lens' AttributeValue (Maybe a) -> DynamoValues -> m a
 readField fieldName fieldType values = 
-   maybeToEither $ view (ix fieldName . fieldType) values 
+   let (fieldValue :: Maybe AttributeValue) = values ^? ix fieldName
+   in maybeToEither $ fieldValue >>= view fieldType
    where 
      maybeToEither Nothing  = throwError $ EventStoreActionErrorFieldMissing fieldName
      maybeToEither (Just x) = return x
@@ -144,7 +147,7 @@ dynamoReadResultToEventNumber :: DynamoReadResult -> Int64
 dynamoReadResultToEventNumber (DynamoReadResult (DynamoKey _key eventNumber) _version _values) = eventNumber
 
 postEventRequestProgram :: PostEventRequest -> DynamoCmdM (Either EventStoreActionError EventWriteResult)
-postEventRequestProgram (PostEventRequest sId ev eventTime eventEntries) = runExceptT $ do
+postEventRequestProgram (PostEventRequest sId ev eventTime isJson eventEntries) = runExceptT $ do
   dynamoKeyOrError <- getDynamoKey sId ev
   case dynamoKeyOrError of Left a -> return a
                            Right dynamoKey -> writeMyEvent dynamoKey
@@ -155,6 +158,7 @@ postEventRequestProgram (PostEventRequest sId ev eventTime eventEntries) = runEx
       let values = HM.singleton Constants.pageBodyKey (set avB (Just ((Serialize.encode . NonEmpty.toList) eventEntries)) attributeValue) & 
                    HM.insert Constants.needsPagingKey (set avS (Just "True") attributeValue) &
                    HM.insert Constants.eventCreatedKey (set avS (Just timeFormatted) attributeValue) &
+                   HM.insert Constants.isJsonKey (set avBOOL (Just isJson) attributeValue) &
                    HM.insert Constants.eventCountKey (set avN (Just ((showt . length) eventEntries)) attributeValue)
       writeResult <- GlobalFeedWriter.dynamoWriteWithRetry dynamoKey values 0 
       return $ toEventResult writeResult
@@ -189,11 +193,12 @@ toRecordedEvent :: DynamoReadResult -> (ExceptT EventStoreActionError DynamoCmdM
 toRecordedEvent (DynamoReadResult key@(DynamoKey dynamoHashKey firstEventNumber) _version values) = do
   eventBody <- readField Constants.pageBodyKey avB values 
   eventTimeText <- readField Constants.eventCreatedKey avS values
+  eventIsJson <- readField Constants.isJsonKey avBOOL values
   eventTime <- parseTimeM True defaultTimeLocale rfc822DateFormat (T.unpack eventTimeText)
   let streamId = T.drop (T.length Constants.streamDynamoKeyPrefix) dynamoHashKey
   (eventEntries :: [EventEntry]) <- binaryDeserialize key eventBody
   let eventEntriesWithEventNumber = zip [firstEventNumber..] eventEntries
-  let recordedEvents = fmap (\(eventNumber, EventEntry {..}) -> RecordedEvent streamId eventNumber (BL.toStrict eventEntryData) (eventTypeToText eventEntryType) eventTime) eventEntriesWithEventNumber
+  let recordedEvents = fmap (\(eventNumber, EventEntry {..}) -> RecordedEvent streamId eventNumber (BL.toStrict eventEntryData) (eventTypeToText eventEntryType) eventTime eventIsJson) eventEntriesWithEventNumber
   return $ reverse recordedEvents
 
 

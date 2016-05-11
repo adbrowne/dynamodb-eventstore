@@ -64,7 +64,8 @@ data RecordedEvent = RecordedEvent {
    recordedEventNumber   :: Int64,
    recordedEventData     :: ByteString,
    recordedEventType     :: Text,
-   recordedEventCreated  :: UTCTime
+   recordedEventCreated  :: UTCTime,
+   recordedEventIsJson   :: Bool
 } deriving (Show, Eq, Ord)
 
 instance ToJSON RecordedEvent where

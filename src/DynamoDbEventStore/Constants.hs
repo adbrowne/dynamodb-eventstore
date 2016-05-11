@@ -24,5 +24,8 @@ eventCreatedKey = "EventCreated"
 pageBodyKey :: Text
 pageBodyKey = "Body"
 
+isJsonKey :: Text
+isJsonKey = "IsJson"
+
 eventPageNumberKey :: Text
 eventPageNumberKey = "PageNumber"
