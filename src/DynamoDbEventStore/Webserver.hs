@@ -150,12 +150,12 @@ app process = do
           EventEntry
           <$> pure eventData
           <*> (EventType <$> eventType)
+          <*> pure (EventTime eventTime)
+          <*> pure False
     toResult . fmap (process . PostEvent) $
           PostEventRequest
           <$> pure streamId
           <*> expectedVersion
-          <*> pure eventTime
-          <*> pure False
           <*> ((\x -> x:|[]) <$> eventEntries)
   get "/streams/:streamId/:eventNumber" $ do
     streamId <- param "streamId"

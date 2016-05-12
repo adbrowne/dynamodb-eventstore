@@ -44,14 +44,14 @@ postEventSpec = do
       waiCase requestWithExpectedVersion $ assertStatus 200
 
     it "responds with body" $
-      waiCase requestWithExpectedVersion $ assertBody "PostEvent (PostEventRequest {perStreamId = \"streamId\", perExpectedVersion = Just 1, perEventTime = 2016-05-08 12:49:41 UTC, perIsJson = False, perEvents = EventEntry {eventEntryData = \"\", eventEntryType = EventType \"MyEventType\"} :| []})"
+      waiCase requestWithExpectedVersion $ assertBody "PostEvent (PostEventRequest {perStreamId = \"streamId\", perExpectedVersion = Just 1, perEvents = EventEntry {eventEntryData = \"\", eventEntryType = EventType \"MyEventType\", eventEntryCreated = EventTime 2016-05-08 12:49:41 UTC, eventEntryIsJson = False} :| []})"
 
   describe "POST /streams/streamId without ExepectedVersion" $ do
     it "responds with 200" $
       waiCase requestWithoutExpectedVersion $ assertStatus 200
 
     it "responds with body" $
-      waiCase requestWithoutExpectedVersion $ assertBody "PostEvent (PostEventRequest {perStreamId = \"streamId\", perExpectedVersion = Nothing, perEventTime = 2016-05-08 12:49:41 UTC, perIsJson = False, perEvents = EventEntry {eventEntryData = \"\", eventEntryType = EventType \"MyEventType\"} :| []})"
+      waiCase requestWithoutExpectedVersion $ assertBody "PostEvent (PostEventRequest {perStreamId = \"streamId\", perExpectedVersion = Nothing, perEvents = EventEntry {eventEntryData = \"\", eventEntryType = EventType \"MyEventType\", eventEntryCreated = EventTime 2016-05-08 12:49:41 UTC, eventEntryIsJson = False} :| []})"
 
   describe "POST /streams/streamId without EventType" $
     it "responds with 400" $

@@ -12,6 +12,8 @@ module DynamoDbEventStore.EventStoreActions(
   ReadAllRequest(..), 
   PostEventRequest(..), 
   EventType(..),
+  EventTime(..),
+  unEventTime,
   EventEntry(..),
   EventStoreAction(..),
   EventWriteResult(..),
@@ -36,6 +38,7 @@ import qualified Data.Text as T
 import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
 import           Data.Time.Format
+import           Data.Time.Calendar
 import           Data.Time.Clock
 import qualified Data.Text.Lazy.Encoding as TL
 import           DynamoDbEventStore.EventStoreCommands hiding (readField)
@@ -68,16 +71,29 @@ data SubscribeAllResponse = SubscribeAllResponse {
 } deriving (Show)
 
 newtype EventType = EventType Text deriving (Show, Eq, Ord, IsString)
+newtype EventTime = EventTime UTCTime deriving (Show, Eq, Ord)
+
+unEventTime :: EventTime -> UTCTime
+unEventTime (EventTime utcTime) = utcTime
 
 eventTypeToText :: EventType -> Text
 eventTypeToText (EventType t) = t
 
 data EventEntry = EventEntry {
-  eventEntryData :: BL.ByteString,
-  eventEntryType :: EventType
+  eventEntryData    :: BL.ByteString,
+  eventEntryType    :: EventType,
+  eventEntryCreated :: EventTime,
+  eventEntryIsJson  :: Bool
 } deriving (Show, Eq, Ord, Generic)
 
 instance Serialize.Serialize EventEntry
+
+instance Serialize.Serialize EventTime where
+  put (EventTime t) = (Serialize.put . (formatTime defaultTimeLocale "%s%Q")) t
+  get = do 
+    textValue <- Serialize.get
+    time <- parseTimeM False defaultTimeLocale "%s%Q" textValue
+    return $ EventTime time
 
 instance Serialize.Serialize EventType where
   put (EventType t) = (Serialize.put . encodeUtf8) t
@@ -93,19 +109,29 @@ data EventStoreActionResult =
 data PostEventRequest = PostEventRequest {
    perStreamId        :: Text,
    perExpectedVersion :: Maybe Int64,
-   perEventTime       :: UTCTime,
-   perIsJson          :: Bool,
    perEvents          :: NonEmpty EventEntry
 } deriving (Show)
 
+newtype SecondPrecisionUtcTime = SecondPrecisionUtcTime UTCTime
+
+instance QC.Arbitrary EventTime where
+  arbitrary =
+    EventTime <$> QC.arbitrary
+
+instance QC.Arbitrary SecondPrecisionUtcTime where
+  arbitrary =
+    SecondPrecisionUtcTime <$> (UTCTime
+     <$> (QC.arbitrary  :: QC.Gen Day)
+     <*> (secondsToDiffTime <$> QC.choose (0, 86400)))
+     
 instance QC.Arbitrary EventEntry where
   arbitrary = EventEntry <$> (TL.encodeUtf8 . TL.pack <$> QC.arbitrary)
                          <*> (EventType . fromString <$> QC.arbitrary)
+                         <*> QC.arbitrary
+                         <*> QC.arbitrary
 
 instance QC.Arbitrary PostEventRequest where
   arbitrary = PostEventRequest <$> (fromString <$> QC.arbitrary)
-                               <*> QC.arbitrary
-                               <*> QC.arbitrary
                                <*> QC.arbitrary
                                <*> ((:|) <$> QC.arbitrary <*> QC.arbitrary)
 
@@ -144,18 +170,15 @@ dynamoReadResultToEventNumber :: DynamoReadResult -> Int64
 dynamoReadResultToEventNumber (DynamoReadResult (DynamoKey _key eventNumber) _version _values) = eventNumber
 
 postEventRequestProgram :: PostEventRequest -> DynamoCmdM (Either EventStoreActionError EventWriteResult)
-postEventRequestProgram (PostEventRequest sId ev eventTime isJson eventEntries) = runExceptT $ do
+postEventRequestProgram (PostEventRequest sId ev eventEntries) = runExceptT $ do
   dynamoKeyOrError <- getDynamoKey sId ev
   case dynamoKeyOrError of Left a -> return a
                            Right dynamoKey -> writeMyEvent dynamoKey
   where
     writeMyEvent :: DynamoKey -> ExceptT EventStoreActionError DynamoCmdM EventWriteResult
     writeMyEvent dynamoKey = do
-      let timeFormatted = fromString $ formatTime defaultTimeLocale rfc822DateFormat eventTime
       let values = HM.singleton Constants.pageBodyKey (set avB (Just ((Serialize.encode . NonEmpty.toList) eventEntries)) attributeValue) & 
                    HM.insert Constants.needsPagingKey (set avS (Just "True") attributeValue) &
-                   HM.insert Constants.eventCreatedKey (set avS (Just timeFormatted) attributeValue) &
-                   HM.insert Constants.isJsonKey (set avBOOL (Just isJson) attributeValue) &
                    HM.insert Constants.eventCountKey (set avN (Just ((showt . length) eventEntries)) attributeValue)
       writeResult <- GlobalFeedWriter.dynamoWriteWithRetry dynamoKey values 0 
       return $ toEventResult writeResult
@@ -189,13 +212,10 @@ binaryDeserialize key x = do
 toRecordedEvent :: DynamoReadResult -> (ExceptT EventStoreActionError DynamoCmdM) [RecordedEvent]
 toRecordedEvent (DynamoReadResult key@(DynamoKey dynamoHashKey firstEventNumber) _version values) = do
   eventBody <- readField Constants.pageBodyKey avB values 
-  eventTimeText <- readField Constants.eventCreatedKey avS values
-  eventIsJson <- readField Constants.isJsonKey avBOOL values
-  eventTime <- parseTimeM True defaultTimeLocale rfc822DateFormat (T.unpack eventTimeText)
   let streamId = T.drop (T.length Constants.streamDynamoKeyPrefix) dynamoHashKey
   (eventEntries :: [EventEntry]) <- binaryDeserialize key eventBody
   let eventEntriesWithEventNumber = zip [firstEventNumber..] eventEntries
-  let recordedEvents = fmap (\(eventNumber, EventEntry {..}) -> RecordedEvent streamId eventNumber (BL.toStrict eventEntryData) (eventTypeToText eventEntryType) eventTime eventIsJson) eventEntriesWithEventNumber
+  let recordedEvents = fmap (\(eventNumber, EventEntry {..}) -> RecordedEvent streamId eventNumber (BL.toStrict eventEntryData) (eventTypeToText eventEntryType) (unEventTime eventEntryCreated) eventEntryIsJson) eventEntriesWithEventNumber
   return $ reverse recordedEvents
 
 
