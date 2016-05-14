@@ -22,6 +22,7 @@ module DynamoDbEventStore.EventStoreCommands(
   DynamoVersion,
   RecordedEvent(..),
   EventKey(..),
+  EventId(..),
   DynamoCmd(..),
   DynamoKey(..),
   DynamoWriteResult(..),
@@ -39,6 +40,8 @@ import           GHC.Natural
 import           Data.Aeson
 import           GHC.Generics
 
+import qualified Data.Serialize as Serialize
+import qualified Data.UUID as UUID
 import           Data.Time.Clock
 import           TextShow.TH
 import qualified Data.HashMap.Strict     as HM
@@ -59,12 +62,38 @@ type PageKey = (Int, Int) -- (Partition, PageNumber)
 type EventReadResult = Maybe (EventType, ByteString, Maybe PageKey)
 data PageStatus = Version Int | Full | Verified deriving (Eq, Show, Generic)
 
+newtype EventId = EventId UUID.UUID deriving (Show, Eq, Ord, Generic)
+
+instance Serialize.Serialize EventId where
+  put (EventId uuid) = do
+    let (w0, w1, w2, w3) = UUID.toWords uuid
+    Serialize.put w0
+    Serialize.put w1
+    Serialize.put w2
+    Serialize.put w3
+  get = EventId <$> do
+    w0 <- Serialize.get
+    w1 <- Serialize.get
+    w2 <- Serialize.get
+    w3 <- Serialize.get
+    return $ UUID.fromWords w0 w1 w2 w3
+ 
+instance QC.Arbitrary EventId where
+  arbitrary = 
+    EventId 
+      <$> (UUID.fromWords
+            <$> QC.arbitrary
+            <*> QC.arbitrary
+            <*> QC.arbitrary
+            <*> QC.arbitrary)
+
 data RecordedEvent = RecordedEvent {
    recordedEventStreamId :: Text,
    recordedEventNumber   :: Int64,
    recordedEventData     :: ByteString,
    recordedEventType     :: Text,
    recordedEventCreated  :: UTCTime,
+   recordedEventId       :: EventId,
    recordedEventIsJson   :: Bool
 } deriving (Show, Eq, Ord)
 

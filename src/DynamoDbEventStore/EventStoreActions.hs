@@ -72,7 +72,6 @@ data SubscribeAllResponse = SubscribeAllResponse {
 
 newtype EventType = EventType Text deriving (Show, Eq, Ord, IsString)
 newtype EventTime = EventTime UTCTime deriving (Show, Eq, Ord)
-
 unEventTime :: EventTime -> UTCTime
 unEventTime (EventTime utcTime) = utcTime
 
@@ -82,6 +81,7 @@ eventTypeToText (EventType t) = t
 data EventEntry = EventEntry {
   eventEntryData    :: BL.ByteString,
   eventEntryType    :: EventType,
+  eventEntryEventId :: EventId,
   eventEntryCreated :: EventTime,
   eventEntryIsJson  :: Bool
 } deriving (Show, Eq, Ord, Generic)
@@ -127,6 +127,7 @@ instance QC.Arbitrary SecondPrecisionUtcTime where
 instance QC.Arbitrary EventEntry where
   arbitrary = EventEntry <$> (TL.encodeUtf8 . TL.pack <$> QC.arbitrary)
                          <*> (EventType . fromString <$> QC.arbitrary)
+                         <*> QC.arbitrary
                          <*> QC.arbitrary
                          <*> QC.arbitrary
 
@@ -215,9 +216,8 @@ toRecordedEvent (DynamoReadResult key@(DynamoKey dynamoHashKey firstEventNumber)
   let streamId = T.drop (T.length Constants.streamDynamoKeyPrefix) dynamoHashKey
   (eventEntries :: [EventEntry]) <- binaryDeserialize key eventBody
   let eventEntriesWithEventNumber = zip [firstEventNumber..] eventEntries
-  let recordedEvents = fmap (\(eventNumber, EventEntry {..}) -> RecordedEvent streamId eventNumber (BL.toStrict eventEntryData) (eventTypeToText eventEntryType) (unEventTime eventEntryCreated) eventEntryIsJson) eventEntriesWithEventNumber
+  let recordedEvents = fmap (\(eventNumber, EventEntry {..}) -> RecordedEvent streamId eventNumber (BL.toStrict eventEntryData) (eventTypeToText eventEntryType) (unEventTime eventEntryCreated) eventEntryEventId eventEntryIsJson) eventEntriesWithEventNumber
   return $ reverse recordedEvents
-
 
 dynamoReadResultProducer :: StreamId -> Maybe Int64 -> Natural -> Producer DynamoReadResult UserProgramStack ()
 dynamoReadResultProducer (StreamId streamId) lastEvent batchSize = do

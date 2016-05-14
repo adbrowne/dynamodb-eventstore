@@ -11,6 +11,7 @@ import           Control.Arrow             (left)
 import           Data.Attoparsec.Text.Lazy
 import           Data.Char                 (isDigit)
 import           Control.Monad.Reader
+import qualified Data.UUID as UUID
 import qualified Data.Text.Lazy            as TL
 import qualified Data.Text.Lazy.Encoding   as TL
 import qualified Data.Vector               as V
@@ -75,6 +76,12 @@ positiveIntegerParser =
 textParser :: Parser Text
 textParser =
   fmap fromString $ many1 (satisfy (const True)) <* endOfInput
+
+uuidParser :: Parser UUID.UUID
+uuidParser = do
+  t <- textParser
+  case (UUID.fromText t) of Nothing  -> fail "Could not parse UUID"
+                            (Just v) -> return v
 
 positiveInt64Parser :: Parser Int64
 positiveInt64Parser =
@@ -146,10 +153,12 @@ app process = do
     eventType <- parseMandatoryHeader "ES-EventType" textParser
     eventData <- body
     eventTime <- lift getCurrentTime
+    eventId <- parseMandatoryHeader "ES-EventId" uuidParser
     let eventEntries = 
           EventEntry
           <$> pure eventData
           <*> (EventType <$> eventType)
+          <*> (EventId <$> eventId)
           <*> pure (EventTime eventTime)
           <*> pure False
     toResult . fmap (process . PostEvent) $

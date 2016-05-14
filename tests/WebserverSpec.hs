@@ -25,6 +25,8 @@ evHeader :: H.HeaderName
 evHeader = "ES-ExpectedVersion"
 etHeader :: H.HeaderName
 etHeader = "ES-EventType"
+eventIdHeader :: H.HeaderName
+eventIdHeader = "ES-EventId"
 
 
 app :: IO Application
@@ -33,7 +35,7 @@ app = do
   S.scottyAppT (flip runReaderT sampleTime) (W.app W.showEventResponse :: S.ScottyT LText (ReaderT UTCTime IO) ()) 
 postEventSpec :: Spec
 postEventSpec = do
-  let baseHeaders = [(etHeader, "MyEventType")]
+  let baseHeaders = [(etHeader, "MyEventType"),(eventIdHeader, "12f44004-f5dd-41f1-8225-72dd65a0332e")]
   let requestWithExpectedVersion = addEventPost $ (evHeader, "1"):baseHeaders
   let requestWithoutExpectedVersion = addEventPost baseHeaders
   let requestWithoutBadExpectedVersion = addEventPost $ (evHeader, "NotAnInt"):baseHeaders
@@ -44,14 +46,14 @@ postEventSpec = do
       waiCase requestWithExpectedVersion $ assertStatus 200
 
     it "responds with body" $
-      waiCase requestWithExpectedVersion $ assertBody "PostEvent (PostEventRequest {perStreamId = \"streamId\", perExpectedVersion = Just 1, perEvents = EventEntry {eventEntryData = \"\", eventEntryType = EventType \"MyEventType\", eventEntryCreated = EventTime 2016-05-08 12:49:41 UTC, eventEntryIsJson = False} :| []})"
+      waiCase requestWithExpectedVersion $ assertBody "PostEvent (PostEventRequest {perStreamId = \"streamId\", perExpectedVersion = Just 1, perEvents = EventEntry {eventEntryData = \"\", eventEntryType = EventType \"MyEventType\", eventEntryEventId = EventId 12f44004-f5dd-41f1-8225-72dd65a0332e, eventEntryCreated = EventTime 2016-05-08 12:49:41 UTC, eventEntryIsJson = False} :| []})"
 
   describe "POST /streams/streamId without ExepectedVersion" $ do
     it "responds with 200" $
       waiCase requestWithoutExpectedVersion $ assertStatus 200
 
     it "responds with body" $
-      waiCase requestWithoutExpectedVersion $ assertBody "PostEvent (PostEventRequest {perStreamId = \"streamId\", perExpectedVersion = Nothing, perEvents = EventEntry {eventEntryData = \"\", eventEntryType = EventType \"MyEventType\", eventEntryCreated = EventTime 2016-05-08 12:49:41 UTC, eventEntryIsJson = False} :| []})"
+      waiCase requestWithoutExpectedVersion $ assertBody "PostEvent (PostEventRequest {perStreamId = \"streamId\", perExpectedVersion = Nothing, perEvents = EventEntry {eventEntryData = \"\", eventEntryType = EventType \"MyEventType\", eventEntryEventId = EventId 12f44004-f5dd-41f1-8225-72dd65a0332e, eventEntryCreated = EventTime 2016-05-08 12:49:41 UTC, eventEntryIsJson = False} :| []})"
 
   describe "POST /streams/streamId without EventType" $
     it "responds with 400" $

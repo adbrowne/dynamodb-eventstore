@@ -11,6 +11,8 @@ import           Control.Lens
 import           Test.Tasty
 import           Test.Tasty.QuickCheck((===),testProperty)
 import qualified Test.Tasty.QuickCheck as QC
+import           Data.Maybe (fromJust)
+import qualified Data.UUID as UUID
 import           Test.Tasty.HUnit
 import           Control.Monad.State
 import           Control.Monad.Loops
@@ -39,8 +41,14 @@ newtype UploadList = UploadList [UploadItem] deriving (Show)
 sampleTime :: EventTime
 sampleTime = EventTime $ parseTimeOrError True defaultTimeLocale rfc822DateFormat "Sun, 08 May 2016 12:49:41 +0000"
 
+eventIdFromString :: String -> EventId
+eventIdFromString = EventId . fromJust . UUID.fromString
+
+sampleEventId :: EventId
+sampleEventId = eventIdFromString "c2cc10e1-57d6-4b6f-9899-38d972112d8c"
+
 sampleEventEntry :: EventEntry
-sampleEventEntry = EventEntry (TL.encodeUtf8 "My Content") "MyEvent" sampleTime False
+sampleEventEntry = EventEntry (TL.encodeUtf8 "My Content") "MyEvent" sampleEventId sampleTime False
 
 -- Generateds a list of length between 1 and maxLength
 cappedList :: QC.Arbitrary a => Int -> QC.Gen [a]
@@ -113,12 +121,13 @@ prop_EventShouldAppearInGlobalFeedInStreamOrder (UploadList uploadList) =
 expectedEventsFromUploadList :: UploadList -> [RecordedEvent]
 expectedEventsFromUploadList (UploadList uploadItems) = do
   (streamId, firstEventNumber, eventEntries) <- uploadItems
-  (eventNumber, EventEntry eventData (EventType eventType) (EventTime eventTime) isJson) <- zip [firstEventNumber+1..] (NonEmpty.toList eventEntries)
+  (eventNumber, EventEntry eventData (EventType eventType) eventId (EventTime eventTime) isJson) <- zip [firstEventNumber+1..] (NonEmpty.toList eventEntries)
   return $ RecordedEvent { 
     recordedEventStreamId = streamId,
     recordedEventNumber = eventNumber,
     recordedEventData = BL.toStrict eventData,
     recordedEventType = eventType,
+    recordedEventId = eventId,
     recordedEventCreated = eventTime,
     recordedEventIsJson = isJson }
 
@@ -204,15 +213,15 @@ prop_ScanUnpagedShouldBeEmpty (UploadList uploadList) =
        check (_, testRunState) = scanUnpaged testRunState === []
        scanUnpaged = evalProgram "scanUnpaged" scanNeedsPaging'
 
-type EventWriter = StreamId -> [(Text, LByteString)] -> DynamoCmdM ()
+type EventWriter = StreamId -> [(Text, EventId, LByteString)] -> DynamoCmdM ()
 
 writeEventsWithExplicitExpectedVersions :: EventWriter
 writeEventsWithExplicitExpectedVersions (StreamId streamId) events =
   evalStateT (forM_ events writeSingleEvent) (-1)
   where 
-    writeSingleEvent (et, ed) = do
+    writeSingleEvent (et, eventId, ed) = do
       eventNumber <- get
-      result <- lift $ postEventRequestProgram (PostEventRequest streamId (Just eventNumber) (EventEntry ed (EventType et) sampleTime False :| []))
+      result <- lift $ postEventRequestProgram (PostEventRequest streamId (Just eventNumber) (EventEntry ed (EventType et) eventId sampleTime False :| []))
       when (result /= Right WriteSuccess) $ error "Bad write result"
       put (eventNumber + 1)
 
@@ -220,11 +229,11 @@ writeEventsWithNoExpectedVersions :: EventWriter
 writeEventsWithNoExpectedVersions (StreamId streamId) events =
   forM_ events writeSingleEvent
   where 
-    writeSingleEvent (et, ed) = do
-      result <- postEventRequestProgram (PostEventRequest streamId Nothing (EventEntry ed (EventType et) sampleTime False :| []))
+    writeSingleEvent (et, eventId, ed) = do
+      result <- postEventRequestProgram (PostEventRequest streamId Nothing (EventEntry ed (EventType et) eventId sampleTime False :| []))
       when (result /= Right WriteSuccess) $ error "Bad write result"
 
-writeThenRead :: StreamId -> [(Text, LByteString)] -> EventWriter -> ExceptT EventStoreActionError DynamoCmdM [RecordedEvent]
+writeThenRead :: StreamId -> [(Text, EventId, LByteString)] -> EventWriter -> ExceptT EventStoreActionError DynamoCmdM [RecordedEvent]
 writeThenRead (StreamId streamId) events writer = do
   lift $ writer (StreamId streamId) events
   getStreamRecordedEvents streamId
@@ -233,13 +242,16 @@ writtenEventsAppearInReadStream :: EventWriter -> Assertion
 writtenEventsAppearInReadStream writer = 
   let 
     streamId = StreamId "MyStream"
-    eventDatas = [("MyEvent", TL.encodeUtf8 "My Content"), ("MyEvent2", TL.encodeUtf8 "My Content2")]
+    eventId1 = eventIdFromString "f3614cb1-5707-4351-8017-2f7471845a61" 
+    eventId2 = eventIdFromString "9f14fcaf-7c0a-4132-8574-483f0313d7c9"
+    eventDatas = [("MyEvent", eventId1, TL.encodeUtf8 "My Content"), ("MyEvent2", eventId2, TL.encodeUtf8 "My Content2")]
     expectedResult = Right [
       RecordedEvent { 
         recordedEventStreamId = "MyStream", 
         recordedEventNumber = 0, 
         recordedEventData = T.encodeUtf8 "My Content", 
         recordedEventType = "MyEvent",
+        recordedEventId = eventId1,
         recordedEventCreated = unEventTime sampleTime,
         recordedEventIsJson = False
       }, 
@@ -248,6 +260,7 @@ writtenEventsAppearInReadStream writer =
         recordedEventNumber = 1, 
         recordedEventData = T.encodeUtf8 "My Content2", 
         recordedEventType = "MyEvent2",
+        recordedEventId = eventId2,
         recordedEventCreated = unEventTime sampleTime,
         recordedEventIsJson = False
       } ] 
