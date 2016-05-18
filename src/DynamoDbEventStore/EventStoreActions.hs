@@ -88,6 +88,13 @@ data EventEntry = EventEntry {
 
 instance Serialize.Serialize EventEntry
 
+newtype NonEmptyWrapper a = NonEmptyWrapper (NonEmpty a)
+instance Serialize.Serialize a => Serialize.Serialize (NonEmptyWrapper a) where
+  put (NonEmptyWrapper xs) = Serialize.put (NonEmpty.toList xs)
+  get = do
+    xs <- Serialize.get
+    maybe (fail "NonEmptyWrapper: found an empty list") (return . NonEmptyWrapper) (NonEmpty.nonEmpty xs)
+
 instance Serialize.Serialize EventTime where
   put (EventTime t) = (Serialize.put . (formatTime defaultTimeLocale "%s%Q")) t
   get = do 
@@ -173,7 +180,7 @@ dynamoReadResultToEventNumber (DynamoReadResult (DynamoKey _key eventNumber) _ve
 dynamoReadResultToEventId :: DynamoReadResult -> ExceptT EventStoreActionError DynamoCmdM EventId
 dynamoReadResultToEventId readResult = do
   recordedEvents <- toRecordedEvent readResult
-  let lastEvent = last recordedEvents -- todo not total
+  let lastEvent = NonEmpty.last recordedEvents
   return (recordedEventId lastEvent)
 
 postEventRequestProgram :: PostEventRequest -> DynamoCmdM (Either EventStoreActionError EventWriteResult)
@@ -185,7 +192,7 @@ postEventRequestProgram (PostEventRequest sId ev eventEntries) = runExceptT $ do
   where
     writeMyEvent :: DynamoKey -> ExceptT EventStoreActionError DynamoCmdM EventWriteResult
     writeMyEvent dynamoKey = do
-      let values = HM.singleton Constants.pageBodyKey (set avB (Just ((Serialize.encode . NonEmpty.toList) eventEntries)) attributeValue) & 
+      let values = HM.singleton Constants.pageBodyKey (set avB (Just ((Serialize.encode . NonEmptyWrapper) eventEntries)) attributeValue) & 
                    HM.insert Constants.needsPagingKey (set avS (Just "True") attributeValue) &
                    HM.insert Constants.eventCountKey (set avN (Just ((showt . length) eventEntries)) attributeValue)
       writeResult <- GlobalFeedWriter.dynamoWriteWithRetry dynamoKey values 0 
@@ -220,14 +227,17 @@ binaryDeserialize key x = do
   case value of Left err    -> throwError (EventStoreActionErrorBodyDecode key err)
                 Right v     -> return v
 
-toRecordedEvent :: DynamoReadResult -> (ExceptT EventStoreActionError DynamoCmdM) [RecordedEvent]
+--nonEmpty :: Monad m => [a] -> (ExceptT EventStoreActionError m) (NonEmpty a)
+--nonEmpty = maybe (throwError DynamoItemFoundWithNoEvents RecordFoundWithNoEvents)
+
+toRecordedEvent :: DynamoReadResult -> (ExceptT EventStoreActionError DynamoCmdM) (NonEmpty RecordedEvent)
 toRecordedEvent (DynamoReadResult key@(DynamoKey dynamoHashKey firstEventNumber) _version values) = do
   eventBody <- readField Constants.pageBodyKey avB values 
   let streamId = T.drop (T.length Constants.streamDynamoKeyPrefix) dynamoHashKey
-  (eventEntries :: [EventEntry]) <- binaryDeserialize key eventBody
-  let eventEntriesWithEventNumber = zip [firstEventNumber..] eventEntries
+  NonEmptyWrapper eventEntries <- binaryDeserialize key eventBody
+  let eventEntriesWithEventNumber = NonEmpty.zip (firstEventNumber :| [firstEventNumber + 1 ..]) eventEntries
   let recordedEvents = fmap (\(eventNumber, EventEntry {..}) -> RecordedEvent streamId eventNumber (BL.toStrict eventEntryData) (eventTypeToText eventEntryType) (unEventTime eventEntryCreated) eventEntryEventId eventEntryIsJson) eventEntriesWithEventNumber
-  return $ reverse recordedEvents
+  return $ NonEmpty.reverse recordedEvents 
 
 dynamoReadResultProducer :: StreamId -> Maybe Int64 -> Natural -> Producer DynamoReadResult UserProgramStack ()
 dynamoReadResultProducer (StreamId streamId) lastEvent batchSize = do
@@ -246,8 +256,8 @@ dynamoReadResultProducer (StreamId streamId) lastEvent batchSize = do
 readResultToRecordedEventPipe :: Pipe DynamoReadResult RecordedEvent UserProgramStack ()
 readResultToRecordedEventPipe = do
   readResult <- await
-  (recordedEvents :: [RecordedEvent]) <- lift $ toRecordedEvent readResult
-  forM_ recordedEvents yield
+  (recordedEvents :: NonEmpty RecordedEvent) <- lift $ toRecordedEvent readResult
+  forM_ (NonEmpty.toList recordedEvents) yield
 
 recordedEventProducer :: StreamId -> Maybe Int64 -> Natural -> Producer RecordedEvent UserProgramStack ()
 recordedEventProducer streamId lastEvent batchSize = 
