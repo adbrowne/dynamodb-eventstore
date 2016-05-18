@@ -306,11 +306,23 @@ eventNumbersCorrectForMultipleEvents =
     eventNumbers = (recordedEventNumber <$>) <$> result
   in assertEqual "Should return success" (Right [0,1,2]) eventNumbers
 
+sampleUUIDs :: [UUID.UUID]
+sampleUUIDs = 
+  let 
+    (startUUID :: UUID.UUID) = read "75e52b45-f4d5-445b-8dba-d3dc9b2b34b4"
+    (w0,w1,w2,w3) = UUID.toWords startUUID
+    createUUID n = UUID.fromWords w0 w1 w2 (n + w3)
+  in createUUID <$> [0..]
+
+sampleEventIds :: [EventId]
+sampleEventIds = EventId <$> sampleUUIDs
+
 whenIndexing1000ItemsIopsIsMinimal :: Assertion
 whenIndexing1000ItemsIopsIsMinimal = 
   let 
     streamId = "MyStream"
-    requests = replicate 1000 $ postEventRequestProgram $ PostEventRequest { perStreamId = streamId, perExpectedVersion = Nothing, perEvents = (sampleEventEntry :| []) }
+    postProgram eventId = postEventRequestProgram $ PostEventRequest { perStreamId = streamId, perExpectedVersion = Nothing, perEvents = (sampleEventEntry { eventEntryEventId = eventId } :| []) }
+    requests = take 1000 $ postProgram <$> sampleEventIds
     writeState = execProgram "writeEvents" (forM_ requests id) emptyTestState 
     afterIndexState = execProgramUntilIdle "indexer" GlobalFeedWriter.main (view testState writeState)
     expectedWriteState = Map.fromList [
@@ -331,6 +343,50 @@ errorThrownIfTryingToWriteAnEventInAMultipleGap =
     result = evalProgram "writeEvents" (postEventRequestProgram multiPostEventRequest >> postEventRequestProgram subsequentPostEventRequest) emptyTestState
   in assertEqual "Should return failure" (Right EventExists) result
 
+postTwoEventWithTheSameEventId :: DynamoCmdM (Either EventStoreActionError EventWriteResult)
+postTwoEventWithTheSameEventId = 
+  let 
+    postEventRequest = PostEventRequest { perStreamId = "MyStream", perExpectedVersion = Nothing, perEvents = (sampleEventEntry :| []) }
+  in postEventRequestProgram postEventRequest >> postEventRequestProgram postEventRequest
+
+subsequentWriteWithSameEventIdReturnsSuccess :: Assertion
+subsequentWriteWithSameEventIdReturnsSuccess =
+  let 
+    result = evalProgram "test" postTwoEventWithTheSameEventId emptyTestState
+  in assertEqual "Should return success" (Right WriteSuccess) result
+
+subsequentWriteWithSameEventIdDoesNotAppendSecondEvent :: Assertion
+subsequentWriteWithSameEventIdDoesNotAppendSecondEvent =
+  let 
+    program = postTwoEventWithTheSameEventId >> (runExceptT $ getStreamRecordedEvents "MyStream")
+    result = evalProgram "test" program emptyTestState
+  in assertEqual "Should return a single event" (Right 1) (length <$> result)
+
+subsequentWriteWithSameEventIdDoesNotAppendSecondEventWhenFirstWriteHadMultipleEvents :: Assertion
+subsequentWriteWithSameEventIdDoesNotAppendSecondEventWhenFirstWriteHadMultipleEvents =
+  let 
+    streamId = "MyStream"
+    (eventId1:eventId2:_) = sampleEventIds
+    postEvents events =  postEventRequestProgram $ PostEventRequest { perStreamId = streamId, perExpectedVersion = Nothing, perEvents = events }
+    postDoubleEvents = postEvents $ sampleEventEntry { eventEntryEventId = eventId1 } :| [ sampleEventEntry { eventEntryEventId = eventId2 } ]
+    postSubsequentEvent = postEvents $ sampleEventEntry { eventEntryEventId = eventId1 } :| []
+    program = 
+      postDoubleEvents >>
+      postSubsequentEvent >>
+      (runExceptT $ getStreamRecordedEvents "MyStream")
+    result = evalProgram "test" program emptyTestState
+  in assertEqual "Should return the first two events" (Right 2) (length <$> result)
+
+subsequentWriteWithSameEventIdAcceptedIfExpectedVersionIsCorrect :: Assertion
+subsequentWriteWithSameEventIdAcceptedIfExpectedVersionIsCorrect =
+  let 
+    streamId = "MyStream"
+    postEventRequest = PostEventRequest { perStreamId = streamId, perExpectedVersion = Nothing, perEvents = (sampleEventEntry :| []) }
+    secondPost = postEventRequest { perExpectedVersion = Just 0 }
+    program = postEventRequestProgram postEventRequest >> postEventRequestProgram secondPost >> (runExceptT $ getStreamRecordedEvents streamId)
+    result = evalProgram "test" program emptyTestState
+  in assertEqual "Should return two events" (Right 2) (length <$> result)
+
 tests :: [TestTree]
 tests = [
       testProperty "Can round trip FeedEntry via JSON" (\(a :: FeedEntry) -> (Aeson.decode . Aeson.encode) a === Just a),
@@ -342,6 +398,10 @@ tests = [
       testProperty "Scan unpaged should be empty" prop_ScanUnpagedShouldBeEmpty,
       --testProperty "The result of multiple writers matches what they see" todo,
       --testProperty "Get stream items contains event lists without duplicates or gaps" todo,
+      testCase "Unit - Subsequent write with same event id returns success" subsequentWriteWithSameEventIdReturnsSuccess,
+      testCase "Unit - Subsequent write with same event id does not append event - multi event" subsequentWriteWithSameEventIdDoesNotAppendSecondEventWhenFirstWriteHadMultipleEvents,
+      testCase "Unit - Subsequent write with same event id does not append event" subsequentWriteWithSameEventIdDoesNotAppendSecondEvent,
+      testCase "Unit - Subsequent write with same event id accepted if expected version is correct" subsequentWriteWithSameEventIdAcceptedIfExpectedVersionIsCorrect,
       testCase "Unit - Written Events Appear In Read Stream - explicit expected version" $ writtenEventsAppearInReadStream writeEventsWithExplicitExpectedVersions,
       testCase "Unit - Written Events Appear In Read Stream - explicit expected version" $ writtenEventsAppearInReadStream writeEventsWithNoExpectedVersions,
       testCase "Unit - Cannot write event if previous one does not exist" cannotWriteEventsOutOfOrder,

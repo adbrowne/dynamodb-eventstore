@@ -170,9 +170,16 @@ ensureExpectedVersion (DynamoKey streamId expectedEventNumber) = do
 dynamoReadResultToEventNumber :: DynamoReadResult -> Int64
 dynamoReadResultToEventNumber (DynamoReadResult (DynamoKey _key eventNumber) _version _values) = eventNumber
 
+dynamoReadResultToEventId :: DynamoReadResult -> ExceptT EventStoreActionError DynamoCmdM EventId
+dynamoReadResultToEventId readResult = do
+  recordedEvents <- toRecordedEvent readResult
+  let lastEvent = last recordedEvents -- todo not total
+  return (recordedEventId lastEvent)
+
 postEventRequestProgram :: PostEventRequest -> DynamoCmdM (Either EventStoreActionError EventWriteResult)
 postEventRequestProgram (PostEventRequest sId ev eventEntries) = runExceptT $ do
-  dynamoKeyOrError <- getDynamoKey sId ev
+  let eventId = (eventEntryEventId . NonEmpty.head) eventEntries
+  dynamoKeyOrError <- getDynamoKey sId ev eventId
   case dynamoKeyOrError of Left a -> return a
                            Right dynamoKey -> writeMyEvent dynamoKey
   where
@@ -183,15 +190,18 @@ postEventRequestProgram (PostEventRequest sId ev eventEntries) = runExceptT $ do
                    HM.insert Constants.eventCountKey (set avN (Just ((showt . length) eventEntries)) attributeValue)
       writeResult <- GlobalFeedWriter.dynamoWriteWithRetry dynamoKey values 0 
       return $ toEventResult writeResult
-    getDynamoKey :: Text -> Maybe Int64 -> UserProgramStack (Either EventWriteResult DynamoKey)
-    getDynamoKey streamId Nothing = do
+    getDynamoKey :: Text -> Maybe Int64 -> EventId -> UserProgramStack (Either EventWriteResult DynamoKey)
+    getDynamoKey streamId Nothing eventId = do
       let dynamoHashKey = Constants.streamDynamoKeyPrefix <> streamId
       readResults <- queryBackward' dynamoHashKey 1 Nothing
       let lastEvent = headMay readResults
       let lastEventNumber = maybe (-1) dynamoReadResultToEventNumber lastEvent
-      let eventVersion = lastEventNumber + 1
-      return $ Right $ DynamoKey dynamoHashKey eventVersion
-    getDynamoKey streamId (Just expectedVersion) = do
+      lastEventIdIsNotTheSame <- maybe (return True) (\x -> (\y -> y /= eventId) <$> dynamoReadResultToEventId x) lastEvent
+      if lastEventIdIsNotTheSame then
+        let eventVersion = lastEventNumber + 1
+        in return $ Right $ DynamoKey dynamoHashKey eventVersion
+      else return $ Left WriteSuccess
+    getDynamoKey streamId (Just expectedVersion) _eventId = do
       let dynamoHashKey = Constants.streamDynamoKeyPrefix <> streamId
       expectedVersionOk <- ensureExpectedVersion $ DynamoKey dynamoHashKey expectedVersion
       if expectedVersionOk then do
