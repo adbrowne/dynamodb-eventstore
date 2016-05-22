@@ -186,12 +186,12 @@ app process = do
           <*> runParser positiveInt64Parser "Invalid Event Number" eventNumber
   get "/streams/:streamId" $ do
     streamId <- param "streamId"
-    let mStreamId = notEmpty streamId
-    toResult . fmap (process . ReadStream) $
-          ReadStreamRequest
-          <$> mStreamId
-          <*> Right Nothing
-  get "/all" $ 
-    toResult . fmap (process . ReadAll) $
-          pure ReadAllRequest
+    if (streamId == "$all") then
+      toResult . fmap (process . ReadAll) $
+            pure ReadAllRequest
+    else
+      toResult . fmap (process . ReadStream) $
+            ReadStreamRequest
+            <$> notEmpty streamId
+            <*> Right Nothing
   notFound $ status status404
