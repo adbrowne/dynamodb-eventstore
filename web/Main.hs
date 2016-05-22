@@ -5,10 +5,12 @@
 module Main where
 
 import           BasicPrelude
+import           Control.Lens
 import           System.Exit
 import           Control.Monad.Except
 import           Network.Wai.Handler.Warp
 import           Web.Scotty
+import           System.IO (stdout)
 import           DynamoDbEventStore.Webserver (app)
 import           Control.Concurrent
 import           DynamoDbEventStore.AmazonkaInterpreter
@@ -19,6 +21,7 @@ import qualified DynamoDbEventStore.GlobalFeedWriter as GlobalFeedWriter
 import           Options.Applicative as Opt
 import qualified Data.Text               as T
 import           Control.Monad.Trans.AWS
+import qualified Control.Monad.Trans.AWS as AWS
 import           Network.AWS.DynamoDB
 
 runDynamoLocal :: Env -> MyAwsStack a -> IO (Either InterpreterError a)
@@ -97,7 +100,8 @@ data ApplicationError =
 start :: Config -> ExceptT ApplicationError IO ()
 start parsedConfig = do
   let tableName = (T.pack . configTableName) parsedConfig
-  env <- newEnv Sydney Discover
+  logger <- liftIO $ newLogger AWS.Error stdout
+  env <- (set envLogger logger) <$> newEnv Sydney Discover
   let interperter = (if configLocalDynamoDB parsedConfig then runDynamoLocal else runDynamoCloud) env
   let runner = toExceptT interperter
   tableAlreadyExists <- (toApplicationError interperter) $ doesTableExist tableName
