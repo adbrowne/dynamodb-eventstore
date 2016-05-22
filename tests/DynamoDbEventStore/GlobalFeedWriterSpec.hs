@@ -96,14 +96,14 @@ globalFeedFromUploadList =
         newValue = maybe eventVersions (Seq.>< eventVersions) $ Map.lookup stream s
       in Map.insert stream newValue s
 
-globalRecordedEventListToMap :: [EventKey] -> Map.Map Text (Seq.Seq Int64)
+globalRecordedEventListToMap :: [RecordedEvent] -> Map.Map Text (Seq.Seq Int64)
 globalRecordedEventListToMap = 
   foldl' acc Map.empty
   where
-    acc :: Map.Map Text (Seq.Seq Int64) -> EventKey -> Map.Map Text (Seq.Seq Int64)
-    acc s (EventKey (StreamId stream, number)) =
-      let newValue = maybe (Seq.singleton number) (Seq.|> number) $ Map.lookup stream s
-      in Map.insert stream newValue s
+    acc :: Map.Map Text (Seq.Seq Int64) -> RecordedEvent -> Map.Map Text (Seq.Seq Int64)
+    acc s RecordedEvent {..} =
+      let newValue = maybe (Seq.singleton recordedEventNumber) (Seq.|> recordedEventNumber) $ Map.lookup recordedEventStreamId s
+      in Map.insert recordedEventStreamId newValue s
 
 prop_EventShouldAppearInGlobalFeedInStreamOrder :: UploadList -> QC.Property
 prop_EventShouldAppearInGlobalFeedInStreamOrder (UploadList uploadList) =

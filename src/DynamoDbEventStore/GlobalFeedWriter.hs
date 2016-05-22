@@ -34,7 +34,8 @@ data EventStoreActionError =
   EventStoreActionErrorJsonDecodeError String |
   EventStoreActionErrorBodyDecode DynamoKey String |
   EventStoreActionErrorEventDoesNotExist DynamoKey | 
-  EventStoreActionErrorOnWritingPage Int
+  EventStoreActionErrorOnWritingPage Int | 
+  EventStoreActionErrorCouldNotFindEvent EventKey
   deriving (Show, Eq)
   
 data FeedEntry = FeedEntry {

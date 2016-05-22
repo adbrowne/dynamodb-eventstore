@@ -109,7 +109,7 @@ instance Serialize.Serialize EventType where
 data EventStoreActionResult =
   PostEventResult (Either EventStoreActionError EventWriteResult)
   | ReadStreamResult (Either EventStoreActionError [RecordedEvent])
-  | ReadAllResult (Either EventStoreActionError [EventKey])
+  | ReadAllResult (Either EventStoreActionError [RecordedEvent])
   | ReadEventResult (Either EventStoreActionError (Maybe RecordedEvent))
   | TextResult Text
   deriving (Show)
@@ -304,5 +304,16 @@ getPagesAfter startPage = do
                    forM_ pageKeys yield >> getPagesAfter (startPage + 1)
                  Nothing        -> return ()
 
-getReadAllRequestProgram :: ReadAllRequest -> DynamoCmdM (Either EventStoreActionError [EventKey])
-getReadAllRequestProgram ReadAllRequest = runExceptT $ P.toListM (getPagesAfter 0)
+lookupEvent :: StreamId -> Int64 -> UserProgramStack (Maybe RecordedEvent)
+lookupEvent streamId eventNumber = do
+  (events :: [RecordedEvent]) <- P.toListM $ recordedEventProducer streamId (Just $ eventNumber + 1) 1
+  return $ find ((== eventNumber) . recordedEventNumber) events
+
+lookupEventKey :: Pipe EventKey RecordedEvent UserProgramStack ()
+lookupEventKey = forever $ do
+  (eventKey@(EventKey(streamId, eventNumber))) <- await
+  (maybeRecordedEvent :: Maybe RecordedEvent) <- lift $ lookupEvent streamId eventNumber
+  maybe (throwError $ EventStoreActionErrorCouldNotFindEvent eventKey) yield maybeRecordedEvent
+
+getReadAllRequestProgram :: ReadAllRequest -> DynamoCmdM (Either EventStoreActionError [RecordedEvent])
+getReadAllRequestProgram ReadAllRequest = runExceptT $ P.toListM (getPagesAfter 0 >-> lookupEventKey)

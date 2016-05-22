@@ -109,7 +109,13 @@ eventStoreActionResultToText AtomJsonEncoding (ReadEventResult (Right Nothing)) 
 eventStoreActionResultToText AtomJsonEncoding (ReadStreamResult (Right xs)) = 
   let 
     streamId = StreamId "todo stream name"
-    sampleTime = parseTimeOrError True defaultTimeLocale rfc822DateFormat "Sun, 08 May 2016 12:49:41 +0000"
+    sampleTime = parseTimeOrError True defaultTimeLocale rfc822DateFormat "Sun, 08 May 2016 12:49:41 +0000" -- todo
+    buildFeed' = recordedEventsToFeed baseUri streamId sampleTime
+  in raw . encodePretty . jsonFeed . buildFeed' $ xs
+eventStoreActionResultToText AtomJsonEncoding (ReadAllResult (Right xs)) = 
+  let 
+    streamId = StreamId "%24all"
+    sampleTime = parseTimeOrError True defaultTimeLocale rfc822DateFormat "Sun, 08 May 2016 12:49:41 +0000" -- todo
     buildFeed' = recordedEventsToFeed baseUri streamId sampleTime
   in raw . encodePretty . jsonFeed . buildFeed' $ xs
    
