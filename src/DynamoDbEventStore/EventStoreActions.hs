@@ -112,6 +112,7 @@ data EventStoreActionResult =
   | ReadAllResult (Either EventStoreActionError [EventKey])
   | ReadEventResult (Either EventStoreActionError (Maybe RecordedEvent))
   | TextResult Text
+  deriving (Show)
 
 data PostEventRequest = PostEventRequest {
    perStreamId        :: Text,

@@ -9,10 +9,12 @@ import           Web.Scotty.Trans
 
 import           Control.Arrow             (left)
 import           Data.Attoparsec.Text.Lazy
+import qualified Data.Attoparsec.ByteString as APBS
 import           Data.Char                 (isDigit)
 import           Control.Monad.Reader
 import qualified Data.UUID as UUID
 import qualified Data.Text.Lazy            as TL
+import qualified Data.Text            as T
 import qualified Data.Text.Lazy.Encoding   as TL
 import qualified Data.Vector               as V
 import           Data.List.NonEmpty (NonEmpty (..))
@@ -20,6 +22,8 @@ import           Data.Time.Clock (UTCTime)
 import           Data.Time.Format
 import qualified Data.Time.Clock as Time
 import           Data.Aeson
+import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Types as Aeson
 import           Network.HTTP.Types.Status
 import           DynamoDbEventStore.EventStoreActions
 import           DynamoDbEventStore.AmazonkaInterpreter
@@ -102,11 +106,18 @@ readEventResultJsonValue baseUri recordedEvent =
     title = "title" .= (eventNumber <>  "@" <> streamId)
     updated = "updated" .= (formatTime defaultTimeLocale (iso8601DateFormat (Just "%H:%M:%SZ")) eventCreated)
     summary = "summary" .= recordedEventType recordedEvent
-    content = "content" .= object [
-        "eventStreamId" .= recordedEventStreamId recordedEvent 
+    dataField :: Maybe Aeson.Pair = 
+      if recordedEventIsJson recordedEvent then
+        let 
+          binaryData = recordedEventData recordedEvent
+        in (\v -> ("data" :: Text, v)) <$> (APBS.maybeResult  (APBS.parse Aeson.json binaryData))
+      else Nothing
+    addDataField Nothing xs = xs
+    addDataField (Just x) xs = x:xs
+    content = "content" .= (object $ addDataField dataField [ 
+        "eventStreamId" .= recordedEventStreamId recordedEvent
       , "eventNumber" .= recordedEventNumber recordedEvent
-      , "eventType" .= recordedEventType recordedEvent
-      ]
+      , "eventType" .= recordedEventType recordedEvent ])
     links = "links" .= (Array . V.fromList) [
             object [ "relation" .= ("edit" :: Text), "uri" .= eventUri]
          ,  object [ "relation" .= ("alternative" :: Text), "uri" .= eventUri]
@@ -118,7 +129,7 @@ eventStoreActionResultToText _ (TextResult r) = (raw . TL.encodeUtf8 . TL.fromSt
 eventStoreActionResultToText AtomJsonEncoding (PostEventResult r) = (raw . TL.encodeUtf8 . TL.fromStrict) $ show r
 eventStoreActionResultToText AtomJsonEncoding (ReadEventResult (Right (Just r))) = (raw . encode . (readEventResultJsonValue "http://localhost:2114")) r
 eventStoreActionResultToText AtomJsonEncoding (ReadEventResult (Right Nothing)) = (status $ mkStatus 404 (toByteString "Not Found")) >> raw "{}"
-eventStoreActionResultToText AtomJsonEncoding _ = error "todo EventStoreActionResult"
+eventStoreActionResultToText AtomJsonEncoding s = error $ "todo EventStoreActionResult" <> T.unpack (show s)
 
 data ResponseEncoding = AtomJsonEncoding
 
@@ -160,7 +171,7 @@ app process = do
           <*> (EventType <$> eventType)
           <*> (EventId <$> eventId)
           <*> pure (EventTime eventTime)
-          <*> pure False
+          <*> pure True
     toResult . fmap (process . PostEvent) $
           PostEventRequest
           <$> pure streamId
