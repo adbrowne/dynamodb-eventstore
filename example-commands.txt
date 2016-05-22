@@ -1,0 +1,9 @@
+post event:
+ensure es-eventid is unique
+curl -i -d @event.json "http://127.0.0.1:2113/streams/newstream" -H "Content-Type:application/json" -H "ES-EventType: blah" -H "ES-EventId: facecc99-944a-45b9-a1f2-e45d5bc636b9"
+
+read stream:
+curl -i http://127.0.0.1:2114/streams/newstream
+
+read all events:
+
