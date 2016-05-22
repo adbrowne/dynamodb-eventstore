@@ -23,6 +23,7 @@ library
                        DynamoDbEventStore.EventStoreActions,
                        DynamoDbEventStore.GlobalFeedWriter,
                        DynamoDbEventStore.Constants,
+                       DynamoDbEventStore.Feed,
                        DynamoDbEventStore.AmazonkaInterpreter
   extensions:          NoImplicitPrelude
   build-depends:       base >=4.8 && <4.9,
@@ -36,6 +37,7 @@ library
                        either,
                        hashable,
                        uuid,
+                       feed,
                        errors,
                        containers >= 0.5,
                        http-types >= 0.8,
@@ -47,6 +49,7 @@ library
                        bytestring >= 0.10,
                        time >= 1.4,
                        aeson >= 0.8,
+                       aeson-pretty,
                        random >= 1.1,
                        transformers >= 0.4,
                        mtl,

@@ -9,25 +9,23 @@ import           Web.Scotty.Trans
 
 import           Control.Arrow             (left)
 import           Data.Attoparsec.Text.Lazy
-import qualified Data.Attoparsec.ByteString as APBS
 import           Data.Char                 (isDigit)
 import           Control.Monad.Reader
 import qualified Data.UUID as UUID
 import qualified Data.Text.Lazy            as TL
 import qualified Data.Text            as T
 import qualified Data.Text.Lazy.Encoding   as TL
-import qualified Data.Vector               as V
 import           Data.List.NonEmpty (NonEmpty (..))
 import           Data.Time.Clock (UTCTime)
 import           Data.Time.Format
 import qualified Data.Time.Clock as Time
 import           Data.Aeson
-import qualified Data.Aeson as Aeson
-import qualified Data.Aeson.Types as Aeson
+import           Data.Aeson.Encode.Pretty
 import           Network.HTTP.Types.Status
 import           DynamoDbEventStore.EventStoreActions
 import           DynamoDbEventStore.AmazonkaInterpreter
 import           DynamoDbEventStore.EventStoreCommands
+import           DynamoDbEventStore.Feed
 
 data ExpectedVersion = ExpectedVersion Int
   deriving (Show)
@@ -96,39 +94,25 @@ positiveInt64Parser =
      | a <= maxInt64 = return (fromInteger a)
      | otherwise = fail "too large"
 
-readEventResultJsonValue :: Text -> RecordedEvent -> Value
-readEventResultJsonValue baseUri recordedEvent = 
-  let
-    streamId = recordedEventStreamId recordedEvent
-    eventNumber = (show . recordedEventNumber) recordedEvent 
-    eventCreated = recordedEventCreated recordedEvent
-    eventUri = baseUri <> "/" <> streamId <> "/" <> eventNumber
-    title = "title" .= (eventNumber <>  "@" <> streamId)
-    updated = "updated" .= (formatTime defaultTimeLocale (iso8601DateFormat (Just "%H:%M:%SZ")) eventCreated)
-    summary = "summary" .= recordedEventType recordedEvent
-    dataField :: Maybe Aeson.Pair = 
-      if recordedEventIsJson recordedEvent then
-        let 
-          binaryData = recordedEventData recordedEvent
-        in (\v -> ("data" :: Text, v)) <$> (APBS.maybeResult  (APBS.parse Aeson.json binaryData))
-      else Nothing
-    addDataField Nothing xs = xs
-    addDataField (Just x) xs = x:xs
-    content = "content" .= (object $ addDataField dataField [ 
-        "eventStreamId" .= recordedEventStreamId recordedEvent
-      , "eventNumber" .= recordedEventNumber recordedEvent
-      , "eventType" .= recordedEventType recordedEvent ])
-    links = "links" .= (Array . V.fromList) [
-            object [ "relation" .= ("edit" :: Text), "uri" .= eventUri]
-         ,  object [ "relation" .= ("alternative" :: Text), "uri" .= eventUri]
-      ]
-  in object [title, summary, content, links, updated]
+readEventResultJsonValue :: RecordedEvent -> Value
+readEventResultJsonValue recordedEvent = 
+  jsonEntry $ recordedEventToFeedEntry baseUri recordedEvent
+
+baseUri :: Text
+baseUri = "http://localhost:2114"
 
 eventStoreActionResultToText :: (MonadIO m, ScottyError e) => ResponseEncoding -> EventStoreActionResult -> ActionT e m ()
 eventStoreActionResultToText _ (TextResult r) = (raw . TL.encodeUtf8 . TL.fromStrict) r
 eventStoreActionResultToText AtomJsonEncoding (PostEventResult r) = (raw . TL.encodeUtf8 . TL.fromStrict) $ show r
-eventStoreActionResultToText AtomJsonEncoding (ReadEventResult (Right (Just r))) = (raw . encode . (readEventResultJsonValue "http://localhost:2114")) r
+eventStoreActionResultToText AtomJsonEncoding (ReadEventResult (Right (Just r))) = (raw . encodePretty . readEventResultJsonValue) r
 eventStoreActionResultToText AtomJsonEncoding (ReadEventResult (Right Nothing)) = (status $ mkStatus 404 (toByteString "Not Found")) >> raw "{}"
+eventStoreActionResultToText AtomJsonEncoding (ReadStreamResult (Right xs)) = 
+  let 
+    streamId = StreamId "todo stream name"
+    sampleTime = parseTimeOrError True defaultTimeLocale rfc822DateFormat "Sun, 08 May 2016 12:49:41 +0000"
+    buildFeed' = recordedEventsToFeed baseUri streamId sampleTime
+  in raw . encodePretty . jsonFeed . buildFeed' $ xs
+   
 eventStoreActionResultToText AtomJsonEncoding s = error $ "todo EventStoreActionResult" <> T.unpack (show s)
 
 data ResponseEncoding = AtomJsonEncoding
