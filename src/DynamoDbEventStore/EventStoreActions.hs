@@ -167,7 +167,7 @@ readField =
 ensureExpectedVersion :: DynamoKey -> UserProgramStack Bool
 ensureExpectedVersion (DynamoKey _streamId (-1)) = return True
 ensureExpectedVersion (DynamoKey streamId expectedEventNumber) = do
-  result <- queryBackward' streamId 1 (Just $ expectedEventNumber + 1)
+  result <- queryTable' QueryDirectionBackward streamId 1 (Just $ expectedEventNumber + 1)
   checkEventNumber result
   where 
     checkEventNumber [] = return False
@@ -201,7 +201,7 @@ postEventRequestProgram (PostEventRequest sId ev eventEntries) = runExceptT $ do
     getDynamoKey :: Text -> Maybe Int64 -> EventId -> UserProgramStack (Either EventWriteResult DynamoKey)
     getDynamoKey streamId Nothing eventId = do
       let dynamoHashKey = Constants.streamDynamoKeyPrefix <> streamId
-      readResults <- queryBackward' dynamoHashKey 1 Nothing
+      readResults <- queryTable' QueryDirectionBackward dynamoHashKey 1 Nothing
       let lastEvent = headMay readResults
       let lastEventNumber = maybe (-1) dynamoReadResultToEventNumber lastEvent
       lastEventIdIsNotTheSame <- maybe (return True) (\x -> (\y -> y /= eventId) <$> dynamoReadResultToEventId x) lastEvent
@@ -242,7 +242,7 @@ toRecordedEvent (DynamoReadResult key@(DynamoKey dynamoHashKey firstEventNumber)
 
 dynamoReadResultProducer :: StreamId -> Maybe Int64 -> Natural -> Producer DynamoReadResult UserProgramStack ()
 dynamoReadResultProducer (StreamId streamId) lastEvent batchSize = do
-  (firstBatch :: [DynamoReadResult]) <- lift $ queryBackward' (Constants.streamDynamoKeyPrefix <> streamId) batchSize lastEvent
+  (firstBatch :: [DynamoReadResult]) <- lift $ queryTable' QueryDirectionBackward (Constants.streamDynamoKeyPrefix <> streamId) batchSize lastEvent
   yieldResultsAndLoop firstBatch
   where
     yieldResultsAndLoop [] = return ()

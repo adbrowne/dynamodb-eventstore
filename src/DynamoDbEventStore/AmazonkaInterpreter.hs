@@ -110,18 +110,19 @@ runCmd tn (ReadFromDynamo' eventKey n) = do
       in 
         if item == mempty then return Nothing
         else eitherToExcept (Just <$> toDynamoReadResult item)
-runCmd tn (QueryBackward' streamId limit exclusiveStartKey n) =
+runCmd tn (QueryTable' direction streamId limit exclusiveStartKey n) =
   getBackward
     where
       setStartKey Nothing = id
       setStartKey (Just startKey) = (set qExclusiveStartKey (HM.fromList [("streamId", set avS (Just streamId) attributeValue),("eventNumber", set avN (Just $ show startKey) attributeValue)]))
+      scanForward = direction == QueryDirectionForward
       getBackward = do
         resp <- send $
                 query tn
                 & (setStartKey exclusiveStartKey)
                 & (set qConsistentRead (Just True))
                 & (set qLimit (Just limit))
-                & (set qScanIndexForward (Just False))
+                & (set qScanIndexForward (Just scanForward))
                 & (set qExpressionAttributeValues (HM.fromList [(":streamId",set avS (Just streamId) attributeValue)]))
                 & (set qKeyConditionExpression (Just $ fieldStreamId <> " = :streamId"))
         let items :: [HM.HashMap Text AttributeValue] = view qrsItems resp

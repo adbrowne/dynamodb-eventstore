@@ -86,7 +86,7 @@ tests evalProgram =
           actions = do
             _ <- writeToDynamo' (DynamoKey testStreamId 0) sampleValuesNeedsPaging 0
             _ <- writeToDynamo' (DynamoKey testStreamId 1) sampleValuesNeedsPaging 0
-            queryBackward' testStreamId 10 Nothing
+            queryTable' QueryDirectionBackward testStreamId 10 Nothing
           evt = evalProgram actions
           expected = Right [
             DynamoReadResult (DynamoKey testStreamId 1) 0 sampleValuesNeedsPaging,
@@ -99,7 +99,7 @@ tests evalProgram =
           actions = do
             _ <- writeToDynamo' (DynamoKey testStreamId 0) sampleValuesNeedsPaging 0
             _ <- writeToDynamo' (DynamoKey testStreamId 1) sampleValuesNeedsPaging 0
-            queryBackward' testStreamId 1 Nothing
+            queryTable' QueryDirectionBackward testStreamId 1 Nothing
           evt = evalProgram actions
           expected = Right [
             DynamoReadResult (DynamoKey testStreamId 1) 0 sampleValuesNeedsPaging ]
@@ -111,11 +111,23 @@ tests evalProgram =
           actions = do
             _ <- writeToDynamo' (DynamoKey testStreamId 0) sampleValuesNeedsPaging 0
             _ <- writeToDynamo' (DynamoKey testStreamId 1) sampleValuesNeedsPaging 0
-            queryBackward' testStreamId 10 (Just 1)
+            queryTable' QueryDirectionBackward testStreamId 10 (Just 1)
           evt = evalProgram actions
           expected = Right [
             DynamoReadResult (DynamoKey testStreamId 0) 0 sampleValuesNeedsPaging ]
         in do
           r <- evt
           assertEqual "Only the 0th event is returned" expected r
+    , testCase "Can read events forward starting at offset" $
+        let
+          actions = do
+            _ <- writeToDynamo' (DynamoKey testStreamId 0) sampleValuesNeedsPaging 0
+            _ <- writeToDynamo' (DynamoKey testStreamId 1) sampleValuesNeedsPaging 0
+            queryTable' QueryDirectionForward testStreamId 10 (Just 0)
+          evt = evalProgram actions
+          expected = Right [
+            DynamoReadResult (DynamoKey testStreamId 1) 0 sampleValuesNeedsPaging ]
+        in do
+          r <- evt
+          assertEqual "Only the 1st event is returned" expected r
   ]

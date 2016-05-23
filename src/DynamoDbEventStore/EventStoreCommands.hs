@@ -15,11 +15,12 @@ module DynamoDbEventStore.EventStoreCommands(
   readFromDynamo',
   wait',
   scanNeedsPaging',
-  queryBackward',
+  queryTable',
   setPulseStatus',
   readField,
   DynamoCmdM,
   DynamoVersion,
+  QueryDirection(..),
   RecordedEvent(..),
   EventKey(..),
   EventId(..),
@@ -152,6 +153,11 @@ data LogLevel =
   Warn |
   Error
 
+data QueryDirection = 
+  QueryDirectionForward
+  | QueryDirectionBackward
+  deriving (Show, Eq)
+
 data DynamoCmd next =
   ReadFromDynamo'
     DynamoKey
@@ -161,7 +167,8 @@ data DynamoCmd next =
     DynamoValues
     DynamoVersion
     (DynamoWriteResult -> next) |
-  QueryBackward'
+  QueryTable'
+    QueryDirection
     Text -- Hash Key
     Natural -- max events to retrieve
     (Maybe Int64) -- starting event, Nothing means start at head

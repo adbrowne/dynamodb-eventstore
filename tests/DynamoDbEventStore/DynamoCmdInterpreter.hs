@@ -165,14 +165,18 @@ getUptoItem p =
             | p x = Nothing
             | otherwise = Just (x, xs)
 
-queryBackward :: Text -> Natural -> Maybe Int64 -> ([DynamoReadResult] -> n) -> InterpreterOperationStack m a n
-queryBackward streamId maxEvents startEvent r =  do
+queryTable :: QueryDirection -> Text -> Natural -> Maybe Int64 -> ([DynamoReadResult] -> n) -> InterpreterOperationStack m a n
+queryTable direction streamId maxEvents startEvent r =  do
   results <- uses (loopStateTestState . testStateDynamo) runQuery
   addIops TableRead IopsQuery $ length results
   return $ r results 
   where 
-    runQuery table = take (fromIntegral maxEvents) $ reverse $ eventsBeforeStart startEvent table
+    runQuery table = take (fromIntegral maxEvents) $ eventStream direction table 
     dynamoReadResultToEventNumber (DynamoReadResult (DynamoKey _key eventNumber) _version _values) = eventNumber
+    eventStream QueryDirectionBackward table = reverse $ eventsBeforeStart startEvent table
+    eventStream QueryDirectionForward  table = eventsAfter startEvent table
+    eventsAfter Nothing table = allEvents table
+    eventsAfter (Just start) table = dropWhile (\a -> dynamoReadResultToEventNumber a <= start) (allEvents table)
     eventsBeforeStart Nothing table = allEvents table
     eventsBeforeStart (Just start) table = getUptoItem (\a -> dynamoReadResultToEventNumber a >= start) (allEvents table)
     allEvents table = 
@@ -212,7 +216,7 @@ setPulseStatus isActive = do
 runCmd :: DynamoCmdMFree r -> InterpreterOperationStack m r (Either r (DynamoCmdMFree r))
 runCmd (Free.Pure r) = return $ Left r
 runCmd (Free.Free (Wait' _ r)) = Right <$> return r
-runCmd (Free.Free (QueryBackward' key maxEvents start r)) = Right <$> queryBackward key maxEvents start r
+runCmd (Free.Free (QueryTable' direction key maxEvents start r)) = Right <$> queryTable direction key maxEvents start r
 runCmd (Free.Free (WriteToDynamo' key values version r)) = Right <$> writeToDynamo key values version r
 runCmd (Free.Free (ReadFromDynamo' key r)) = Right <$> getReadResult key r
 runCmd (Free.Free (Log' _ msg r)) = Right <$> (addLog msg >> return r)

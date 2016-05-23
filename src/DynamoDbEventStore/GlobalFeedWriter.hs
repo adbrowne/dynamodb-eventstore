@@ -197,7 +197,7 @@ itemToJsonByteString = BL.toStrict . Aeson.encode . Aeson.toJSON
 getPreviousEntryEventNumber :: DynamoKey -> GlobalFeedWriterStack Int64
 getPreviousEntryEventNumber (DynamoKey _streamId (0)) = return (-1)
 getPreviousEntryEventNumber (DynamoKey streamId eventNumber) = do
-  result <- lift $ queryBackward' streamId 1 (Just $ eventNumber)
+  result <- lift $ queryTable' QueryDirectionBackward streamId 1 (Just $ eventNumber)
   return $ getEventNumber result
   where 
     getEventNumber [] = error "Could not find previous event"
