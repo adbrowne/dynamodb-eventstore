@@ -12,6 +12,7 @@ import           Test.Tasty
 import           Test.Tasty.QuickCheck((===),testProperty)
 import qualified Test.Tasty.QuickCheck as QC
 import           Data.Maybe (fromJust)
+import           Data.Foldable hiding (concat)
 import qualified Data.UUID as UUID
 import           Test.Tasty.HUnit
 import           Control.Monad.State
@@ -21,10 +22,12 @@ import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
 import           Data.Either.Combinators
 import           Data.Time.Format
+import qualified Data.Text             as T
 import qualified Data.Text.Encoding             as T
 import qualified Data.ByteString.Lazy        as BL
 import qualified Data.Text.Lazy.Encoding    as TL
 import qualified Data.Map.Strict as Map
+import           Data.Map.Strict((!))
 import qualified Data.Sequence as Seq
 import qualified Data.Aeson as Aeson
 import qualified Data.Set as Set
@@ -117,6 +120,27 @@ prop_EventShouldAppearInGlobalFeedInStreamOrder (UploadList uploadList) =
      where
        check (_, testRunState) = QC.forAll (runReadAllProgram testRunState) (\feedItems -> (globalRecordedEventListToMap <$> feedItems) === (Right $ globalFeedFromUploadList uploadList))
        runReadAllProgram = runProgramGenerator "readAllRequestProgram" (getReadAllRequestProgram ReadAllRequest)
+
+prop_CanReadAnySectionOfAStreamForward :: UploadList -> QC.Property
+prop_CanReadAnySectionOfAStreamForward (UploadList uploadList) =
+  let
+    writeState = execProgram "publisher" (publisher uploadList) emptyTestState 
+    expectedStreamEvents = globalFeedFromUploadList uploadList
+    readStreamEvents streamId startEvent maxItems = (recordedEventNumber <$>) <$> evalProgram "ReadStream" (getReadStreamRequestProgram (ReadStreamRequest streamId startEvent maxItems FeedDirectionForward)) (view testState writeState)
+    expectedEvents streamId startEvent maxItems = take (fromIntegral maxItems) $ drop (fromMaybe 0 startEvent) $ toList $ expectedStreamEvents ! streamId
+    check (streamId, startEvent, maxItems) = readStreamEvents streamId (fromIntegral <$> startEvent) maxItems === Right (expectedEvents streamId startEvent maxItems)
+  in QC.forAll ((,,) <$> (QC.elements . Map.keys) expectedStreamEvents <*> QC.arbitrary <*> QC.arbitrary) check
+
+prop_CanReadAnySectionOfAStreamBackward :: UploadList -> QC.Property
+prop_CanReadAnySectionOfAStreamBackward (UploadList uploadList) =
+  let
+    writeState = execProgram "publisher" (publisher uploadList) emptyTestState 
+    expectedStreamEvents = globalFeedFromUploadList uploadList
+    readStreamEvents streamId startEvent maxItems = (recordedEventNumber <$>) <$> evalProgram "ReadStream" (getReadStreamRequestProgram (ReadStreamRequest streamId startEvent maxItems FeedDirectionBackward)) (view testState writeState)
+    expectedEvents streamId startEvent maxItems = takeWhile (> startEvent - fromIntegral maxItems) $ dropWhile (> startEvent) $ reverse $ toList $ expectedStreamEvents ! streamId
+    -- expectedEvents streamId startEvent _maxItems = dropWhile (> startEvent) $ reverse $ toList $ expectedStreamEvents ! streamId
+    check (streamId, QC.Positive startEvent, maxItems) = QC.counterexample (T.unpack $ show $ view testState writeState) $ readStreamEvents streamId (Just startEvent) maxItems === Right (expectedEvents streamId (fromIntegral startEvent) maxItems)
+  in QC.forAll ((,,) <$> (QC.elements . Map.keys) expectedStreamEvents <*> QC.arbitrary <*> QC.arbitrary) check
 
 expectedEventsFromUploadList :: UploadList -> [RecordedEvent]
 expectedEventsFromUploadList (UploadList uploadItems) = do
@@ -396,6 +420,8 @@ tests = [
       testProperty "Conflicting writes will not succeed" prop_ConflictingWritesWillNotSucceed,
       testProperty "All Events can be read individually" prop_AllEventsCanBeReadIndividually,
       testProperty "Scan unpaged should be empty" prop_ScanUnpagedShouldBeEmpty,
+      testProperty "Can read any section of a stream forward" prop_CanReadAnySectionOfAStreamForward,
+      testProperty "Can read any section of a stream backward" prop_CanReadAnySectionOfAStreamBackward,
       --testProperty "The result of multiple writers matches what they see" todo,
       --testProperty "Get stream items contains event lists without duplicates or gaps" todo,
       testCase "Unit - Subsequent write with same event id returns success" subsequentWriteWithSameEventIdReturnsSuccess,

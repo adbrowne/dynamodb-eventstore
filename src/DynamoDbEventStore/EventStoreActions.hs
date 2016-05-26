@@ -145,7 +145,7 @@ instance QC.Arbitrary PostEventRequest where
                                <*> QC.arbitrary
                                <*> ((:|) <$> QC.arbitrary <*> QC.arbitrary)
 
-data FeedDirection = FeedDirectionFoward | FeedDirectionBackward
+data FeedDirection = FeedDirectionForward | FeedDirectionBackward
   deriving (Eq, Show)
 
 data ReadStreamRequest = ReadStreamRequest {
@@ -252,10 +252,10 @@ dynamoReadResultProducer (StreamId streamId) lastEvent batchSize = do
   yieldResultsAndLoop firstBatch
   where
     yieldResultsAndLoop [] = return ()
-    yieldResultsAndLoop [recordedEvent] = do
-      yield recordedEvent
-      let lastEventNumber = dynamoReadResultToEventNumber recordedEvent
-      dynamoReadResultProducer (StreamId streamId) (Just $ lastEventNumber - 1) batchSize
+    yieldResultsAndLoop [readResult] = do
+      yield readResult
+      let lastEventNumber = dynamoReadResultToEventNumber readResult
+      dynamoReadResultProducer (StreamId streamId) (Just $ lastEventNumber) batchSize
     yieldResultsAndLoop (x:xs) = do
       yield x
       yieldResultsAndLoop xs
@@ -265,6 +265,7 @@ readResultToRecordedEventPipe = do
   readResult <- await
   (recordedEvents :: NonEmpty RecordedEvent) <- lift $ toRecordedEvent readResult
   forM_ (NonEmpty.toList recordedEvents) yield
+  readResultToRecordedEventPipe
 
 recordedEventProducer :: StreamId -> Maybe Int64 -> Natural -> Producer RecordedEvent UserProgramStack ()
 recordedEventProducer streamId lastEvent batchSize = 
@@ -282,7 +283,17 @@ getReadEventRequestProgram (ReadEventRequest sId eventNumber) = runExceptT $ do
 
 getReadStreamRequestProgram :: ReadStreamRequest -> DynamoCmdM (Either EventStoreActionError [RecordedEvent])
 getReadStreamRequestProgram (ReadStreamRequest sId startEventNumber maxItems _direction) = 
-  runExceptT $ P.toListM $ recordedEventProducer (StreamId sId) ((+1) <$> startEventNumber) 10 >-> P.take (fromIntegral maxItems)
+  runExceptT $ 
+    P.toListM $ 
+      recordedEventProducer (StreamId sId) ((+1) <$> startEventNumber) 10 
+        >-> filterLastEvent startEventNumber 
+        >-> maxItemsFilter startEventNumber
+  where
+    maxItemsFilter Nothing = P.take (fromIntegral maxItems)
+    maxItemsFilter (Just v) = P.takeWhile (\r -> recordedEventNumber r > (minimumEventNumber v))
+    minimumEventNumber start = (fromIntegral start - fromIntegral maxItems)
+    filterLastEvent Nothing = P.filter (const True)
+    filterLastEvent (Just v) = P.filter ((<= v) . recordedEventNumber) 
 
 getPageDynamoKey :: Int -> DynamoKey 
 getPageDynamoKey pageNumber =
