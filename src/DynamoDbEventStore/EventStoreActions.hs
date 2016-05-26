@@ -18,6 +18,7 @@ module DynamoDbEventStore.EventStoreActions(
   EventStoreAction(..),
   EventWriteResult(..),
   EventStoreActionResult(..),
+  FeedDirection(..),
   postEventRequestProgram,
   getReadStreamRequestProgram,
   getReadEventRequestProgram,
@@ -144,10 +145,14 @@ instance QC.Arbitrary PostEventRequest where
                                <*> QC.arbitrary
                                <*> ((:|) <$> QC.arbitrary <*> QC.arbitrary)
 
+data FeedDirection = FeedDirectionFoward | FeedDirectionBackward
+  deriving (Eq, Show)
+
 data ReadStreamRequest = ReadStreamRequest {
    rsrStreamId         :: Text,
    rsrStartEventNumber :: Maybe Int64,
-   rsrMaxItems         :: Natural
+   rsrMaxItems         :: Natural,
+   rsrDirection        :: FeedDirection
 } deriving (Show)
 
 data ReadEventRequest = ReadEventRequest {
@@ -276,7 +281,7 @@ getReadEventRequestProgram (ReadEventRequest sId eventNumber) = runExceptT $ do
   return $ find ((== eventNumber) . recordedEventNumber) events
 
 getReadStreamRequestProgram :: ReadStreamRequest -> DynamoCmdM (Either EventStoreActionError [RecordedEvent])
-getReadStreamRequestProgram (ReadStreamRequest sId startEventNumber maxItems) = 
+getReadStreamRequestProgram (ReadStreamRequest sId startEventNumber maxItems _direction) = 
   runExceptT $ P.toListM $ recordedEventProducer (StreamId sId) ((+1) <$> startEventNumber) 10 >-> P.take (fromIntegral maxItems)
 
 getPageDynamoKey :: Int -> DynamoKey 

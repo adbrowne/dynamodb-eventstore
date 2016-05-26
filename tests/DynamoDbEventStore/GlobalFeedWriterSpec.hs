@@ -168,7 +168,7 @@ getStreamRecordedEvents streamId = do
       if ((< 0) <$> startEvent) == Just True then
         return Nothing
       else do
-        recordedEvents <- (lift $ getReadStreamRequestProgram (ReadStreamRequest streamId startEvent 10)) >>= eitherToError
+        recordedEvents <- (lift $ getReadStreamRequestProgram (ReadStreamRequest streamId startEvent 10 FeedDirectionBackward)) >>= eitherToError
         if null recordedEvents then
           return Nothing
         else 

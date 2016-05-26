@@ -185,4 +185,5 @@ app process = do
             <$> notEmpty streamId
             <*> Right Nothing
             <*> Right 10
+            <*> Right FeedDirectionBackward
   notFound $ status status404
