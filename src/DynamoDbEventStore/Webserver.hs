@@ -184,4 +184,5 @@ app process = do
             ReadStreamRequest
             <$> notEmpty streamId
             <*> Right Nothing
+            <*> Right 10
   notFound $ status status404

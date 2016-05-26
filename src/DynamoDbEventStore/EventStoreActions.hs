@@ -146,7 +146,8 @@ instance QC.Arbitrary PostEventRequest where
 
 data ReadStreamRequest = ReadStreamRequest {
    rsrStreamId         :: Text,
-   rsrStartEventNumber :: Maybe Int64
+   rsrStartEventNumber :: Maybe Int64,
+   rsrMaxItems         :: Natural
 } deriving (Show)
 
 data ReadEventRequest = ReadEventRequest {
@@ -275,8 +276,8 @@ getReadEventRequestProgram (ReadEventRequest sId eventNumber) = runExceptT $ do
   return $ find ((== eventNumber) . recordedEventNumber) events
 
 getReadStreamRequestProgram :: ReadStreamRequest -> DynamoCmdM (Either EventStoreActionError [RecordedEvent])
-getReadStreamRequestProgram (ReadStreamRequest sId startEventNumber) = 
-  runExceptT $ P.toListM $ recordedEventProducer (StreamId sId) ((+1) <$> startEventNumber) 10
+getReadStreamRequestProgram (ReadStreamRequest sId startEventNumber maxItems) = 
+  runExceptT $ P.toListM $ recordedEventProducer (StreamId sId) ((+1) <$> startEventNumber) 10 >-> P.take (fromIntegral maxItems)
 
 getPageDynamoKey :: Int -> DynamoKey 
 getPageDynamoKey pageNumber =
