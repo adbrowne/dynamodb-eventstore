@@ -138,7 +138,6 @@ prop_CanReadAnySectionOfAStreamBackward (UploadList uploadList) =
     expectedStreamEvents = globalFeedFromUploadList uploadList
     readStreamEvents streamId startEvent maxItems = (recordedEventNumber <$>) <$> evalProgram "ReadStream" (getReadStreamRequestProgram (ReadStreamRequest streamId startEvent maxItems FeedDirectionBackward)) (view testState writeState)
     expectedEvents streamId startEvent maxItems = takeWhile (> startEvent - fromIntegral maxItems) $ dropWhile (> startEvent) $ reverse $ toList $ expectedStreamEvents ! streamId
-    -- expectedEvents streamId startEvent _maxItems = dropWhile (> startEvent) $ reverse $ toList $ expectedStreamEvents ! streamId
     check (streamId, QC.Positive startEvent, maxItems) = QC.counterexample (T.unpack $ show $ view testState writeState) $ readStreamEvents streamId (Just startEvent) maxItems === Right (expectedEvents streamId (fromIntegral startEvent) maxItems)
   in QC.forAll ((,,) <$> (QC.elements . Map.keys) expectedStreamEvents <*> QC.arbitrary <*> QC.arbitrary) check
 

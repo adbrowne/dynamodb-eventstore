@@ -267,9 +267,9 @@ readResultToRecordedEventPipe = do
   forM_ (NonEmpty.toList recordedEvents) yield
   readResultToRecordedEventPipe
 
-recordedEventProducer :: StreamId -> Maybe Int64 -> Natural -> Producer RecordedEvent UserProgramStack ()
-recordedEventProducer streamId lastEvent batchSize = 
-  dynamoReadResultProducer streamId lastEvent batchSize 
+recordedEventProducerBackward :: StreamId -> Maybe Int64 -> Natural -> Producer RecordedEvent UserProgramStack ()
+recordedEventProducerBackward streamId lastEvent batchSize = 
+  dynamoReadResultProducer streamId ((+1) <$> lastEvent) batchSize 
     >-> readResultToRecordedEventPipe 
     >-> filterLastEvent lastEvent
   where
@@ -278,14 +278,14 @@ recordedEventProducer streamId lastEvent batchSize =
 
 getReadEventRequestProgram :: ReadEventRequest -> DynamoCmdM (Either EventStoreActionError (Maybe RecordedEvent))
 getReadEventRequestProgram (ReadEventRequest sId eventNumber) = runExceptT $ do
-  (events :: [RecordedEvent]) <- P.toListM $ recordedEventProducer (StreamId sId) (Just $ eventNumber + 1) 1
+  (events :: [RecordedEvent]) <- P.toListM $ recordedEventProducerBackward (StreamId sId) (Just eventNumber) 1
   return $ find ((== eventNumber) . recordedEventNumber) events
 
 getReadStreamRequestProgram :: ReadStreamRequest -> DynamoCmdM (Either EventStoreActionError [RecordedEvent])
 getReadStreamRequestProgram (ReadStreamRequest sId startEventNumber maxItems _direction) = 
   runExceptT $ 
     P.toListM $ 
-      recordedEventProducer (StreamId sId) ((+1) <$> startEventNumber) 10 
+      recordedEventProducerBackward (StreamId sId) startEventNumber 10 
         >-> filterLastEvent startEventNumber 
         >-> maxItemsFilter startEventNumber
   where
@@ -323,7 +323,7 @@ getPagesAfter startPage = do
 
 lookupEvent :: StreamId -> Int64 -> UserProgramStack (Maybe RecordedEvent)
 lookupEvent streamId eventNumber = do
-  (events :: [RecordedEvent]) <- P.toListM $ recordedEventProducer streamId (Just $ eventNumber + 1) 1
+  (events :: [RecordedEvent]) <- P.toListM $ recordedEventProducerBackward streamId (Just eventNumber) 1
   return $ find ((== eventNumber) . recordedEventNumber) events
 
 lookupEventKey :: Pipe EventKey RecordedEvent UserProgramStack ()
