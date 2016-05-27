@@ -22,7 +22,8 @@ module DynamoDbEventStore.EventStoreActions(
   postEventRequestProgram,
   getReadStreamRequestProgram,
   getReadEventRequestProgram,
-  getReadAllRequestProgram) where
+  getReadAllRequestProgram,
+  recordedEventProducerBackward) where
 
 import           Data.Either.Combinators
 import           Control.Monad.Except

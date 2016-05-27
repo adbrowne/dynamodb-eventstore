@@ -31,6 +31,7 @@ import           Data.Map.Strict((!))
 import qualified Data.Sequence as Seq
 import qualified Data.Aeson as Aeson
 import qualified Data.Set as Set
+import qualified Pipes.Prelude as P
 
 import           DynamoDbEventStore.EventStoreCommands
 import           DynamoDbEventStore.EventStoreActions
@@ -207,8 +208,8 @@ readEachStream uploadItems =
       return $ Map.insert streamId eventIds m
     getEventIds :: Text -> ExceptT EventStoreActionError DynamoCmdM (Seq.Seq Int64)
     getEventIds streamId = do
-       recordedEvents <- getStreamRecordedEvents streamId
-       return $ Seq.fromList $ recordedEventNumber <$> recordedEvents
+       (recordedEvents :: [RecordedEvent]) <- P.toListM $ recordedEventProducerBackward (StreamId streamId) Nothing 10
+       return $ Seq.fromList . reverse $ (recordedEventNumber <$> recordedEvents)
     streams :: [Text]
     streams = (\(stream, _, _) -> stream) <$> uploadItems
 
