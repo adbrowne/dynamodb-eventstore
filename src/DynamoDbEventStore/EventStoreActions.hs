@@ -186,7 +186,7 @@ dynamoReadResultToEventNumber (DynamoReadResult (DynamoKey _key eventNumber) _ve
 
 dynamoReadResultToEventId :: DynamoReadResult -> ExceptT EventStoreActionError DynamoCmdM EventId
 dynamoReadResultToEventId readResult = do
-  recordedEvents <- toRecordedEvent readResult
+  recordedEvents <- toRecordedEventBackward readResult
   let lastEvent = NonEmpty.last recordedEvents
   return (recordedEventId lastEvent)
 
@@ -243,11 +243,15 @@ toRecordedEvent (DynamoReadResult key@(DynamoKey dynamoHashKey firstEventNumber)
   let streamId = T.drop (T.length Constants.streamDynamoKeyPrefix) dynamoHashKey
   NonEmptyWrapper eventEntries <- binaryDeserialize key eventBody
   let eventEntriesWithEventNumber = NonEmpty.zip (firstEventNumber :| [firstEventNumber + 1 ..]) eventEntries
-  let recordedEvents = fmap (\(eventNumber, EventEntry {..}) -> RecordedEvent streamId eventNumber (BL.toStrict eventEntryData) (eventTypeToText eventEntryType) (unEventTime eventEntryCreated) eventEntryEventId eventEntryIsJson) eventEntriesWithEventNumber
-  return $ NonEmpty.reverse recordedEvents 
+  let buildEvent (eventNumber, EventEntry{..}) = RecordedEvent streamId eventNumber (BL.toStrict eventEntryData) (eventTypeToText eventEntryType) (unEventTime eventEntryCreated) eventEntryEventId eventEntryIsJson
+  let recordedEvents = buildEvent <$> eventEntriesWithEventNumber
+  return recordedEvents 
 
-dynamoReadResultProducer :: StreamId -> Maybe Int64 -> Natural -> Producer DynamoReadResult UserProgramStack ()
-dynamoReadResultProducer (StreamId streamId) lastEvent batchSize = do
+toRecordedEventBackward :: DynamoReadResult -> (ExceptT EventStoreActionError DynamoCmdM) (NonEmpty RecordedEvent)
+toRecordedEventBackward readResult = NonEmpty.reverse <$> toRecordedEvent readResult
+
+dynamoReadResultProducerBackward :: StreamId -> Maybe Int64 -> Natural -> Producer DynamoReadResult UserProgramStack ()
+dynamoReadResultProducerBackward (StreamId streamId) lastEvent batchSize = do
   (firstBatch :: [DynamoReadResult]) <- lift $ queryTable' QueryDirectionBackward (Constants.streamDynamoKeyPrefix <> streamId) batchSize lastEvent
   yieldResultsAndLoop firstBatch
   where
@@ -255,21 +259,20 @@ dynamoReadResultProducer (StreamId streamId) lastEvent batchSize = do
     yieldResultsAndLoop [readResult] = do
       yield readResult
       let lastEventNumber = dynamoReadResultToEventNumber readResult
-      dynamoReadResultProducer (StreamId streamId) (Just $ lastEventNumber) batchSize
+      dynamoReadResultProducerBackward (StreamId streamId) (Just $ lastEventNumber) batchSize
     yieldResultsAndLoop (x:xs) = do
       yield x
       yieldResultsAndLoop xs
 
 readResultToRecordedEventPipe :: Pipe DynamoReadResult RecordedEvent UserProgramStack ()
-readResultToRecordedEventPipe = do
+readResultToRecordedEventPipe = forever $ do
   readResult <- await
-  (recordedEvents :: NonEmpty RecordedEvent) <- lift $ toRecordedEvent readResult
+  (recordedEvents :: NonEmpty RecordedEvent) <- lift $ toRecordedEventBackward readResult
   forM_ (NonEmpty.toList recordedEvents) yield
-  readResultToRecordedEventPipe
 
 recordedEventProducerBackward :: StreamId -> Maybe Int64 -> Natural -> Producer RecordedEvent UserProgramStack ()
 recordedEventProducerBackward streamId lastEvent batchSize = 
-  dynamoReadResultProducer streamId ((+1) <$> lastEvent) batchSize 
+  dynamoReadResultProducerBackward streamId ((+1) <$> lastEvent) batchSize 
     >-> readResultToRecordedEventPipe 
     >-> filterLastEvent lastEvent
   where
