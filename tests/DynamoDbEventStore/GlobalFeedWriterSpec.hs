@@ -125,11 +125,13 @@ prop_EventShouldAppearInGlobalFeedInStreamOrder (UploadList uploadList) =
 prop_CanReadAnySectionOfAStreamForward :: UploadList -> QC.Property
 prop_CanReadAnySectionOfAStreamForward (UploadList uploadList) =
   let
+    unpositive :: QC.Positive Int -> Int
+    unpositive (QC.Positive x) = x
     writeState = execProgram "publisher" (publisher uploadList) emptyTestState 
     expectedStreamEvents = globalFeedFromUploadList uploadList
     readStreamEvents streamId startEvent maxItems = (recordedEventNumber <$>) <$> evalProgram "ReadStream" (getReadStreamRequestProgram (ReadStreamRequest streamId startEvent maxItems FeedDirectionForward)) (view testState writeState)
     expectedEvents streamId startEvent maxItems = take (fromIntegral maxItems) $ drop (fromMaybe 0 startEvent) $ toList $ expectedStreamEvents ! streamId
-    check (streamId, startEvent, maxItems) = readStreamEvents streamId (fromIntegral <$> startEvent) maxItems === Right (expectedEvents streamId startEvent maxItems)
+    check (streamId, startEvent, maxItems) = readStreamEvents streamId ((fromIntegral . unpositive) <$> startEvent) maxItems === Right (expectedEvents streamId (unpositive <$> startEvent) maxItems)
   in QC.forAll ((,,) <$> (QC.elements . Map.keys) expectedStreamEvents <*> QC.arbitrary <*> QC.arbitrary) check
 
 prop_CanReadAnySectionOfAStreamBackward :: UploadList -> QC.Property
