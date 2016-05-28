@@ -66,10 +66,6 @@ postEventSpec = do
   describe "POST /streams/streamId with non-integer ExpectedVersion" $
     it "responds with 400" $
       requestWithoutBadExpectedVersion `waiCase` assertStatus 400
-  where
-    waiCase r assertion = do
-      app' <- app
-      flip runSession app' $ assertion =<< r
 
 getStream :: Text -> Session SResponse
 getStream streamId =
@@ -78,25 +74,46 @@ getStream streamId =
                requestMethod = H.methodGet
             }
 
-getStreamSpec :: Spec
-getStreamSpec = do
-  describe "Get stream" $ do
-    let getExample = getStream "myStreamId"
+assertSuccess :: String -> [Text] -> LByteString -> Spec
+assertSuccess desc path expectedType =
+  describe ("Get " <> desc) $ do
+    let getExample = request $ defaultRequest {
+               pathInfo = path,
+               requestMethod = H.methodGet
+            }
+
     it "responds with 200" $
       waiCase getExample $ assertStatus 200
 
     it "responds with body" $
-      waiCase getExample $ assertBody "ReadStream (ReadStreamRequest {rsrStreamId = \"myStreamId\", rsrStartEventNumber = Nothing, rsrMaxItems = 10, rsrDirection = FeedDirectionBackward})"
+      waiCase getExample $ assertBody expectedType
+
+getStreamSpec :: Spec
+getStreamSpec = do
+  assertSuccess 
+    "stream" 
+    ["streams","myStreamId"] 
+    "ReadStream (ReadStreamRequest {rsrStreamId = \"myStreamId\", rsrStartEventNumber = Nothing, rsrMaxItems = 10, rsrDirection = FeedDirectionBackward})"
+
+  assertSuccess 
+    "stream" 
+    ["streams","myStreamId","3","5"] 
+    "ReadStream (ReadStreamRequest {rsrStreamId = \"myStreamId\", rsrStartEventNumber = Just 3, rsrMaxItems = 5, rsrDirection = FeedDirectionBackward})"
+
+  assertSuccess 
+    "stream" 
+    ["streams","myStreamId","3","backward","5"] 
+    "ReadStream (ReadStreamRequest {rsrStreamId = \"myStreamId\", rsrStartEventNumber = Just 3, rsrMaxItems = 5, rsrDirection = FeedDirectionBackward})"
+
+  assertSuccess 
+    "stream" 
+    ["streams","myStreamId","3","forward","5"] 
+    "ReadStream (ReadStreamRequest {rsrStreamId = \"myStreamId\", rsrStartEventNumber = Just 3, rsrMaxItems = 5, rsrDirection = FeedDirectionForward})"
 
   describe "Get stream with missing stream name" $ do
     let getExample = getStream ""
     it "responds with 400" $
       waiCase getExample $ assertStatus 400
-
-  where
-    waiCase r assertion = do
-      app' <- app
-      flip runSession app' $ assertion =<< r
 
 getEvent :: Text -> Int64 -> Session SResponse
 getEvent streamId eventNumber =
@@ -106,7 +123,7 @@ getEvent streamId eventNumber =
             }
 
 getEventSpec :: Spec 
-getEventSpec = do
+getEventSpec =
   describe "Get stream" $ do
     let getExample = getEvent "myStreamId" 0
     it "responds with 200" $
@@ -115,7 +132,8 @@ getEventSpec = do
     it "responds with body" $
       waiCase getExample $ assertBody "ReadEvent (ReadEventRequest {rerStreamId = \"myStreamId\", rerEventNumber = 0})"
 
-  where
-    waiCase r assertion = do
-      app' <- app
-      flip runSession app' $ assertion =<< r
+waiCase :: Session SResponse -> (SResponse -> Session ()) -> IO ()
+waiCase r assertion = do
+  app' <- app
+  flip runSession app' $ assertion =<< r
+

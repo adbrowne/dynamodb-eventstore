@@ -146,7 +146,30 @@ instance MonadHasTime IO where
 instance (Monad m) => MonadHasTime (ReaderT UTCTime m) where
   getCurrentTime = ask
 
-app :: (MonadIO m, MonadHasTime m, ScottyError e) => (EventStoreAction -> IO (Either InterpreterError EventStoreActionResult)) -> ScottyT e m ()
+type Process = (EventStoreAction -> IO (Either InterpreterError EventStoreActionResult))
+
+readOptionalParameter :: (Read a, Monad m, ScottyError e) => LText -> Maybe (ActionT e m Text) -> ActionT e m (Either LText (Maybe a))
+readOptionalParameter errorMsg parameter =
+  let parseValue t = maybe (Left errorMsg) (Right . Just) (readMay t)
+  in maybe (return $ Right Nothing) (fmap parseValue) parameter
+
+readStreamHandler :: (MonadIO m, ScottyError e) => Process -> ActionT e m Text -> Maybe (ActionT e m Text) -> Maybe (ActionT e m Text) -> FeedDirection -> ActionT e m ()
+readStreamHandler process streamIdAction startEventParameter eventCountParameter feedDirection = do
+    streamId <- streamIdAction
+    startEvent <- readOptionalParameter "Invalid event number" startEventParameter
+    eventCount <- readOptionalParameter "Invalid event count" eventCountParameter
+    if (streamId == "$all") then
+      toResult . fmap (process . ReadAll) $
+            pure ReadAllRequest
+    else
+      toResult . fmap (process . ReadStream) $
+            ReadStreamRequest
+            <$> notEmpty streamId
+            <*> startEvent
+            <*> ((fromMaybe 10) <$> eventCount)
+            <*> Right feedDirection
+
+app :: (MonadIO m, MonadHasTime m, ScottyError e) => Process -> ScottyT e m ()
 app process = do
   post "/streams/:streamId" $ do
     streamId <- param "streamId"
@@ -174,16 +197,8 @@ app process = do
           ReadEventRequest
           <$> notEmpty streamId
           <*> runParser positiveInt64Parser "Invalid Event Number" eventNumber
-  get "/streams/:streamId" $ do
-    streamId <- param "streamId"
-    if (streamId == "$all") then
-      toResult . fmap (process . ReadAll) $
-            pure ReadAllRequest
-    else
-      toResult . fmap (process . ReadStream) $
-            ReadStreamRequest
-            <$> notEmpty streamId
-            <*> Right Nothing
-            <*> Right 10
-            <*> Right FeedDirectionBackward
+  get "/streams/:streamId" $ readStreamHandler process (param "streamId") Nothing Nothing FeedDirectionBackward
+  get "/streams/:streamId/:eventNumber/:count" $ readStreamHandler process (param "streamId") (Just $ param "eventNumber") (Just $ param "count") FeedDirectionBackward
+  get "/streams/:streamId/:eventNumber/backward/:count" $ readStreamHandler process (param "streamId") (Just $ param "eventNumber") (Just $ param "count") FeedDirectionBackward
+  get "/streams/:streamId/:eventNumber/forward/:count" $ readStreamHandler process (param "streamId") (Just $ param "eventNumber") (Just $ param "count") FeedDirectionForward
   notFound $ status status404
