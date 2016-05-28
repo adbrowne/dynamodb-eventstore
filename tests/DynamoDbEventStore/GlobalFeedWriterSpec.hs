@@ -122,11 +122,12 @@ prop_EventShouldAppearInGlobalFeedInStreamOrder (UploadList uploadList) =
        check (_, testRunState) = QC.forAll (runReadAllProgram testRunState) (\feedItems -> (globalRecordedEventListToMap <$> feedItems) === (Right $ globalFeedFromUploadList uploadList))
        runReadAllProgram = runProgramGenerator "readAllRequestProgram" (getReadAllRequestProgram ReadAllRequest)
 
+unpositive :: QC.Positive Int -> Int
+unpositive (QC.Positive x) = x
+
 prop_CanReadAnySectionOfAStreamForward :: UploadList -> QC.Property
 prop_CanReadAnySectionOfAStreamForward (UploadList uploadList) =
   let
-    unpositive :: QC.Positive Int -> Int
-    unpositive (QC.Positive x) = x
     writeState = execProgram "publisher" (publisher uploadList) emptyTestState 
     expectedStreamEvents = globalFeedFromUploadList uploadList
     readStreamEvents streamId startEvent maxItems = (recordedEventNumber <$>) <$> evalProgram "ReadStream" (getReadStreamRequestProgram (ReadStreamRequest streamId startEvent maxItems FeedDirectionForward)) (view testState writeState)
@@ -140,8 +141,9 @@ prop_CanReadAnySectionOfAStreamBackward (UploadList uploadList) =
     writeState = execProgram "publisher" (publisher uploadList) emptyTestState 
     expectedStreamEvents = globalFeedFromUploadList uploadList
     readStreamEvents streamId startEvent maxItems = (recordedEventNumber <$>) <$> evalProgram "ReadStream" (getReadStreamRequestProgram (ReadStreamRequest streamId startEvent maxItems FeedDirectionBackward)) (view testState writeState)
-    expectedEvents streamId startEvent maxItems = takeWhile (> startEvent - fromIntegral maxItems) $ dropWhile (> startEvent) $ reverse $ toList $ expectedStreamEvents ! streamId
-    check (streamId, QC.Positive startEvent, maxItems) = QC.counterexample (T.unpack $ show $ view testState writeState) $ readStreamEvents streamId (Just startEvent) maxItems === Right (expectedEvents streamId (fromIntegral startEvent) maxItems)
+    expectedEvents streamId Nothing maxItems = take (fromIntegral maxItems) $ reverse $ toList $ expectedStreamEvents ! streamId
+    expectedEvents streamId (Just startEvent) maxItems = takeWhile (> startEvent - fromIntegral maxItems) $ dropWhile (> startEvent) $ reverse $ toList $ expectedStreamEvents ! streamId
+    check (streamId, startEvent, maxItems) = QC.counterexample (T.unpack $ show $ view testState writeState) $ readStreamEvents streamId ((fromIntegral . unpositive) <$> startEvent) maxItems === Right (expectedEvents streamId (fromIntegral . unpositive <$> startEvent) maxItems)
   in QC.forAll ((,,) <$> (QC.elements . Map.keys) expectedStreamEvents <*> QC.arbitrary <*> QC.arbitrary) check
 
 expectedEventsFromUploadList :: UploadList -> [RecordedEvent]
