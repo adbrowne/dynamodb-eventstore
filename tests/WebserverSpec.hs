@@ -91,22 +91,22 @@ assertSuccess desc path expectedType =
 getStreamSpec :: Spec
 getStreamSpec = do
   assertSuccess 
-    "stream" 
+    "stream simple" 
     ["streams","myStreamId"] 
     "ReadStream (ReadStreamRequest {rsrStreamId = \"myStreamId\", rsrStartEventNumber = Nothing, rsrMaxItems = 10, rsrDirection = FeedDirectionBackward})"
 
   assertSuccess 
-    "stream" 
+    "stream with start event and limit" 
     ["streams","myStreamId","3","5"] 
     "ReadStream (ReadStreamRequest {rsrStreamId = \"myStreamId\", rsrStartEventNumber = Just 3, rsrMaxItems = 5, rsrDirection = FeedDirectionBackward})"
 
   assertSuccess 
-    "stream" 
+    "stream with start and limit, backward" 
     ["streams","myStreamId","3","backward","5"] 
     "ReadStream (ReadStreamRequest {rsrStreamId = \"myStreamId\", rsrStartEventNumber = Just 3, rsrMaxItems = 5, rsrDirection = FeedDirectionBackward})"
 
   assertSuccess 
-    "stream" 
+    "stream with start and limit, forward" 
     ["streams","myStreamId","3","forward","5"] 
     "ReadStream (ReadStreamRequest {rsrStreamId = \"myStreamId\", rsrStartEventNumber = Just 3, rsrMaxItems = 5, rsrDirection = FeedDirectionForward})"
 
