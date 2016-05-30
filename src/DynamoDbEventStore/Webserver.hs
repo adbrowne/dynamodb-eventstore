@@ -148,15 +148,34 @@ instance (Monad m) => MonadHasTime (ReaderT UTCTime m) where
 
 type Process = (EventStoreAction -> IO (Either InterpreterError EventStoreActionResult))
 
+data EventStartPosition = EventStartHead | EventStartPosition Int64
+
+eventStartPositionParser :: Parser EventStartPosition
+eventStartPositionParser =
+  let 
+    headParser = const EventStartHead <$> string "head" 
+    eventNumberParser = EventStartPosition <$> positiveInt64Parser
+  in headParser <|> eventNumberParser
+
+eventStartPositionToMaybeInt64 :: Maybe EventStartPosition -> Maybe Int64
+eventStartPositionToMaybeInt64 Nothing = Nothing
+eventStartPositionToMaybeInt64 (Just EventStartHead) = Nothing
+eventStartPositionToMaybeInt64 (Just (EventStartPosition x)) = Just x
+
 readOptionalParameter :: (Read a, Monad m, ScottyError e) => LText -> Maybe (ActionT e m Text) -> ActionT e m (Either LText (Maybe a))
 readOptionalParameter errorMsg parameter =
   let parseValue t = maybe (Left errorMsg) (Right . Just) (readMay t)
   in maybe (return $ Right Nothing) (fmap parseValue) parameter
 
+parseOptionalParameter :: (Monad m, ScottyError e) => LText -> Parser a -> Maybe (ActionT e m Text) -> ActionT e m (Either LText (Maybe a))
+parseOptionalParameter errorMsg parser parameter =
+  let parseValue t = Just <$> runParser parser errorMsg (TL.fromStrict t)
+  in maybe (return $ Right Nothing) (fmap parseValue) parameter
+
 readStreamHandler :: (MonadIO m, ScottyError e) => Process -> ActionT e m Text -> Maybe (ActionT e m Text) -> Maybe (ActionT e m Text) -> FeedDirection -> ActionT e m ()
 readStreamHandler process streamIdAction startEventParameter eventCountParameter feedDirection = do
     streamId <- streamIdAction
-    startEvent <- readOptionalParameter "Invalid event number" startEventParameter
+    startEvent <- parseOptionalParameter "Invalid event number" eventStartPositionParser startEventParameter
     eventCount <- readOptionalParameter "Invalid event count" eventCountParameter
     if (streamId == "$all") then
       toResult . fmap (process . ReadAll) $
@@ -165,7 +184,7 @@ readStreamHandler process streamIdAction startEventParameter eventCountParameter
       toResult . fmap (process . ReadStream) $
             ReadStreamRequest
             <$> notEmpty streamId
-            <*> startEvent
+            <*> (eventStartPositionToMaybeInt64 <$> startEvent)
             <*> ((fromMaybe 10) <$> eventCount)
             <*> Right feedDirection
 

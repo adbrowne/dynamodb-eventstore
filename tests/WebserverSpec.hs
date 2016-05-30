@@ -106,6 +106,11 @@ getStreamSpec = do
     "ReadStream (ReadStreamRequest {rsrStreamId = \"myStreamId\", rsrStartEventNumber = Just 3, rsrMaxItems = 5, rsrDirection = FeedDirectionBackward})"
 
   assertSuccess 
+    "stream backward from head" 
+    ["streams","myStreamId","head","backward","5"] 
+    "ReadStream (ReadStreamRequest {rsrStreamId = \"myStreamId\", rsrStartEventNumber = Nothing, rsrMaxItems = 5, rsrDirection = FeedDirectionBackward})"
+
+  assertSuccess 
     "stream with start and limit, forward" 
     ["streams","myStreamId","3","forward","5"] 
     "ReadStream (ReadStreamRequest {rsrStreamId = \"myStreamId\", rsrStartEventNumber = Just 3, rsrMaxItems = 5, rsrDirection = FeedDirectionForward})"
