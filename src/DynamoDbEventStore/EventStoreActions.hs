@@ -17,7 +17,10 @@ module DynamoDbEventStore.EventStoreActions(
   EventEntry(..),
   EventStoreAction(..),
   EventWriteResult(..),
-  EventStoreActionResult(..),
+  PostEventResult(..),
+  ReadStreamResult(..),
+  ReadAllResult(..),
+  ReadEventResult(..),
   FeedDirection(..),
   postEventRequestProgram,
   getReadStreamRequestProgram,
@@ -63,14 +66,7 @@ data EventStoreAction =
   PostEvent PostEventRequest |
   ReadStream ReadStreamRequest |
   ReadEvent ReadEventRequest |
-  ReadAll ReadAllRequest |
-  SubscribeAll SubscribeAllRequest deriving (Show)
-
-data SubscribeAllRequest = SubscribeAllRequest {
-} deriving (Show)
-
-data SubscribeAllResponse = SubscribeAllResponse {
-} deriving (Show)
+  ReadAll ReadAllRequest deriving (Show)
 
 newtype EventType = EventType Text deriving (Show, Eq, Ord, IsString)
 newtype EventTime = EventTime UTCTime deriving (Show, Eq, Ord)
@@ -108,12 +104,10 @@ instance Serialize.Serialize EventType where
   put (EventType t) = (Serialize.put . encodeUtf8) t
   get = EventType . decodeUtf8 <$> Serialize.get 
 
-data EventStoreActionResult =
-  PostEventResult (Either EventStoreActionError EventWriteResult)
-  | ReadStreamResult (Either EventStoreActionError [RecordedEvent])
-  | ReadAllResult (Either EventStoreActionError [RecordedEvent])
-  | ReadEventResult (Either EventStoreActionError (Maybe RecordedEvent))
-  deriving (Show)
+newtype PostEventResult = PostEventResult (Either EventStoreActionError EventWriteResult) deriving Show
+newtype ReadStreamResult = ReadStreamResult (Either EventStoreActionError [RecordedEvent]) deriving Show
+newtype ReadAllResult = ReadAllResult (Either EventStoreActionError [RecordedEvent]) deriving Show
+newtype ReadEventResult = ReadEventResult (Either EventStoreActionError (Maybe RecordedEvent)) deriving Show
 
 data PostEventRequest = PostEventRequest {
    perStreamId        :: Text,

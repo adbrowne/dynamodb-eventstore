@@ -11,7 +11,7 @@ import           Control.Monad.Except
 import           Network.Wai.Handler.Warp
 import           Web.Scotty
 import           System.IO (stdout)
-import           DynamoDbEventStore.Webserver (app, realRunner)
+import           DynamoDbEventStore.Webserver (app, realRunner, EventStoreActionRunner(..))
 import           Control.Concurrent
 import           DynamoDbEventStore.AmazonkaInterpreter
 import           DynamoDbEventStore.EventStoreActions
@@ -41,20 +41,14 @@ printEvent a = do
   liftIO $ print . show $ a
   return a
 
-runEventStoreAction :: (forall a. DynamoCmdM a -> ExceptT InterpreterError IO a) -> EventStoreAction -> IO (Either InterpreterError EventStoreActionResult)
-runEventStoreAction runner (PostEvent req) =
-  let program = postEventRequestProgram req
-  in liftIO $ runExceptT $ (PostEventResult <$> runner program)
-runEventStoreAction runner (ReadStream req) = 
-  let program = getReadStreamRequestProgram req
-  in liftIO $ runExceptT $ ReadStreamResult <$> runner program
-runEventStoreAction runner (ReadAll req) =
-  let program = getReadAllRequestProgram req
-  in liftIO $ runExceptT $ ReadAllResult <$> runner program
-runEventStoreAction runner (ReadEvent req) =
-  let program = getReadEventRequestProgram req
-  in liftIO $ runExceptT $ ReadEventResult <$> runner program
-runEventStoreAction _ (SubscribeAll _) = error "SubscribeAll not implemented" 
+buildActionRunner :: (forall a. DynamoCmdM a -> ExceptT InterpreterError IO a) -> EventStoreActionRunner
+buildActionRunner runner =
+  EventStoreActionRunner { 
+    eventStoreActionRunnerPostEvent = (\req -> liftIO $ runExceptT $ (PostEventResult <$> runner (postEventRequestProgram req)))
+    , eventStoreActionRunnerReadEvent = (\req -> liftIO $ runExceptT $ (ReadEventResult <$> runner (getReadEventRequestProgram req)))
+    , eventStoreActionRunnerReadStream = (\req -> liftIO $ runExceptT $ (ReadStreamResult <$> runner (getReadStreamRequestProgram req)))
+    , eventStoreActionRunnerReadAll = (\req -> liftIO $ runExceptT $ (ReadAllResult <$> runner (getReadAllRequestProgram req)))
+  }
 
 data Config = Config 
   { configTableName :: String,
@@ -120,7 +114,7 @@ start parsedConfig = do
      let httpPort = (configPort parsedConfig)
      let warpSettings = setPort httpPort $ setHost (fromString httpHost) defaultSettings
      putStrLn $ "Server listenting on: http://" <> fromString httpHost <> ":" <> show httpPort
-     _ <- lift $ forkIO $ void $ scottyApp (app (printEvent >=> realRunner (runEventStoreAction runner'))) >>= runSettings warpSettings
+     _ <- lift $ forkIO $ void $ scottyApp (app (printEvent >=> realRunner (buildActionRunner runner'))) >>= runSettings warpSettings
      programResult <- liftIO $ takeMVar exitMVar
      print programResult
      case programResult of (Left err)         -> throwError $ ApplicationErrorInterpreter err

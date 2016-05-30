@@ -3,7 +3,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE RankNTypes #-}
 
-module DynamoDbEventStore.Webserver(app, positiveInt64Parser, runParser, realRunner) where
+module DynamoDbEventStore.Webserver(app, positiveInt64Parser, runParser, realRunner, EventStoreActionRunner(..)) where
 
 import           BasicPrelude
 import           Web.Scotty.Trans
@@ -14,7 +14,6 @@ import           Data.Char                 (isDigit)
 import           Control.Monad.Reader
 import qualified Data.UUID as UUID
 import qualified Data.Text.Lazy            as TL
-import qualified Data.Text            as T
 import qualified Data.Text.Lazy.Encoding   as TL
 import           Data.List.NonEmpty (NonEmpty (..))
 import           Data.Time.Clock (UTCTime)
@@ -102,24 +101,31 @@ readEventResultJsonValue recordedEvent =
 baseUri :: Text
 baseUri = "http://localhost:2114"
 
-eventStoreActionResultToText :: (MonadIO m, ScottyError e) => ResponseEncoding -> EventStoreActionResult -> ActionT e m ()
-eventStoreActionResultToText AtomJsonEncoding (PostEventResult r) = (raw . TL.encodeUtf8 . TL.fromStrict) $ show r
-eventStoreActionResultToText AtomJsonEncoding (ReadEventResult (Right (Just r))) = (raw . encodePretty . readEventResultJsonValue) r
-eventStoreActionResultToText AtomJsonEncoding (ReadEventResult (Right Nothing)) = (status $ mkStatus 404 (toByteString "Not Found")) >> raw "{}"
-eventStoreActionResultToText AtomJsonEncoding (ReadStreamResult (Right xs)) = 
+eventStorePostResultToText :: (MonadIO m, ScottyError e) => ResponseEncoding -> PostEventResult -> ActionT e m ()
+eventStorePostResultToText AtomJsonEncoding (PostEventResult r) = (raw . TL.encodeUtf8 . TL.fromStrict) $ show r
+
+eventStoreReadEventResultToText :: (MonadIO m, ScottyError e) => ResponseEncoding -> ReadEventResult -> ActionT e m ()
+eventStoreReadEventResultToText AtomJsonEncoding (ReadEventResult (Left err)) = (error500 . TL.fromStrict . show) err
+eventStoreReadEventResultToText AtomJsonEncoding (ReadEventResult (Right (Just r))) =(raw . encodePretty . readEventResultJsonValue) r
+eventStoreReadEventResultToText AtomJsonEncoding (ReadEventResult (Right Nothing)) = (status $ mkStatus 404 (toByteString "Not Found")) >> raw "{}"
+
+eventStoreReadStreamResultToText :: (MonadIO m, ScottyError e) => ResponseEncoding -> ReadStreamResult -> ActionT e m ()
+eventStoreReadStreamResultToText AtomJsonEncoding (ReadStreamResult (Left err)) = (error500 . TL.fromStrict . show) err
+eventStoreReadStreamResultToText AtomJsonEncoding (ReadStreamResult (Right xs)) = 
   let 
     streamId = StreamId "todo stream name"
     sampleTime = parseTimeOrError True defaultTimeLocale rfc822DateFormat "Sun, 08 May 2016 12:49:41 +0000" -- todo
     buildFeed' = recordedEventsToFeed baseUri streamId sampleTime
   in raw . encodePretty . jsonFeed . buildFeed' $ xs
-eventStoreActionResultToText AtomJsonEncoding (ReadAllResult (Right xs)) = 
+
+eventStoreReadAllResultToText :: (MonadIO m, ScottyError e) => ResponseEncoding -> ReadAllResult -> ActionT e m ()
+eventStoreReadAllResultToText AtomJsonEncoding (ReadAllResult (Left err)) = (error500 . TL.fromStrict . show) err
+eventStoreReadAllResultToText AtomJsonEncoding (ReadAllResult (Right xs)) = 
   let 
     streamId = StreamId "%24all"
     sampleTime = parseTimeOrError True defaultTimeLocale rfc822DateFormat "Sun, 08 May 2016 12:49:41 +0000" -- todo
     buildFeed' = recordedEventsToFeed baseUri streamId sampleTime
   in raw . encodePretty . jsonFeed . buildFeed' $ xs
-   
-eventStoreActionResultToText AtomJsonEncoding s = error $ "todo EventStoreActionResult" <> T.unpack (show s)
 
 data ResponseEncoding = AtomJsonEncoding
 
@@ -136,11 +142,30 @@ instance MonadHasTime IO where
 instance (Monad m) => MonadHasTime (ReaderT UTCTime m) where
   getCurrentTime = ask
 
-realRunner :: (EventStoreAction -> IO (Either InterpreterError EventStoreActionResult)) -> Process
-realRunner mainRunner eventStoreAction = do
-  result <- liftIO $ mainRunner eventStoreAction
+data EventStoreActionRunner = EventStoreActionRunner {
+    eventStoreActionRunnerPostEvent :: PostEventRequest -> IO (Either InterpreterError PostEventResult)
+  , eventStoreActionRunnerReadStream :: ReadStreamRequest -> IO (Either InterpreterError ReadStreamResult)
+  , eventStoreActionRunnerReadAll :: ReadAllRequest -> IO (Either InterpreterError ReadAllResult)
+  , eventStoreActionRunnerReadEvent :: ReadEventRequest -> IO (Either InterpreterError ReadEventResult)
+}
+
+realRunner :: EventStoreActionRunner -> Process
+realRunner mainRunner (PostEvent postEventRequest) = do
+  result <- liftIO $ (eventStoreActionRunnerPostEvent mainRunner) postEventRequest
   case result of (Left err) -> (error500 . TL.fromStrict . show) err
-                 (Right a) -> (eventStoreActionResultToText AtomJsonEncoding) a
+                 (Right a) -> (eventStorePostResultToText AtomJsonEncoding) a
+realRunner mainRunner (ReadEvent readEventRequest) = do
+  result <- liftIO $ (eventStoreActionRunnerReadEvent mainRunner) readEventRequest
+  case result of (Left err) -> (error500 . TL.fromStrict . show) err
+                 (Right a) -> (eventStoreReadEventResultToText AtomJsonEncoding) a
+realRunner mainRunner (ReadStream readStreamRequest) = do
+  result <- liftIO $ (eventStoreActionRunnerReadStream mainRunner) readStreamRequest
+  case result of (Left err) -> (error500 . TL.fromStrict . show) err
+                 (Right a) -> (eventStoreReadStreamResultToText AtomJsonEncoding) a
+realRunner mainRunner (ReadAll readAllRequest) = do
+  result <- liftIO $ (eventStoreActionRunnerReadAll mainRunner) readAllRequest
+  case result of (Left err) -> (error500 . TL.fromStrict . show) err
+                 (Right a) -> (eventStoreReadAllResultToText AtomJsonEncoding) a
 
 type Process = forall m. forall e. (MonadIO m, Monad m, ScottyError e) => EventStoreAction -> ActionT e m ()
 
