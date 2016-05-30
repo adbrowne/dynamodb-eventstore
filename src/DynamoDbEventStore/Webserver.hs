@@ -1,8 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE RankNTypes #-}
 
-module DynamoDbEventStore.Webserver(app, showEventResponse, positiveInt64Parser, runParser) where
+module DynamoDbEventStore.Webserver(app, positiveInt64Parser, runParser, realRunner) where
 
 import           BasicPrelude
 import           Web.Scotty.Trans
@@ -102,7 +103,6 @@ baseUri :: Text
 baseUri = "http://localhost:2114"
 
 eventStoreActionResultToText :: (MonadIO m, ScottyError e) => ResponseEncoding -> EventStoreActionResult -> ActionT e m ()
-eventStoreActionResultToText _ (TextResult r) = (raw . TL.encodeUtf8 . TL.fromStrict) r
 eventStoreActionResultToText AtomJsonEncoding (PostEventResult r) = (raw . TL.encodeUtf8 . TL.fromStrict) $ show r
 eventStoreActionResultToText AtomJsonEncoding (ReadEventResult (Right (Just r))) = (raw . encodePretty . readEventResultJsonValue) r
 eventStoreActionResultToText AtomJsonEncoding (ReadEventResult (Right Nothing)) = (status $ mkStatus 404 (toByteString "Not Found")) >> raw "{}"
@@ -123,16 +123,6 @@ eventStoreActionResultToText AtomJsonEncoding s = error $ "todo EventStoreAction
 
 data ResponseEncoding = AtomJsonEncoding
 
-toResult :: (MonadIO m, ScottyError e) => Either LText (IO (Either InterpreterError EventStoreActionResult)) -> ActionT e m ()
-toResult (Left err) = error400 err
-toResult (Right esResult) = do
-  result <- liftIO esResult
-  case result of (Left err) -> (error500 . TL.fromStrict . show) err
-                 (Right a) -> (eventStoreActionResultToText AtomJsonEncoding) a
-
-showEventResponse :: Show a => a -> IO (Either InterpreterError EventStoreActionResult)
-showEventResponse a = return . Right $ TextResult (show a)
-
 notEmpty :: Text -> Either LText Text
 notEmpty "" = Left "streamId required"
 notEmpty t = Right t
@@ -146,7 +136,13 @@ instance MonadHasTime IO where
 instance (Monad m) => MonadHasTime (ReaderT UTCTime m) where
   getCurrentTime = ask
 
-type Process = (EventStoreAction -> IO (Either InterpreterError EventStoreActionResult))
+realRunner :: (EventStoreAction -> IO (Either InterpreterError EventStoreActionResult)) -> Process
+realRunner mainRunner eventStoreAction = do
+  result <- liftIO $ mainRunner eventStoreAction
+  case result of (Left err) -> (error500 . TL.fromStrict . show) err
+                 (Right a) -> (eventStoreActionResultToText AtomJsonEncoding) a
+
+type Process = forall m. forall e. (MonadIO m, Monad m, ScottyError e) => EventStoreAction -> ActionT e m ()
 
 data EventStartPosition = EventStartHead | EventStartPosition Int64
 
@@ -172,21 +168,23 @@ parseOptionalParameter errorMsg parser parameter =
   let parseValue t = Just <$> runParser parser errorMsg (TL.fromStrict t)
   in maybe (return $ Right Nothing) (fmap parseValue) parameter
 
+toResult' :: (MonadIO m, Monad m, ScottyError e) => Process -> Either LText EventStoreAction -> ActionT e m ()
+toResult' _ (Left err) = error400 err
+toResult' process (Right action) = process action
+
 readStreamHandler :: (MonadIO m, ScottyError e) => Process -> ActionT e m Text -> Maybe (ActionT e m Text) -> Maybe (ActionT e m Text) -> FeedDirection -> ActionT e m ()
 readStreamHandler process streamIdAction startEventParameter eventCountParameter feedDirection = do
     streamId <- streamIdAction
     startEvent <- parseOptionalParameter "Invalid event number" eventStartPositionParser startEventParameter
     eventCount <- readOptionalParameter "Invalid event count" eventCountParameter
     if (streamId == "$all") then
-      toResult . fmap (process . ReadAll) $
-            pure ReadAllRequest
+      process $ ReadAll ReadAllRequest
     else
-      toResult . fmap (process . ReadStream) $
-            ReadStreamRequest
+      toResult' process $ (ReadStream <$> (ReadStreamRequest
             <$> notEmpty streamId
             <*> (eventStartPositionToMaybeInt64 <$> startEvent)
             <*> ((fromMaybe 10) <$> eventCount)
-            <*> Right feedDirection
+            <*> Right feedDirection))
 
 app :: (MonadIO m, MonadHasTime m, ScottyError e) => Process -> ScottyT e m ()
 app process = do
@@ -204,18 +202,16 @@ app process = do
           <*> (EventId <$> eventId)
           <*> pure (EventTime eventTime)
           <*> pure True
-    toResult . fmap (process . PostEvent) $
-          PostEventRequest
+    toResult' process $ (PostEvent <$> (PostEventRequest
           <$> pure streamId
           <*> expectedVersion
-          <*> ((\x -> x:|[]) <$> eventEntries)
+          <*> ((\x -> x:|[]) <$> eventEntries)))
   get "/streams/:streamId/:eventNumber" $ do
     streamId <- param "streamId"
     eventNumber <- param "eventNumber"
-    toResult . fmap (process . ReadEvent) $
-          ReadEventRequest
+    toResult' process $ (ReadEvent <$> (ReadEventRequest
           <$> notEmpty streamId
-          <*> runParser positiveInt64Parser "Invalid Event Number" eventNumber
+          <*> runParser positiveInt64Parser "Invalid Event Number" eventNumber))
   get "/streams/:streamId" $ readStreamHandler process (param "streamId") Nothing Nothing FeedDirectionBackward
   get "/streams/:streamId/:eventNumber/:count" $ readStreamHandler process (param "streamId") (Just $ param "eventNumber") (Just $ param "count") FeedDirectionBackward
   get "/streams/:streamId/:eventNumber/backward/:count" $ readStreamHandler process (param "streamId") (Just $ param "eventNumber") (Just $ param "count") FeedDirectionBackward

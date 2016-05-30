@@ -113,7 +113,6 @@ data EventStoreActionResult =
   | ReadStreamResult (Either EventStoreActionError [RecordedEvent])
   | ReadAllResult (Either EventStoreActionError [RecordedEvent])
   | ReadEventResult (Either EventStoreActionError (Maybe RecordedEvent))
-  | TextResult Text
   deriving (Show)
 
 data PostEventRequest = PostEventRequest {

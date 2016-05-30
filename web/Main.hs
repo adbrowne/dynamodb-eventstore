@@ -11,7 +11,7 @@ import           Control.Monad.Except
 import           Network.Wai.Handler.Warp
 import           Web.Scotty
 import           System.IO (stdout)
-import           DynamoDbEventStore.Webserver (app)
+import           DynamoDbEventStore.Webserver (app, realRunner)
 import           Control.Concurrent
 import           DynamoDbEventStore.AmazonkaInterpreter
 import           DynamoDbEventStore.EventStoreActions
@@ -36,9 +36,9 @@ runMyAws :: (MyAwsStack a -> ExceptT InterpreterError IO a) -> Text -> DynamoCmd
 runMyAws runner tableName program = 
   runner $ runProgram tableName program
 
-printEvent :: EventStoreAction -> IO EventStoreAction
+printEvent :: (MonadIO m) => EventStoreAction -> m EventStoreAction
 printEvent a = do
-  print . show $ a
+  liftIO $ print . show $ a
   return a
 
 runEventStoreAction :: (forall a. DynamoCmdM a -> ExceptT InterpreterError IO a) -> EventStoreAction -> IO (Either InterpreterError EventStoreActionResult)
@@ -120,7 +120,7 @@ start parsedConfig = do
      let httpPort = (configPort parsedConfig)
      let warpSettings = setPort httpPort $ setHost (fromString httpHost) defaultSettings
      putStrLn $ "Server listenting on: http://" <> fromString httpHost <> ":" <> show httpPort
-     _ <- lift $ forkIO $ void $ scottyApp (app (printEvent >=> runEventStoreAction runner')) >>= runSettings warpSettings
+     _ <- lift $ forkIO $ void $ scottyApp (app (printEvent >=> realRunner (runEventStoreAction runner'))) >>= runSettings warpSettings
      programResult <- liftIO $ takeMVar exitMVar
      print programResult
      case programResult of (Left err)         -> throwError $ ApplicationErrorInterpreter err

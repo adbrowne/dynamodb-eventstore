@@ -9,7 +9,9 @@ import           Network.Wai
 import           Control.Monad.Reader
 import           Data.Time.Clock
 import           Data.Time.Format
+import qualified Data.Text.Lazy as TL
 import qualified DynamoDbEventStore.Webserver as W
+import           DynamoDbEventStore.EventStoreActions (EventStoreAction)
 import qualified Web.Scotty.Trans as S
 import qualified Network.HTTP.Types as H
 
@@ -28,11 +30,14 @@ etHeader = "ES-EventType"
 eventIdHeader :: H.HeaderName
 eventIdHeader = "ES-EventId"
 
+showEventResponse :: (Monad m, S.ScottyError e) => EventStoreAction -> S.ActionT e m ()
+showEventResponse eventStoreAction = S.text $ TL.fromStrict $ show eventStoreAction
 
 app :: IO Application
 app = do
   sampleTime <- parseTimeM True defaultTimeLocale rfc822DateFormat "Sun, 08 May 2016 12:49:41 +0000"
-  S.scottyAppT (flip runReaderT sampleTime) (W.app W.showEventResponse :: S.ScottyT LText (ReaderT UTCTime IO) ()) 
+  S.scottyAppT (flip runReaderT sampleTime) (W.app showEventResponse :: S.ScottyT LText (ReaderT UTCTime IO) ()) 
+
 postEventSpec :: Spec
 postEventSpec = do
   let baseHeaders = [(etHeader, "MyEventType"),(eventIdHeader, "12f44004-f5dd-41f1-8225-72dd65a0332e")]
