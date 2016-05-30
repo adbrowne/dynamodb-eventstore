@@ -235,9 +235,6 @@ binaryDeserialize key x = do
   case value of Left err    -> throwError (EventStoreActionErrorBodyDecode key err)
                 Right v     -> return v
 
---nonEmpty :: Monad m => [a] -> (ExceptT EventStoreActionError m) (NonEmpty a)
---nonEmpty = maybe (throwError DynamoItemFoundWithNoEvents RecordFoundWithNoEvents)
-
 toRecordedEvent :: DynamoReadResult -> (ExceptT EventStoreActionError DynamoCmdM) (NonEmpty RecordedEvent)
 toRecordedEvent (DynamoReadResult key@(DynamoKey dynamoHashKey firstEventNumber) _version values) = do
   eventBody <- readField Constants.pageBodyKey avB values 
