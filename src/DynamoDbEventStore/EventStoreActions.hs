@@ -153,7 +153,7 @@ data FeedDirection = FeedDirectionForward | FeedDirectionBackward
   deriving (Eq, Show)
 
 data ReadStreamRequest = ReadStreamRequest {
-   rsrStreamId         :: Text,
+   rsrStreamId         :: StreamId,
    rsrStartEventNumber :: Maybe Int64,
    rsrMaxItems         :: Natural,
    rsrDirection        :: FeedDirection
@@ -323,7 +323,7 @@ getReadStreamRequestProgram (ReadStreamRequest sId startEventNumber maxItems Fee
   runExceptT $ do
     events <- 
       P.toListM $ 
-        recordedEventProducerBackward (StreamId sId) startEventNumber 10 
+        recordedEventProducerBackward sId startEventNumber 10 
           >-> filterLastEvent startEventNumber 
           >-> maxItemsFilter startEventNumber
     return $ StreamResult { streamResultEvents = events, streamResultFirst = Nothing, streamResultNext = Nothing, streamResultPrevious = Nothing }
@@ -333,11 +333,11 @@ getReadStreamRequestProgram (ReadStreamRequest sId startEventNumber maxItems Fee
     minimumEventNumber start = (fromIntegral start - fromIntegral maxItems)
     filterLastEvent Nothing = P.filter (const True)
     filterLastEvent (Just v) = P.filter ((<= v) . recordedEventNumber) 
-getReadStreamRequestProgram (ReadStreamRequest sId startEventNumber maxItems FeedDirectionForward) = 
+getReadStreamRequestProgram (ReadStreamRequest streamId startEventNumber maxItems FeedDirectionForward) = 
   runExceptT $ do
     events <- 
       P.toListM $ 
-        recordedEventProducerForward (StreamId sId) startEventNumber 10 
+        recordedEventProducerForward streamId startEventNumber 10 
           >-> filterFirstEvent startEventNumber 
           >-> maxItemsFilter startEventNumber
     return $ StreamResult { streamResultEvents = events, streamResultFirst = Nothing, streamResultNext = Nothing, streamResultPrevious = Nothing }

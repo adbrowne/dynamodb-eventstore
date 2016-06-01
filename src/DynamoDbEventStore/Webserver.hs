@@ -110,11 +110,10 @@ eventStoreReadEventResultToText AtomJsonEncoding (ReadEventResult (Left err)) = 
 eventStoreReadEventResultToText AtomJsonEncoding (ReadEventResult (Right (Just r))) =(raw . encodePretty . readEventResultJsonValue) r
 eventStoreReadEventResultToText AtomJsonEncoding (ReadEventResult (Right Nothing)) = (status $ mkStatus 404 (toByteString "Not Found")) >> raw "{}"
 
-eventStoreReadStreamResultToText :: (MonadIO m, ScottyError e) => ResponseEncoding -> ReadStreamResult -> ActionT e m ()
-eventStoreReadStreamResultToText AtomJsonEncoding (ReadStreamResult (Left err)) = (error500 . TL.fromStrict . show) err
-eventStoreReadStreamResultToText AtomJsonEncoding (ReadStreamResult (Right StreamResult{..})) = 
+eventStoreReadStreamResultToText :: (MonadIO m, ScottyError e) => StreamId -> ResponseEncoding -> ReadStreamResult -> ActionT e m ()
+eventStoreReadStreamResultToText _ AtomJsonEncoding (ReadStreamResult (Left err)) = (error500 . TL.fromStrict . show) err
+eventStoreReadStreamResultToText streamId AtomJsonEncoding (ReadStreamResult (Right StreamResult{..})) = 
   let 
-    streamId = StreamId "todo stream name"
     sampleTime = parseTimeOrError True defaultTimeLocale rfc822DateFormat "Sun, 08 May 2016 12:49:41 +0000" -- todo
     buildFeed' = recordedEventsToFeed baseUri streamId sampleTime
   in raw . encodePretty . jsonFeed . buildFeed' $ streamResultEvents
@@ -159,10 +158,10 @@ realRunner mainRunner (ReadEvent readEventRequest) = do
   result <- liftIO $ (eventStoreActionRunnerReadEvent mainRunner) readEventRequest
   case result of (Left err) -> (error500 . TL.fromStrict . show) err
                  (Right a) -> (eventStoreReadEventResultToText AtomJsonEncoding) a
-realRunner mainRunner (ReadStream readStreamRequest) = do
+realRunner mainRunner (ReadStream readStreamRequest@ReadStreamRequest{..}) = do
   result <- liftIO $ (eventStoreActionRunnerReadStream mainRunner) readStreamRequest
   case result of (Left err) -> (error500 . TL.fromStrict . show) err
-                 (Right a) -> (eventStoreReadStreamResultToText AtomJsonEncoding) a
+                 (Right a) -> (eventStoreReadStreamResultToText rsrStreamId AtomJsonEncoding) a
 realRunner mainRunner (ReadAll readAllRequest) = do
   result <- liftIO $ (eventStoreActionRunnerReadAll mainRunner) readAllRequest
   case result of (Left err) -> (error500 . TL.fromStrict . show) err
@@ -207,7 +206,7 @@ readStreamHandler process streamIdAction startEventParameter eventCountParameter
       process $ ReadAll ReadAllRequest
     else
       toResult' process $ (ReadStream <$> (ReadStreamRequest
-            <$> notEmpty streamId
+            <$> (StreamId <$> notEmpty streamId)
             <*> (eventStartPositionToMaybeInt64 <$> startEvent)
             <*> ((fromMaybe 10) <$> eventCount)
             <*> Right feedDirection))
