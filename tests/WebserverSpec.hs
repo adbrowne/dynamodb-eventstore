@@ -98,27 +98,27 @@ getStreamSpec = do
   assertSuccess 
     "stream simple" 
     ["streams","myStreamId"] 
-    "ReadStream (ReadStreamRequest {rsrStreamId = \"myStreamId\", rsrStartEventNumber = Nothing, rsrMaxItems = 10, rsrDirection = FeedDirectionBackward})"
+    "ReadStream (ReadStreamRequest {rsrStreamId = StreamId \"myStreamId\", rsrStartEventNumber = Nothing, rsrMaxItems = 10, rsrDirection = FeedDirectionBackward})"
 
   assertSuccess 
     "stream with start event and limit" 
     ["streams","myStreamId","3","5"] 
-    "ReadStream (ReadStreamRequest {rsrStreamId = \"myStreamId\", rsrStartEventNumber = Just 3, rsrMaxItems = 5, rsrDirection = FeedDirectionBackward})"
+    "ReadStream (ReadStreamRequest {rsrStreamId = StreamId \"myStreamId\", rsrStartEventNumber = Just 3, rsrMaxItems = 5, rsrDirection = FeedDirectionBackward})"
 
   assertSuccess 
     "stream with start and limit, backward" 
     ["streams","myStreamId","3","backward","5"] 
-    "ReadStream (ReadStreamRequest {rsrStreamId = \"myStreamId\", rsrStartEventNumber = Just 3, rsrMaxItems = 5, rsrDirection = FeedDirectionBackward})"
+    "ReadStream (ReadStreamRequest {rsrStreamId = StreamId \"myStreamId\", rsrStartEventNumber = Just 3, rsrMaxItems = 5, rsrDirection = FeedDirectionBackward})"
 
   assertSuccess 
     "stream backward from head" 
     ["streams","myStreamId","head","backward","5"] 
-    "ReadStream (ReadStreamRequest {rsrStreamId = \"myStreamId\", rsrStartEventNumber = Nothing, rsrMaxItems = 5, rsrDirection = FeedDirectionBackward})"
+    "ReadStream (ReadStreamRequest {rsrStreamId = StreamId \"myStreamId\", rsrStartEventNumber = Nothing, rsrMaxItems = 5, rsrDirection = FeedDirectionBackward})"
 
   assertSuccess 
     "stream with start and limit, forward" 
     ["streams","myStreamId","3","forward","5"] 
-    "ReadStream (ReadStreamRequest {rsrStreamId = \"myStreamId\", rsrStartEventNumber = Just 3, rsrMaxItems = 5, rsrDirection = FeedDirectionForward})"
+    "ReadStream (ReadStreamRequest {rsrStreamId = StreamId \"myStreamId\", rsrStartEventNumber = Just 3, rsrMaxItems = 5, rsrDirection = FeedDirectionForward})"
 
   describe "Get stream with missing stream name" $ do
     let getExample = getStream ""
