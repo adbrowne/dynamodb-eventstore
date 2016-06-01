@@ -22,6 +22,7 @@ module DynamoDbEventStore.EventStoreActions(
   ReadAllResult(..),
   ReadEventResult(..),
   FeedDirection(..),
+  StreamResult(..),
   postEventRequestProgram,
   getReadStreamRequestProgram,
   getReadEventRequestProgram,
@@ -104,8 +105,17 @@ instance Serialize.Serialize EventType where
   put (EventType t) = (Serialize.put . encodeUtf8) t
   get = EventType . decodeUtf8 <$> Serialize.get 
 
+type StreamOffset = (FeedDirection, Int64, Natural) 
+
+data StreamResult = StreamResult {
+    streamResultEvents   :: [RecordedEvent]
+  , streamResultFirst    :: Maybe StreamOffset
+  , streamResultNext     :: Maybe StreamOffset
+  , streamResultPrevious :: Maybe StreamOffset
+} deriving Show
+
 newtype PostEventResult = PostEventResult (Either EventStoreActionError EventWriteResult) deriving Show
-newtype ReadStreamResult = ReadStreamResult (Either EventStoreActionError [RecordedEvent]) deriving Show
+newtype ReadStreamResult = ReadStreamResult (Either EventStoreActionError StreamResult) deriving Show
 newtype ReadAllResult = ReadAllResult (Either EventStoreActionError [RecordedEvent]) deriving Show
 newtype ReadEventResult = ReadEventResult (Either EventStoreActionError (Maybe RecordedEvent)) deriving Show
 
@@ -308,13 +318,15 @@ getReadEventRequestProgram (ReadEventRequest sId eventNumber) = runExceptT $ do
   (events :: [RecordedEvent]) <- P.toListM $ recordedEventProducerBackward (StreamId sId) (Just eventNumber) 1
   return $ find ((== eventNumber) . recordedEventNumber) events
 
-getReadStreamRequestProgram :: ReadStreamRequest -> DynamoCmdM (Either EventStoreActionError [RecordedEvent])
+getReadStreamRequestProgram :: ReadStreamRequest -> DynamoCmdM (Either EventStoreActionError StreamResult)
 getReadStreamRequestProgram (ReadStreamRequest sId startEventNumber maxItems FeedDirectionBackward) = 
-  runExceptT $ 
-    P.toListM $ 
-      recordedEventProducerBackward (StreamId sId) startEventNumber 10 
-        >-> filterLastEvent startEventNumber 
-        >-> maxItemsFilter startEventNumber
+  runExceptT $ do
+    events <- 
+      P.toListM $ 
+        recordedEventProducerBackward (StreamId sId) startEventNumber 10 
+          >-> filterLastEvent startEventNumber 
+          >-> maxItemsFilter startEventNumber
+    return $ StreamResult { streamResultEvents = events, streamResultFirst = Nothing, streamResultNext = Nothing, streamResultPrevious = Nothing }
   where
     maxItemsFilter Nothing = P.take (fromIntegral maxItems)
     maxItemsFilter (Just v) = P.takeWhile (\r -> recordedEventNumber r > (minimumEventNumber v))
@@ -322,11 +334,13 @@ getReadStreamRequestProgram (ReadStreamRequest sId startEventNumber maxItems Fee
     filterLastEvent Nothing = P.filter (const True)
     filterLastEvent (Just v) = P.filter ((<= v) . recordedEventNumber) 
 getReadStreamRequestProgram (ReadStreamRequest sId startEventNumber maxItems FeedDirectionForward) = 
-  runExceptT $ 
-    P.toListM $ 
-      recordedEventProducerForward (StreamId sId) startEventNumber 10 
-        >-> filterFirstEvent startEventNumber 
-        >-> maxItemsFilter startEventNumber
+  runExceptT $ do
+    events <- 
+      P.toListM $ 
+        recordedEventProducerForward (StreamId sId) startEventNumber 10 
+          >-> filterFirstEvent startEventNumber 
+          >-> maxItemsFilter startEventNumber
+    return $ StreamResult { streamResultEvents = events, streamResultFirst = Nothing, streamResultNext = Nothing, streamResultPrevious = Nothing }
   where
     maxItemsFilter Nothing = P.take (fromIntegral maxItems)
     maxItemsFilter (Just v) = P.takeWhile (\r -> recordedEventNumber r <= (maximumEventNumber v))

@@ -2,6 +2,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module DynamoDbEventStore.Webserver(app, positiveInt64Parser, runParser, realRunner, EventStoreActionRunner(..)) where
 
@@ -111,12 +112,12 @@ eventStoreReadEventResultToText AtomJsonEncoding (ReadEventResult (Right Nothing
 
 eventStoreReadStreamResultToText :: (MonadIO m, ScottyError e) => ResponseEncoding -> ReadStreamResult -> ActionT e m ()
 eventStoreReadStreamResultToText AtomJsonEncoding (ReadStreamResult (Left err)) = (error500 . TL.fromStrict . show) err
-eventStoreReadStreamResultToText AtomJsonEncoding (ReadStreamResult (Right xs)) = 
+eventStoreReadStreamResultToText AtomJsonEncoding (ReadStreamResult (Right StreamResult{..})) = 
   let 
     streamId = StreamId "todo stream name"
     sampleTime = parseTimeOrError True defaultTimeLocale rfc822DateFormat "Sun, 08 May 2016 12:49:41 +0000" -- todo
     buildFeed' = recordedEventsToFeed baseUri streamId sampleTime
-  in raw . encodePretty . jsonFeed . buildFeed' $ xs
+  in raw . encodePretty . jsonFeed . buildFeed' $ streamResultEvents
 
 eventStoreReadAllResultToText :: (MonadIO m, ScottyError e) => ResponseEncoding -> ReadAllResult -> ActionT e m ()
 eventStoreReadAllResultToText AtomJsonEncoding (ReadAllResult (Left err)) = (error500 . TL.fromStrict . show) err
