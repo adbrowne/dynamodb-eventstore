@@ -43,7 +43,7 @@ data Entry
      deriving (Show)
 
 data EntryContent
- = EntryContent 
+ = EntryContent
      { entryContentEventStreamId :: Text
      , entryContentEventNumber   :: Int64
      , entryContentEventType     :: Text
@@ -59,7 +59,7 @@ data Link
      deriving (Show)
 
 recordedEventsToFeed :: Text -> StreamId -> UTCTime -> [RecordedEvent] -> Feed
-recordedEventsToFeed baseUri (StreamId streamId) updated xs = 
+recordedEventsToFeed baseUri (StreamId streamId) updated xs =
   let
     selfuri = baseUri <> "/" <> streamId
   in Feed
@@ -74,20 +74,20 @@ recordedEventsToFeed baseUri (StreamId streamId) updated xs =
        }
 
 recordedEventToFeedEntry :: Text -> RecordedEvent -> Entry
-recordedEventToFeedEntry baseUri recordedEvent = 
+recordedEventToFeedEntry baseUri recordedEvent =
   let
     streamId = recordedEventStreamId recordedEvent
-    eventNumber = (show . recordedEventNumber) recordedEvent 
+    eventNumber = (show . recordedEventNumber) recordedEvent
     eventCreated = recordedEventCreated recordedEvent
     eventUri = baseUri <> "/" <> streamId <> "/" <> eventNumber
     title = eventNumber <>  "@" <> streamId
     updated = eventCreated
     summary = recordedEventType recordedEvent
-    dataField :: Maybe Value = 
+    dataField :: Maybe Value =
       if recordedEventIsJson recordedEvent then
-        let 
+        let
           binaryData = recordedEventData recordedEvent
-        in (APBS.maybeResult  (APBS.parse json binaryData))
+        in APBS.maybeResult (APBS.parse json binaryData)
       else Nothing
     content = EntryContent {
                   entryContentEventStreamId =  recordedEventStreamId recordedEvent
@@ -106,18 +106,18 @@ recordedEventToFeedEntry baseUri recordedEvent =
       , entrySummary = summary
       , entryContent = content
       , entryLinks = links
-     } 
+     }
 
 jsonLink :: Link -> Value
 jsonLink Link {..} =
   object [ "relation" .= linkRel, "uri" .= linkHref ]
 
 jsonEntryContent :: EntryContent -> Value
-jsonEntryContent EntryContent{..} = 
-  let 
+jsonEntryContent EntryContent{..} =
+  let
     addDataField Nothing xs = xs
     addDataField (Just x) xs = ("data" .= x):xs
-    standardFields = [ 
+    standardFields = [
         "eventStreamId" .= entryContentEventStreamId
       , "eventNumber" .= entryContentEventNumber
       , "eventType" .= entryContentEventType]
@@ -128,8 +128,8 @@ jsonAuthor Author {..} =
   object [ "name" .= authorName ]
 
 jsonFeed :: Feed -> Value
-jsonFeed Feed {..} = 
-  let 
+jsonFeed Feed {..} =
+  let
     title = "title" .= feedTitle
     feedid = "id" .= feedId
     headofstream = "headOfStream" .= True
@@ -138,7 +138,7 @@ jsonFeed Feed {..} =
     streamid = "streamId" .= feedStreamId
     etag = "etag" .= ( "todo" :: Text)
     author = "author" .= jsonAuthor feedAuthor
-    links = "links" .= (Array . V.fromList) (jsonLink <$> feedLinks) 
+    links = "links" .= (Array . V.fromList) (jsonLink <$> feedLinks)
     entries = "entries" .= (Array . V.fromList) (jsonEntry <$> feedEntries)
   in object [ title, feedid, updated, streamid, author, headofstream, selfurl, etag, links, entries]
 
@@ -153,5 +153,5 @@ jsonEntry entry =
     updated = "updated" .= (formatJsonTime $ entryUpdated entry)
     summary = "summary" .= entrySummary entry
     content = "content" .= (jsonEntryContent $ entryContent entry)
-    links = "links" .= (Array . V.fromList) (jsonLink <$> entryLinks entry) 
+    links = "links" .= (Array . V.fromList) (jsonLink <$> entryLinks entry)
   in object [entryid, title, summary, content, links, updated]
