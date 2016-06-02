@@ -32,6 +32,7 @@ import qualified Data.Sequence as Seq
 import qualified Data.Aeson as Aeson
 import qualified Data.Set as Set
 import qualified Pipes.Prelude as P
+import           GHC.Natural
 
 import           DynamoDbEventStore.EventStoreCommands
 import           DynamoDbEventStore.EventStoreActions
@@ -358,6 +359,21 @@ testState1000Items =
     writeState = execProgram "writeEvents" (forM_ requests id) emptyTestState 
   in view testState writeState
 
+getSampleItems :: (Maybe Int64) -> Natural -> FeedDirection -> Either EventStoreActionError StreamResult
+getSampleItems startEvent maxItems direction =
+  evalProgram "ReadStream" (getReadStreamRequestProgram (ReadStreamRequest (StreamId "MyStream") startEvent maxItems direction)) testState1000Items
+
+streamLinkTests :: [TestTree]
+streamLinkTests =
+  let 
+    endOfFeed = ("End of feed", getSampleItems Nothing 20 FeedDirectionBackward)
+    streamResultLast' = ("last", streamResultLast)
+    linkAssert (feedResultName, feedResult) (linkName, streamLink) expectedResult = 
+      testCase ("Unit - " <> feedResultName <> ":" <> linkName <> "link") $ assertEqual ("Should have" <> linkName <> " link") (Right expectedResult) (streamLink <$> feedResult)
+  in [
+    linkAssert endOfFeed streamResultLast' (Just (FeedDirectionForward, EventStartPosition 0, 20))
+  ]
+
 whenIndexing1000ItemsIopsIsMinimal :: Assertion
 whenIndexing1000ItemsIopsIsMinimal = 
   let 
@@ -447,5 +463,6 @@ tests = [
       testCase "Unit - Can write first event" canWriteFirstEvent,
       testCase "Unit - Check Iops usage" whenIndexing1000ItemsIopsIsMinimal,
       testCase "Unit - Error thrown if trying to write an event in a multiple gap" errorThrownIfTryingToWriteAnEventInAMultipleGap,
-      testCase "Unit - EventNumbers are calculated when there are multiple events" eventNumbersCorrectForMultipleEvents
+      testCase "Unit - EventNumbers are calculated when there are multiple events" eventNumbersCorrectForMultipleEvents,
+      testGroup "Stream Link Tests" streamLinkTests
   ]

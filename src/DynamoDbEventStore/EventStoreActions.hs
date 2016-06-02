@@ -23,6 +23,7 @@ module DynamoDbEventStore.EventStoreActions(
   ReadEventResult(..),
   FeedDirection(..),
   StreamResult(..),
+  EventStartPosition(..),
   postEventRequestProgram,
   getReadStreamRequestProgram,
   getReadEventRequestProgram,
@@ -101,17 +102,20 @@ instance Serialize.Serialize EventTime where
     time <- parseTimeM False defaultTimeLocale "%s%Q" textValue
     return $ EventTime time
 
+data EventStartPosition = EventStartHead | EventStartPosition Int64 deriving (Show, Eq)
+
 instance Serialize.Serialize EventType where
   put (EventType t) = (Serialize.put . encodeUtf8) t
   get = EventType . decodeUtf8 <$> Serialize.get 
 
-type StreamOffset = (FeedDirection, Int64, Natural) 
+type StreamOffset = (FeedDirection, EventStartPosition, Natural) 
 
 data StreamResult = StreamResult {
     streamResultEvents   :: [RecordedEvent]
   , streamResultFirst    :: Maybe StreamOffset
   , streamResultNext     :: Maybe StreamOffset
   , streamResultPrevious :: Maybe StreamOffset
+  , streamResultLast :: Maybe StreamOffset
 } deriving Show
 
 newtype PostEventResult = PostEventResult (Either EventStoreActionError EventWriteResult) deriving Show
@@ -326,7 +330,12 @@ getReadStreamRequestProgram (ReadStreamRequest sId startEventNumber maxItems Fee
         recordedEventProducerBackward sId startEventNumber 10 
           >-> filterLastEvent startEventNumber 
           >-> maxItemsFilter startEventNumber
-    return $ StreamResult { streamResultEvents = events, streamResultFirst = Nothing, streamResultNext = Nothing, streamResultPrevious = Nothing }
+    return $ StreamResult { 
+      streamResultEvents = events, 
+      streamResultFirst = Nothing, 
+      streamResultNext = Nothing, 
+      streamResultPrevious = Nothing, 
+      streamResultLast = Nothing }
   where
     maxItemsFilter Nothing = P.take (fromIntegral maxItems)
     maxItemsFilter (Just v) = P.takeWhile (\r -> recordedEventNumber r > (minimumEventNumber v))
@@ -340,7 +349,12 @@ getReadStreamRequestProgram (ReadStreamRequest streamId startEventNumber maxItem
         recordedEventProducerForward streamId startEventNumber 10 
           >-> filterFirstEvent startEventNumber 
           >-> maxItemsFilter startEventNumber
-    return $ StreamResult { streamResultEvents = events, streamResultFirst = Nothing, streamResultNext = Nothing, streamResultPrevious = Nothing }
+    return $ StreamResult { 
+      streamResultEvents = events, 
+      streamResultFirst = Nothing, 
+      streamResultNext = Nothing, 
+      streamResultPrevious = Nothing, 
+      streamResultLast = Nothing }
   where
     maxItemsFilter Nothing = P.take (fromIntegral maxItems)
     maxItemsFilter (Just v) = P.takeWhile (\r -> recordedEventNumber r <= (maximumEventNumber v))

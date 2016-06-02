@@ -169,8 +169,6 @@ realRunner mainRunner (ReadAll readAllRequest) = do
 
 type Process = forall m. forall e. (MonadIO m, Monad m, ScottyError e) => EventStoreAction -> ActionT e m ()
 
-data EventStartPosition = EventStartHead | EventStartPosition Int64
-
 eventStartPositionParser :: Parser EventStartPosition
 eventStartPositionParser =
   let 
