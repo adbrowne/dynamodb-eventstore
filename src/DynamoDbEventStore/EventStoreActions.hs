@@ -7,10 +7,10 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module DynamoDbEventStore.EventStoreActions(
-  ReadStreamRequest(..), 
-  ReadEventRequest(..), 
-  ReadAllRequest(..), 
-  PostEventRequest(..), 
+  ReadStreamRequest(..),
+  ReadEventRequest(..),
+  ReadAllRequest(..),
+  PostEventRequest(..),
   EventType(..),
   EventTime(..),
   unEventTime,
@@ -97,7 +97,7 @@ instance Serialize.Serialize a => Serialize.Serialize (NonEmptyWrapper a) where
 
 instance Serialize.Serialize EventTime where
   put (EventTime t) = (Serialize.put . (formatTime defaultTimeLocale "%s%Q")) t
-  get = do 
+  get = do
     textValue <- Serialize.get
     time <- parseTimeM False defaultTimeLocale "%s%Q" textValue
     return $ EventTime time
@@ -106,9 +106,9 @@ data EventStartPosition = EventStartHead | EventStartPosition Int64 deriving (Sh
 
 instance Serialize.Serialize EventType where
   put (EventType t) = (Serialize.put . encodeUtf8) t
-  get = EventType . decodeUtf8 <$> Serialize.get 
+  get = EventType . decodeUtf8 <$> Serialize.get
 
-type StreamOffset = (FeedDirection, EventStartPosition, Natural) 
+type StreamOffset = (FeedDirection, EventStartPosition, Natural)
 
 data StreamResult = StreamResult {
     streamResultEvents   :: [RecordedEvent]
@@ -140,7 +140,7 @@ instance QC.Arbitrary SecondPrecisionUtcTime where
     SecondPrecisionUtcTime <$> (UTCTime
      <$> (QC.arbitrary  :: QC.Gen Day)
      <*> (secondsToDiffTime <$> QC.choose (0, 86400)))
-     
+
 instance QC.Arbitrary EventEntry where
   arbitrary = EventEntry <$> (TL.encodeUtf8 . TL.pack <$> QC.arbitrary)
                          <*> (EventType . fromString <$> QC.arbitrary)
@@ -175,7 +175,7 @@ data EventWriteResult = WriteSuccess | WrongExpectedVersion | EventExists | Writ
 type UserProgramStack = ExceptT EventStoreActionError DynamoCmdM
 
 readField :: (MonadError EventStoreActionError m) => Text -> Lens' AttributeValue (Maybe a) -> DynamoValues -> m a
-readField = 
+readField =
    EventStoreCommands.readField EventStoreActionErrorFieldMissing
 
 ensureExpectedVersion :: DynamoKey -> UserProgramStack Bool
@@ -183,7 +183,7 @@ ensureExpectedVersion (DynamoKey _streamId (-1)) = return True
 ensureExpectedVersion (DynamoKey streamId expectedEventNumber) = do
   result <- queryTable' QueryDirectionBackward streamId 1 (Just $ expectedEventNumber + 1)
   checkEventNumber result
-  where 
+  where
     checkEventNumber [] = return False
     checkEventNumber ((readResult@(DynamoReadResult (DynamoKey _key eventNumber) _version _values)):_) = do
       eventCount <- GlobalFeedWriter.entryEventCount readResult
@@ -207,10 +207,10 @@ postEventRequestProgram (PostEventRequest sId ev eventEntries) = runExceptT $ do
   where
     writeMyEvent :: DynamoKey -> ExceptT EventStoreActionError DynamoCmdM EventWriteResult
     writeMyEvent dynamoKey = do
-      let values = HM.singleton Constants.pageBodyKey (set avB (Just ((Serialize.encode . NonEmptyWrapper) eventEntries)) attributeValue) & 
+      let values = HM.singleton Constants.pageBodyKey (set avB (Just ((Serialize.encode . NonEmptyWrapper) eventEntries)) attributeValue) &
                    HM.insert Constants.needsPagingKey (set avS (Just "True") attributeValue) &
                    HM.insert Constants.eventCountKey (set avN (Just ((showt . length) eventEntries)) attributeValue)
-      writeResult <- GlobalFeedWriter.dynamoWriteWithRetry dynamoKey values 0 
+      writeResult <- GlobalFeedWriter.dynamoWriteWithRetry dynamoKey values 0
       return $ toEventResult writeResult
     getDynamoKey :: Text -> Maybe Int64 -> EventId -> UserProgramStack (Either EventWriteResult DynamoKey)
     getDynamoKey streamId Nothing eventId = do
@@ -229,7 +229,7 @@ postEventRequestProgram (PostEventRequest sId ev eventEntries) = runExceptT $ do
       if expectedVersionOk then do
         let eventVersion = expectedVersion + 1
         return $ Right $ DynamoKey dynamoHashKey eventVersion
-      else 
+      else
         return $ Left WrongExpectedVersion
     toEventResult :: DynamoWriteResult -> EventWriteResult
     toEventResult DynamoWriteSuccess = WriteSuccess
@@ -244,13 +244,13 @@ binaryDeserialize key x = do
 
 toRecordedEvent :: DynamoReadResult -> (ExceptT EventStoreActionError DynamoCmdM) (NonEmpty RecordedEvent)
 toRecordedEvent (DynamoReadResult key@(DynamoKey dynamoHashKey firstEventNumber) _version values) = do
-  eventBody <- readField Constants.pageBodyKey avB values 
+  eventBody <- readField Constants.pageBodyKey avB values
   let streamId = T.drop (T.length Constants.streamDynamoKeyPrefix) dynamoHashKey
   NonEmptyWrapper eventEntries <- binaryDeserialize key eventBody
   let eventEntriesWithEventNumber = NonEmpty.zip (firstEventNumber :| [firstEventNumber + 1 ..]) eventEntries
   let buildEvent (eventNumber, EventEntry{..}) = RecordedEvent streamId eventNumber (BL.toStrict eventEntryData) (eventTypeToText eventEntryType) (unEventTime eventEntryCreated) eventEntryEventId eventEntryIsJson
   let recordedEvents = buildEvent <$> eventEntriesWithEventNumber
-  return recordedEvents 
+  return recordedEvents
 
 toRecordedEventBackward :: DynamoReadResult -> (ExceptT EventStoreActionError DynamoCmdM) (NonEmpty RecordedEvent)
 toRecordedEventBackward readResult = NonEmpty.reverse <$> toRecordedEvent readResult
@@ -282,7 +282,7 @@ dynamoReadResultProducerForward (StreamId streamId) firstEvent batchSize = do
     yieldResultsAndLoop (x:xs) = do
       yield x
       yieldResultsAndLoop xs
-      
+
 readResultToRecordedEventBackwardPipe :: Pipe DynamoReadResult RecordedEvent UserProgramStack ()
 readResultToRecordedEventBackwardPipe = forever $ do
   readResult <- await
@@ -296,26 +296,26 @@ readResultToRecordedEventPipe = forever $ do
   forM_ (NonEmpty.toList recordedEvents) yield
 
 recordedEventProducerBackward :: StreamId -> Maybe Int64 -> Natural -> Producer RecordedEvent UserProgramStack ()
-recordedEventProducerBackward streamId lastEvent batchSize = 
-  dynamoReadResultProducerBackward streamId ((+1) <$> lastEvent) batchSize 
+recordedEventProducerBackward streamId lastEvent batchSize =
+  dynamoReadResultProducerBackward streamId ((+1) <$> lastEvent) batchSize
     >-> readResultToRecordedEventBackwardPipe
     >-> filterLastEvent lastEvent
   where
     filterLastEvent Nothing = P.filter (const True)
-    filterLastEvent (Just v) = P.filter ((<= v) . recordedEventNumber) 
+    filterLastEvent (Just v) = P.filter ((<= v) . recordedEventNumber)
 
 recordedEventProducerForward :: StreamId -> Maybe Int64 -> Natural -> Producer RecordedEvent UserProgramStack ()
-recordedEventProducerForward streamId Nothing batchSize = 
+recordedEventProducerForward streamId Nothing batchSize =
   dynamoReadResultProducerForward streamId Nothing batchSize >-> readResultToRecordedEventPipe
-recordedEventProducerForward streamId firstEvent batchSize = 
-  let 
-    firstPageBackward = dynamoReadResultProducerBackward streamId ((+1) <$> firstEvent) 1 >-> readResultToRecordedEventPipe 
+recordedEventProducerForward streamId firstEvent batchSize =
+  let
+    firstPageBackward = dynamoReadResultProducerBackward streamId ((+1) <$> firstEvent) 1 >-> readResultToRecordedEventPipe
     restOfPages = dynamoReadResultProducerForward streamId firstEvent batchSize >-> readResultToRecordedEventPipe
   in
     (firstPageBackward >> restOfPages) >-> filterFirstEvent firstEvent
   where
     filterFirstEvent Nothing = P.filter (const True)
-    filterFirstEvent (Just v) = P.filter ((>= v) . recordedEventNumber) 
+    filterFirstEvent (Just v) = P.filter ((>= v) . recordedEventNumber)
 
 getReadEventRequestProgram :: ReadEventRequest -> DynamoCmdM (Either EventStoreActionError (Maybe RecordedEvent))
 getReadEventRequestProgram (ReadEventRequest sId eventNumber) = runExceptT $ do
@@ -324,90 +324,90 @@ getReadEventRequestProgram (ReadEventRequest sId eventNumber) = runExceptT $ do
 
 buildStreamResult :: FeedDirection -> Maybe Int64 -> [RecordedEvent] -> Maybe Int64 -> Natural -> Maybe StreamResult
 buildStreamResult _ Nothing _ _ _ = Nothing
-buildStreamResult FeedDirectionBackward lastEvent events requestedStartEventNumber maxItems = 
-  let 
+buildStreamResult FeedDirectionBackward (Just lastEvent) events requestedStartEventNumber maxItems =
+  let
     maxEventNumber = maximum $ recordedEventNumber <$> events
     startEventNumber = fromMaybe maxEventNumber requestedStartEventNumber
     nextEventNumber = startEventNumber - fromIntegral maxItems
-  in Just $ StreamResult { 
-    streamResultEvents = events, 
+  in Just $ StreamResult {
+    streamResultEvents = events,
     streamResultFirst = Just $ (FeedDirectionBackward, EventStartHead, maxItems),
-    streamResultNext = 
+    streamResultNext =
       if nextEventNumber > 0 then
         Just $ (FeedDirectionBackward, EventStartPosition nextEventNumber, maxItems)
       else Nothing,
-    streamResultPrevious = Just $ (FeedDirectionForward, EventStartPosition (startEventNumber + 1), maxItems), 
+    streamResultPrevious = Just $ (FeedDirectionForward, EventStartPosition (min (startEventNumber + 1) (lastEvent + 1)), maxItems),
     streamResultLast =
       if nextEventNumber > 0 then
-        Just $ (FeedDirectionForward, EventStartPosition 0, maxItems) 
-      else Nothing 
+        Just $ (FeedDirectionForward, EventStartPosition 0, maxItems)
+      else Nothing
   }
-buildStreamResult FeedDirectionForward lastEvent events requestedStartEventNumber maxItems = 
-  let 
-    maxEventNumber = maximum $ recordedEventNumber <$> events
+buildStreamResult FeedDirectionForward (Just _lastEvent) events requestedStartEventNumber maxItems =
+  let
+    maxEventNumber = maximumMay $ recordedEventNumber <$> events
     minEventNumber = minimumMay $ recordedEventNumber <$> events
-    startEventNumber = fromMaybe maxEventNumber requestedStartEventNumber
-    nextEventNumber = startEventNumber - fromIntegral maxItems
-  in Just $ StreamResult { 
-    streamResultEvents = events, 
+    nextEventNumber = fromMaybe (fromMaybe 0 ((\x -> x - 1) <$> requestedStartEventNumber)) ((\x -> x - 1) <$> minEventNumber)
+    previousEventNumber = (+1) <$> maxEventNumber
+  in Just $ StreamResult {
+    streamResultEvents = events,
     streamResultFirst = Just $ (FeedDirectionBackward, EventStartHead, maxItems),
-    streamResultNext = 
+    streamResultNext =
       if nextEventNumber > 0 then
         Just $ (FeedDirectionBackward, EventStartPosition nextEventNumber, maxItems)
       else Nothing,
-    streamResultPrevious = Just $ (FeedDirectionForward, EventStartPosition (startEventNumber + 1), maxItems), 
+    streamResultPrevious = (\eventNumber -> (FeedDirectionForward, EventStartPosition eventNumber, maxItems)) <$> previousEventNumber,
     streamResultLast =
       if (maybe True (> 0) minEventNumber) then
-        Just $ (FeedDirectionForward, EventStartPosition 0, maxItems) 
-      else Nothing 
+        Just $ (FeedDirectionForward, EventStartPosition 0, maxItems)
+      else Nothing
   }
 
 getLastEvent :: StreamId -> UserProgramStack (Maybe Int64)
 getLastEvent streamId = do
   lastEvent <- P.toListM $ recordedEventProducerBackward streamId Nothing 1
-  return $ 
+  return $
     case lastEvent of (x:_) -> Just (recordedEventNumber x)
                       _     -> Nothing
 
 getReadStreamRequestProgram :: ReadStreamRequest -> DynamoCmdM (Either EventStoreActionError (Maybe StreamResult))
-getReadStreamRequestProgram (ReadStreamRequest streamId startEventNumber maxItems FeedDirectionBackward) = 
+getReadStreamRequestProgram (ReadStreamRequest streamId startEventNumber maxItems FeedDirectionBackward) =
   runExceptT $ do
     lastEvent <- getLastEvent streamId
-    events <- 
-      P.toListM $ 
-        recordedEventProducerBackward streamId startEventNumber 10 
-          >-> filterLastEvent startEventNumber 
+    events <-
+      P.toListM $
+        recordedEventProducerBackward streamId startEventNumber 10
+          >-> filterLastEvent startEventNumber
           >-> maxItemsFilter startEventNumber
-    return $ buildStreamResult FeedDirectionBackward lastEvent events startEventNumber maxItems  
+    return $ buildStreamResult FeedDirectionBackward lastEvent events startEventNumber maxItems
   where
     maxItemsFilter Nothing = P.take (fromIntegral maxItems)
     maxItemsFilter (Just v) = P.takeWhile (\r -> recordedEventNumber r > (minimumEventNumber v))
     minimumEventNumber start = (fromIntegral start - fromIntegral maxItems)
     filterLastEvent Nothing = P.filter (const True)
-    filterLastEvent (Just v) = P.filter ((<= v) . recordedEventNumber) 
-getReadStreamRequestProgram (ReadStreamRequest streamId startEventNumber maxItems FeedDirectionForward) = 
+    filterLastEvent (Just v) = P.filter ((<= v) . recordedEventNumber)
+getReadStreamRequestProgram (ReadStreamRequest streamId startEventNumber maxItems FeedDirectionForward) =
   runExceptT $ do
     lastEvent <- getLastEvent streamId
-    events <- 
-      P.toListM $ 
-        recordedEventProducerForward streamId startEventNumber 10 
-          >-> filterFirstEvent startEventNumber 
+    events <-
+      P.toListM $
+        recordedEventProducerForward streamId startEventNumber 10
+          >-> filterFirstEvent startEventNumber
           >-> maxItemsFilter startEventNumber
-    return $ buildStreamResult FeedDirectionForward lastEvent events startEventNumber maxItems  
+    return $ buildStreamResult FeedDirectionForward lastEvent events startEventNumber maxItems
   where
     maxItemsFilter Nothing = P.take (fromIntegral maxItems)
     maxItemsFilter (Just v) = P.takeWhile (\r -> recordedEventNumber r <= (maximumEventNumber v))
     maximumEventNumber start = (fromIntegral start + fromIntegral maxItems - 1)
     filterFirstEvent Nothing = P.filter (const True)
-    filterFirstEvent (Just v) = P.filter ((>= v) . recordedEventNumber) 
+    filterFirstEvent (Just v) = P.filter ((>= v) . recordedEventNumber)
 
-getPageDynamoKey :: Int -> DynamoKey 
+getPageDynamoKey :: Int -> DynamoKey
 getPageDynamoKey pageNumber =
   let paddedPageNumber = fromString (printf "%08d" pageNumber)
   in DynamoKey (Constants.pageDynamoKeyPrefix <> paddedPageNumber) 0
 
 feedEntryToEventKeys :: GlobalFeedWriter.FeedEntry -> [EventKey]
-feedEntryToEventKeys GlobalFeedWriter.FeedEntry { GlobalFeedWriter.feedEntryStream = streamId, GlobalFeedWriter.feedEntryNumber = eventNumber, GlobalFeedWriter.feedEntryCount = entryCount } = 
+feedEntryToEventKeys GlobalFeedWriter.FeedEntry { GlobalFeedWriter.feedEntryStream = streamId, GlobalFeedWriter.feedEntryNumber = eventNumber, GlobalFeedWriter.feedEntryCount = entryCount } =
   (\number -> EventKey(streamId, number)) <$> (take entryCount [eventNumber..])
 
 jsonDecode :: (Aeson.FromJSON a, MonadError EventStoreActionError m) => ByteString -> m a
@@ -415,7 +415,7 @@ jsonDecode a = eitherToError $ over _Left EventStoreActionErrorJsonDecodeError $
 
 readPageKeys :: DynamoReadResult -> UserProgramStack [EventKey]
 readPageKeys (DynamoReadResult _key _version values) = do
-   body <- readField Constants.pageBodyKey avB values 
+   body <- readField Constants.pageBodyKey avB values
    feedEntries <- jsonDecode body
    return $ feedEntries >>= feedEntryToEventKeys
 

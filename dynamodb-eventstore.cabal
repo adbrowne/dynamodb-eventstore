@@ -25,7 +25,7 @@ library
                        DynamoDbEventStore.Constants,
                        DynamoDbEventStore.Feed,
                        DynamoDbEventStore.AmazonkaInterpreter
-  extensions:          NoImplicitPrelude
+  default-extensions:          NoImplicitPrelude
   build-depends:       base >=4.8 && <4.9,
                        basic-prelude,
                        scotty >= 0.9,
@@ -70,7 +70,7 @@ library
 
 executable web
   GHC-Options: -Wall
-  extensions:          NoImplicitPrelude
+  default-extensions:          NoImplicitPrelude
   build-depends:       base,
                        basic-prelude,
                        scotty >= 0.9,
@@ -93,7 +93,7 @@ executable web
 
 executable client
   GHC-Options: -Wall
-  extensions:          NoImplicitPrelude
+  default-extensions:          NoImplicitPrelude
   build-depends:       base,
                        basic-prelude,
                        wreq,
@@ -107,7 +107,7 @@ executable client
 
 Test-Suite tasty
   GHC-Options: -Wall
-  extensions:          NoImplicitPrelude
+  default-extensions:          NoImplicitPrelude
   type:                exitcode-stdio-1.0
   main-is:             tastytests.hs
   hs-source-dirs:      tests
