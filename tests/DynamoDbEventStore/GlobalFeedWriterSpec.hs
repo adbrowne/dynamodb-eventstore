@@ -129,14 +129,17 @@ unpositive (QC.Positive x) = x
 fmap2 :: (Functor f, Functor f1) => (a -> b) -> f (f1 a) -> f (f1 b)
 fmap2 = fmap . fmap
 
+fmap3 :: (Functor f, Functor f1, Functor f2) => (a -> b) -> f (f1 (f2 a)) -> f (f1 (f2 b))
+fmap3 = fmap . fmap . fmap
+
 prop_CanReadAnySectionOfAStreamForward :: UploadList -> QC.Property
 prop_CanReadAnySectionOfAStreamForward (UploadList uploadList) =
   let
     writeState = execProgram "publisher" (publisher uploadList) emptyTestState 
     expectedStreamEvents = globalFeedFromUploadList uploadList
-    readStreamEvents streamId startEvent maxItems = fmap2 recordedEventNumber $ fmap streamResultEvents $ evalProgram "ReadStream" (getReadStreamRequestProgram (ReadStreamRequest streamId startEvent maxItems FeedDirectionForward)) (view testState writeState)
+    readStreamEvents streamId startEvent maxItems = fmap3 recordedEventNumber $ fmap2 streamResultEvents $ evalProgram "ReadStream" (getReadStreamRequestProgram (ReadStreamRequest streamId startEvent maxItems FeedDirectionForward)) (view testState writeState)
     expectedEvents streamId startEvent maxItems = take (fromIntegral maxItems) $ drop (fromMaybe 0 startEvent) $ toList $ expectedStreamEvents ! streamId
-    check (streamId, startEvent, maxItems) = readStreamEvents (StreamId streamId) ((fromIntegral . unpositive) <$> startEvent) maxItems === Right (expectedEvents streamId (unpositive <$> startEvent) maxItems)
+    check (streamId, startEvent, maxItems) = readStreamEvents (StreamId streamId) ((fromIntegral . unpositive) <$> startEvent) maxItems === Right (Just (expectedEvents streamId (unpositive <$> startEvent) maxItems))
   in QC.forAll ((,,) <$> (QC.elements . Map.keys) expectedStreamEvents <*> QC.arbitrary <*> QC.arbitrary) check
 
 prop_CanReadAnySectionOfAStreamBackward :: UploadList -> QC.Property
@@ -144,10 +147,10 @@ prop_CanReadAnySectionOfAStreamBackward (UploadList uploadList) =
   let
     writeState = execProgram "publisher" (publisher uploadList) emptyTestState 
     expectedStreamEvents = globalFeedFromUploadList uploadList
-    readStreamEvents streamId startEvent maxItems = fmap2 recordedEventNumber $ fmap streamResultEvents $ evalProgram "ReadStream" (getReadStreamRequestProgram (ReadStreamRequest streamId startEvent maxItems FeedDirectionBackward)) (view testState writeState)
+    readStreamEvents streamId startEvent maxItems = fmap3 recordedEventNumber $ fmap2 streamResultEvents $ evalProgram "ReadStream" (getReadStreamRequestProgram (ReadStreamRequest streamId startEvent maxItems FeedDirectionBackward)) (view testState writeState)
     expectedEvents streamId Nothing maxItems = take (fromIntegral maxItems) $ reverse $ toList $ expectedStreamEvents ! streamId
     expectedEvents streamId (Just startEvent) maxItems = takeWhile (> startEvent - fromIntegral maxItems) $ dropWhile (> startEvent) $ reverse $ toList $ expectedStreamEvents ! streamId
-    check (streamId, startEvent, maxItems) = QC.counterexample (T.unpack $ show $ view testState writeState) $ readStreamEvents (StreamId streamId) ((fromIntegral . unpositive) <$> startEvent) maxItems === Right (expectedEvents streamId (fromIntegral . unpositive <$> startEvent) maxItems)
+    check (streamId, startEvent, maxItems) = QC.counterexample (T.unpack $ show $ view testState writeState) $ readStreamEvents (StreamId streamId) ((fromIntegral . unpositive) <$> startEvent) maxItems === Right (Just (expectedEvents streamId (fromIntegral . unpositive <$> startEvent) maxItems))
   in QC.forAll ((,,) <$> (QC.elements . Map.keys) expectedStreamEvents <*> QC.arbitrary <*> QC.arbitrary) check
 
 expectedEventsFromUploadList :: UploadList -> [RecordedEvent]
@@ -201,11 +204,11 @@ getStreamRecordedEvents streamId = do
         return Nothing
       else do
         streamResult <- (lift $ getReadStreamRequestProgram (ReadStreamRequest (StreamId streamId) startEvent 10 FeedDirectionBackward)) >>= eitherToError
-        let recordedEvents = streamResultEvents streamResult
-        if null recordedEvents then
+        let result = streamResultEvents <$> streamResult
+        if result == Just [] then
           return Nothing
         else 
-          return $ Just (recordedEvents, (Just . (\x -> x - 1) . recordedEventNumber . last) recordedEvents)
+          return $ (\recordedEvents -> (recordedEvents, (Just . (\x -> x - 1) . recordedEventNumber . last) recordedEvents)) <$> result
 
 readEachStream :: [UploadItem] -> ExceptT EventStoreActionError DynamoCmdM (Map.Map Text (Seq.Seq Int64))
 readEachStream uploadItems = 
@@ -359,9 +362,9 @@ testStateItems itemCount =
     writeState = execProgram "writeEvents" (forM_ requests id) emptyTestState 
   in view testState writeState
 
-getSampleItems :: (Maybe Int64) -> Natural -> FeedDirection -> Either EventStoreActionError StreamResult
+getSampleItems :: (Maybe Int64) -> Natural -> FeedDirection -> Either EventStoreActionError (Maybe StreamResult)
 getSampleItems startEvent maxItems direction =
-  evalProgram "ReadStream" (getReadStreamRequestProgram (ReadStreamRequest (StreamId "MyStream") startEvent maxItems direction)) (testStateItems 28)
+  evalProgram "ReadStream" (getReadStreamRequestProgram (ReadStreamRequest (StreamId "MyStream") startEvent maxItems direction)) (testStateItems 29)
 
 streamLinkTests :: [TestTree]
 streamLinkTests =
@@ -372,7 +375,7 @@ streamLinkTests =
     streamResultNext' = ("next", streamResultNext)
     streamResultPrevious' = ("previous", streamResultPrevious)
     linkAssert (feedResultName, feedResult) (linkName, streamLink) expectedResult = 
-      testCase ("Unit - " <> feedResultName <> " - " <> linkName <> " link") $ assertEqual ("Should have " <> linkName <> " link") (Right expectedResult) (streamLink <$> feedResult)
+      testCase ("Unit - " <> feedResultName <> " - " <> linkName <> " link") $ assertEqual ("Should have " <> linkName <> " link") (Right (Just expectedResult)) (fmap2 streamLink feedResult)
   in [
       linkAssert endOfFeedBackward streamResultFirst' (Just (FeedDirectionBackward, EventStartHead, 20))
     , linkAssert endOfFeedBackward streamResultLast' (Just (FeedDirectionForward, EventStartPosition 0, 20))

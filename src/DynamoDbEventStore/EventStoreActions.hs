@@ -119,7 +119,7 @@ data StreamResult = StreamResult {
 } deriving Show
 
 newtype PostEventResult = PostEventResult (Either EventStoreActionError EventWriteResult) deriving Show
-newtype ReadStreamResult = ReadStreamResult (Either EventStoreActionError StreamResult) deriving Show
+newtype ReadStreamResult = ReadStreamResult (Either EventStoreActionError (Maybe StreamResult)) deriving Show
 newtype ReadAllResult = ReadAllResult (Either EventStoreActionError [RecordedEvent]) deriving Show
 newtype ReadEventResult = ReadEventResult (Either EventStoreActionError (Maybe RecordedEvent)) deriving Show
 
@@ -322,7 +322,20 @@ getReadEventRequestProgram (ReadEventRequest sId eventNumber) = runExceptT $ do
   (events :: [RecordedEvent]) <- P.toListM $ recordedEventProducerBackward (StreamId sId) (Just eventNumber) 1
   return $ find ((== eventNumber) . recordedEventNumber) events
 
-getReadStreamRequestProgram :: ReadStreamRequest -> DynamoCmdM (Either EventStoreActionError StreamResult)
+buildStreamResult :: [RecordedEvent] -> Maybe Int64 -> Natural -> Maybe StreamResult
+buildStreamResult [] Nothing _ = Nothing
+buildStreamResult events requestedStartEventNumber maxItems = 
+  let 
+    maxEventNumber = maximum $ recordedEventNumber <$> events
+    startEventNumber = fromMaybe maxEventNumber requestedStartEventNumber
+  in Just $ StreamResult { 
+    streamResultEvents = events, 
+    streamResultFirst = Just $ (FeedDirectionBackward, EventStartHead, maxItems),
+    streamResultNext = Just $ (FeedDirectionBackward, EventStartPosition (startEventNumber - (fromIntegral maxItems)), maxItems), 
+    streamResultPrevious = Just $ (FeedDirectionForward, EventStartPosition (startEventNumber + 1), maxItems), 
+    streamResultLast = Just $ (FeedDirectionForward, EventStartPosition 0, maxItems) }
+
+getReadStreamRequestProgram :: ReadStreamRequest -> DynamoCmdM (Either EventStoreActionError (Maybe StreamResult))
 getReadStreamRequestProgram (ReadStreamRequest sId startEventNumber maxItems FeedDirectionBackward) = 
   runExceptT $ do
     events <- 
@@ -330,12 +343,7 @@ getReadStreamRequestProgram (ReadStreamRequest sId startEventNumber maxItems Fee
         recordedEventProducerBackward sId startEventNumber 10 
           >-> filterLastEvent startEventNumber 
           >-> maxItemsFilter startEventNumber
-    return $ StreamResult { 
-      streamResultEvents = events, 
-      streamResultFirst = Just $ (FeedDirectionBackward, EventStartHead, maxItems),
-      streamResultNext = Nothing, --Just $ (FeedDirectionBackward, EventStart Nothing, 
-      streamResultPrevious = Nothing, 
-      streamResultLast = Just $ (FeedDirectionForward, EventStartPosition 0, maxItems) }
+    return $ buildStreamResult events startEventNumber maxItems  
   where
     maxItemsFilter Nothing = P.take (fromIntegral maxItems)
     maxItemsFilter (Just v) = P.takeWhile (\r -> recordedEventNumber r > (minimumEventNumber v))
@@ -349,7 +357,7 @@ getReadStreamRequestProgram (ReadStreamRequest streamId startEventNumber maxItem
         recordedEventProducerForward streamId startEventNumber 10 
           >-> filterFirstEvent startEventNumber 
           >-> maxItemsFilter startEventNumber
-    return $ StreamResult { 
+    return $ Just $ StreamResult { 
       streamResultEvents = events, 
       streamResultFirst = Nothing, 
       streamResultNext = Nothing, 

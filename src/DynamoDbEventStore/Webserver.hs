@@ -105,14 +105,18 @@ baseUri = "http://localhost:2114"
 eventStorePostResultToText :: (MonadIO m, ScottyError e) => ResponseEncoding -> PostEventResult -> ActionT e m ()
 eventStorePostResultToText AtomJsonEncoding (PostEventResult r) = (raw . TL.encodeUtf8 . TL.fromStrict) $ show r
 
+notFoundResponse :: (MonadIO m, ScottyError e) => ActionT e m ()
+notFoundResponse = (status $ mkStatus 404 (toByteString "Not Found")) >> raw "{}"
+
 eventStoreReadEventResultToText :: (MonadIO m, ScottyError e) => ResponseEncoding -> ReadEventResult -> ActionT e m ()
 eventStoreReadEventResultToText AtomJsonEncoding (ReadEventResult (Left err)) = (error500 . TL.fromStrict . show) err
 eventStoreReadEventResultToText AtomJsonEncoding (ReadEventResult (Right (Just r))) =(raw . encodePretty . readEventResultJsonValue) r
-eventStoreReadEventResultToText AtomJsonEncoding (ReadEventResult (Right Nothing)) = (status $ mkStatus 404 (toByteString "Not Found")) >> raw "{}"
+eventStoreReadEventResultToText AtomJsonEncoding (ReadEventResult (Right Nothing)) = notFoundResponse
 
 eventStoreReadStreamResultToText :: (MonadIO m, ScottyError e) => StreamId -> ResponseEncoding -> ReadStreamResult -> ActionT e m ()
 eventStoreReadStreamResultToText _ AtomJsonEncoding (ReadStreamResult (Left err)) = (error500 . TL.fromStrict . show) err
-eventStoreReadStreamResultToText streamId AtomJsonEncoding (ReadStreamResult (Right StreamResult{..})) = 
+eventStoreReadStreamResultToText _streamId AtomJsonEncoding (ReadStreamResult (Right (Nothing))) = notFoundResponse
+eventStoreReadStreamResultToText streamId AtomJsonEncoding (ReadStreamResult (Right (Just StreamResult{..}))) = 
   let 
     sampleTime = parseTimeOrError True defaultTimeLocale rfc822DateFormat "Sun, 08 May 2016 12:49:41 +0000" -- todo
     buildFeed' = recordedEventsToFeed baseUri streamId sampleTime
