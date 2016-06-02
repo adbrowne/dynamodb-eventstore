@@ -83,8 +83,8 @@ textParser =
 uuidParser :: Parser UUID.UUID
 uuidParser = do
   t <- textParser
-  case (UUID.fromText t) of Nothing  -> fail "Could not parse UUID"
-                            (Just v) -> return v
+  case UUID.fromText t of Nothing  -> fail "Could not parse UUID"
+                          (Just v) -> return v
 
 positiveInt64Parser :: Parser Int64
 positiveInt64Parser =
@@ -96,7 +96,7 @@ positiveInt64Parser =
      | otherwise = fail "too large"
 
 readEventResultJsonValue :: RecordedEvent -> Value
-readEventResultJsonValue recordedEvent = 
+readEventResultJsonValue recordedEvent =
   jsonEntry $ recordedEventToFeedEntry baseUri recordedEvent
 
 baseUri :: Text
@@ -106,7 +106,7 @@ eventStorePostResultToText :: (MonadIO m, ScottyError e) => ResponseEncoding -> 
 eventStorePostResultToText AtomJsonEncoding (PostEventResult r) = (raw . TL.encodeUtf8 . TL.fromStrict) $ show r
 
 notFoundResponse :: (MonadIO m, ScottyError e) => ActionT e m ()
-notFoundResponse = (status $ mkStatus 404 (toByteString "Not Found")) >> raw "{}"
+notFoundResponse = status (mkStatus 404 (toByteString "Not Found")) >> raw "{}"
 
 eventStoreReadEventResultToText :: (MonadIO m, ScottyError e) => ResponseEncoding -> ReadEventResult -> ActionT e m ()
 eventStoreReadEventResultToText AtomJsonEncoding (ReadEventResult (Left err)) = (error500 . TL.fromStrict . show) err
@@ -115,17 +115,17 @@ eventStoreReadEventResultToText AtomJsonEncoding (ReadEventResult (Right Nothing
 
 eventStoreReadStreamResultToText :: (MonadIO m, ScottyError e) => StreamId -> ResponseEncoding -> ReadStreamResult -> ActionT e m ()
 eventStoreReadStreamResultToText _ AtomJsonEncoding (ReadStreamResult (Left err)) = (error500 . TL.fromStrict . show) err
-eventStoreReadStreamResultToText _streamId AtomJsonEncoding (ReadStreamResult (Right (Nothing))) = notFoundResponse
-eventStoreReadStreamResultToText streamId AtomJsonEncoding (ReadStreamResult (Right (Just StreamResult{..}))) = 
-  let 
+eventStoreReadStreamResultToText _streamId AtomJsonEncoding (ReadStreamResult (Right Nothing)) = notFoundResponse
+eventStoreReadStreamResultToText streamId AtomJsonEncoding (ReadStreamResult (Right (Just StreamResult{..}))) =
+  let
     sampleTime = parseTimeOrError True defaultTimeLocale rfc822DateFormat "Sun, 08 May 2016 12:49:41 +0000" -- todo
     buildFeed' = recordedEventsToFeed baseUri streamId sampleTime
   in raw . encodePretty . jsonFeed . buildFeed' $ streamResultEvents
 
 eventStoreReadAllResultToText :: (MonadIO m, ScottyError e) => ResponseEncoding -> ReadAllResult -> ActionT e m ()
 eventStoreReadAllResultToText AtomJsonEncoding (ReadAllResult (Left err)) = (error500 . TL.fromStrict . show) err
-eventStoreReadAllResultToText AtomJsonEncoding (ReadAllResult (Right xs)) = 
-  let 
+eventStoreReadAllResultToText AtomJsonEncoding (ReadAllResult (Right xs)) =
+  let
     streamId = StreamId "%24all"
     sampleTime = parseTimeOrError True defaultTimeLocale rfc822DateFormat "Sun, 08 May 2016 12:49:41 +0000" -- todo
     buildFeed' = recordedEventsToFeed baseUri streamId sampleTime
@@ -155,28 +155,28 @@ data EventStoreActionRunner = EventStoreActionRunner {
 
 realRunner :: EventStoreActionRunner -> Process
 realRunner mainRunner (PostEvent postEventRequest) = do
-  result <- liftIO $ (eventStoreActionRunnerPostEvent mainRunner) postEventRequest
+  result <- liftIO $ eventStoreActionRunnerPostEvent mainRunner postEventRequest
   case result of (Left err) -> (error500 . TL.fromStrict . show) err
-                 (Right a) -> (eventStorePostResultToText AtomJsonEncoding) a
+                 (Right a) -> eventStorePostResultToText AtomJsonEncoding a
 realRunner mainRunner (ReadEvent readEventRequest) = do
-  result <- liftIO $ (eventStoreActionRunnerReadEvent mainRunner) readEventRequest
+  result <- liftIO $ eventStoreActionRunnerReadEvent mainRunner readEventRequest
   case result of (Left err) -> (error500 . TL.fromStrict . show) err
-                 (Right a) -> (eventStoreReadEventResultToText AtomJsonEncoding) a
+                 (Right a) -> eventStoreReadEventResultToText AtomJsonEncoding a
 realRunner mainRunner (ReadStream readStreamRequest@ReadStreamRequest{..}) = do
-  result <- liftIO $ (eventStoreActionRunnerReadStream mainRunner) readStreamRequest
+  result <- liftIO $ eventStoreActionRunnerReadStream mainRunner readStreamRequest
   case result of (Left err) -> (error500 . TL.fromStrict . show) err
-                 (Right a) -> (eventStoreReadStreamResultToText rsrStreamId AtomJsonEncoding) a
+                 (Right a) -> eventStoreReadStreamResultToText rsrStreamId AtomJsonEncoding a
 realRunner mainRunner (ReadAll readAllRequest) = do
-  result <- liftIO $ (eventStoreActionRunnerReadAll mainRunner) readAllRequest
+  result <- liftIO $ eventStoreActionRunnerReadAll mainRunner readAllRequest
   case result of (Left err) -> (error500 . TL.fromStrict . show) err
-                 (Right a) -> (eventStoreReadAllResultToText AtomJsonEncoding) a
+                 (Right a) -> eventStoreReadAllResultToText AtomJsonEncoding a
 
 type Process = forall m. forall e. (MonadIO m, Monad m, ScottyError e) => EventStoreAction -> ActionT e m ()
 
 eventStartPositionParser :: Parser EventStartPosition
 eventStartPositionParser =
-  let 
-    headParser = const EventStartHead <$> string "head" 
+  let
+    headParser = const EventStartHead <$> string "head"
     eventNumberParser = EventStartPosition <$> positiveInt64Parser
   in headParser <|> eventNumberParser
 
@@ -204,13 +204,13 @@ readStreamHandler process streamIdAction startEventParameter eventCountParameter
     streamId <- streamIdAction
     startEvent <- parseOptionalParameter "Invalid event number" eventStartPositionParser startEventParameter
     eventCount <- readOptionalParameter "Invalid event count" eventCountParameter
-    if (streamId == "$all") then
+    if streamId == "$all" then -- todo check for other valid values
       process $ ReadAll ReadAllRequest
     else
-      toResult' process $ (ReadStream <$> (ReadStreamRequest
+      toResult' process (ReadStream <$> (ReadStreamRequest
             <$> (StreamId <$> notEmpty streamId)
             <*> (eventStartPositionToMaybeInt64 <$> startEvent)
-            <*> ((fromMaybe 10) <$> eventCount)
+            <*> (fromMaybe 10 <$> eventCount)
             <*> Right feedDirection))
 
 app :: (MonadIO m, MonadHasTime m, ScottyError e) => Process -> ScottyT e m ()
@@ -222,21 +222,21 @@ app process = do
     eventData <- body
     eventTime <- lift getCurrentTime
     eventId <- parseMandatoryHeader "ES-EventId" uuidParser
-    let eventEntries = 
+    let eventEntries =
           EventEntry
           <$> pure eventData
           <*> (EventType <$> eventType)
           <*> (EventId <$> eventId)
           <*> pure (EventTime eventTime)
           <*> pure True
-    toResult' process $ (PostEvent <$> (PostEventRequest
+    toResult' process (PostEvent <$> (PostEventRequest
           <$> pure streamId
           <*> expectedVersion
           <*> ((\x -> x:|[]) <$> eventEntries)))
   get "/streams/:streamId/:eventNumber" $ do
     streamId <- param "streamId"
     eventNumber <- param "eventNumber"
-    toResult' process $ (ReadEvent <$> (ReadEventRequest
+    toResult' process (ReadEvent <$> (ReadEventRequest
           <$> notEmpty streamId
           <*> runParser positiveInt64Parser "Invalid Event Number" eventNumber))
   get "/streams/:streamId" $ readStreamHandler process (param "streamId") Nothing Nothing FeedDirectionBackward

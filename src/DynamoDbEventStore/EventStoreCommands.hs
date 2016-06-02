@@ -78,10 +78,10 @@ instance Serialize.Serialize EventId where
     w2 <- Serialize.get
     w3 <- Serialize.get
     return $ UUID.fromWords w0 w1 w2 w3
- 
+
 instance QC.Arbitrary EventId where
-  arbitrary = 
-    EventId 
+  arbitrary =
+    EventId
       <$> (UUID.fromWords
             <$> QC.arbitrary
             <*> QC.arbitrary
@@ -153,7 +153,7 @@ data LogLevel =
   Warn |
   Error
 
-data QueryDirection = 
+data QueryDirection =
   QueryDirectionForward
   | QueryDirectionBackward
   deriving (Show, Eq)
@@ -184,7 +184,7 @@ data DynamoCmd next =
   Log'
     LogLevel
     Text
-    next 
+    next
 
   deriving (Functor)
 
@@ -193,10 +193,9 @@ makeFree ''DynamoCmd
 type DynamoCmdM = F DynamoCmd
 
 readField :: (MonadError e m) => (Text -> e) -> Text -> Lens' AttributeValue (Maybe a) -> DynamoValues -> m a
-readField toError fieldName fieldType values = 
+readField toError fieldName fieldType values =
    let fieldValue = values ^? ix fieldName
    in maybeToEither $ fieldValue >>= view fieldType
-   where 
+   where
      maybeToEither Nothing  = throwError $ toError fieldName
      maybeToEither (Just x) = return x
-

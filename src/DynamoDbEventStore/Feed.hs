@@ -1,44 +1,44 @@
 {-# LANGUAGE OverloadedStrings   #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RecordWildCards     #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 module DynamoDbEventStore.Feed (jsonFeed,jsonEntry,Feed(..),recordedEventToFeedEntry,recordedEventsToFeed) where
 
 import           BasicPrelude
 import           Data.Aeson
-import qualified Data.Attoparsec.ByteString as APBS
-import qualified Data.Vector               as V
-import qualified Data.Text as T
+import qualified Data.Attoparsec.ByteString            as APBS
+import qualified Data.Text                             as T
 import           Data.Time.Clock
 import           Data.Time.Format
+import qualified Data.Vector                           as V
 import           DynamoDbEventStore.EventStoreCommands
 
 data Feed
  = Feed
-      { feedId           :: Text
-      , feedTitle        :: Text
-      , feedUpdated      :: UTCTime
-      , feedSelfUrl      :: Text
-      , feedStreamId     :: Text
-      , feedAuthor       :: Author
-      , feedLinks        :: [Link]
-      , feedEntries      :: [Entry]
+      { feedId       :: Text
+      , feedTitle    :: Text
+      , feedUpdated  :: UTCTime
+      , feedSelfUrl  :: Text
+      , feedStreamId :: Text
+      , feedAuthor   :: Author
+      , feedLinks    :: [Link]
+      , feedEntries  :: [Entry]
       }
      deriving (Show)
 
 data Author
  = Author
-     { authorName  :: Text
+     { authorName :: Text
      }
      deriving (Show)
 
 data Entry
  = Entry
-      { entryId           :: Text
-      , entryTitle        :: Text
-      , entryUpdated      :: UTCTime
-      , entryContent      :: EntryContent
-      , entryLinks        :: [Link]
-      , entrySummary      :: Text
+      { entryId      :: Text
+      , entryTitle   :: Text
+      , entryUpdated :: UTCTime
+      , entryContent :: EntryContent
+      , entryLinks   :: [Link]
+      , entrySummary :: Text
       }
      deriving (Show)
 
@@ -47,14 +47,14 @@ data EntryContent
      { entryContentEventStreamId :: Text
      , entryContentEventNumber   :: Int64
      , entryContentEventType     :: Text
-     , entryContentData                 :: Maybe Value
+     , entryContentData          :: Maybe Value
      }
      deriving (Show)
 
 data Link
  = Link
-      { linkHref     :: Text
-      , linkRel      :: Text
+      { linkHref :: Text
+      , linkRel  :: Text
       }
      deriving (Show)
 
@@ -143,15 +143,15 @@ jsonFeed Feed {..} =
   in object [ title, feedid, updated, streamid, author, headofstream, selfurl, etag, links, entries]
 
 formatJsonTime :: UTCTime -> Text
-formatJsonTime = T.pack . (formatTime defaultTimeLocale (iso8601DateFormat (Just "%H:%M:%SZ")))
+formatJsonTime = T.pack . formatTime defaultTimeLocale (iso8601DateFormat (Just "%H:%M:%SZ"))
 
 jsonEntry :: Entry -> Value
-jsonEntry entry =
+jsonEntry Entry{..} =
   let
-    entryid = "id" .= entryId entry
-    title = "title" .= entryTitle entry
-    updated = "updated" .= (formatJsonTime $ entryUpdated entry)
-    summary = "summary" .= entrySummary entry
-    content = "content" .= (jsonEntryContent $ entryContent entry)
-    links = "links" .= (Array . V.fromList) (jsonLink <$> entryLinks entry)
+    entryid = "id" .= entryId
+    title = "title" .= entryTitle
+    updated = "updated" .= formatJsonTime entryUpdated
+    summary = "summary" .= entrySummary
+    content = "content" .= jsonEntryContent entryContent
+    links = "links" .= (Array . V.fromList) (jsonLink <$> entryLinks)
   in object [entryid, title, summary, content, links, updated]

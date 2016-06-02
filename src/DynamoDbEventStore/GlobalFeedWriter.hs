@@ -3,13 +3,13 @@
 {-# LANGUAGE FlexibleContexts #-}
 
 module DynamoDbEventStore.GlobalFeedWriter (
-  main, 
-  FeedEntry(FeedEntry), 
-  feedEntryStream, 
-  feedEntryNumber, 
-  feedEntryCount, 
-  dynamoWriteWithRetry, 
-  entryEventCount, 
+  main,
+  FeedEntry(FeedEntry),
+  feedEntryStream,
+  feedEntryNumber,
+  feedEntryCount,
+  dynamoWriteWithRetry,
+  entryEventCount,
   EventStoreActionError(..)) where
 
 import           BasicPrelude
@@ -28,16 +28,16 @@ import qualified Data.Aeson as Aeson
 import           Text.Printf (printf)
 import qualified Test.QuickCheck as QC
 
-data EventStoreActionError = 
+data EventStoreActionError =
   EventStoreActionErrorFieldMissing Text |
   EventStoreActionErrorCouldNotReadEventCount (Maybe Text) |
   EventStoreActionErrorJsonDecodeError String |
   EventStoreActionErrorBodyDecode DynamoKey String |
-  EventStoreActionErrorEventDoesNotExist DynamoKey | 
-  EventStoreActionErrorOnWritingPage Int | 
+  EventStoreActionErrorEventDoesNotExist DynamoKey |
+  EventStoreActionErrorOnWritingPage Int |
   EventStoreActionErrorCouldNotFindEvent EventKey
   deriving (Show, Eq)
-  
+
 data FeedEntry = FeedEntry {
   feedEntryStream :: StreamId,
   feedEntryNumber :: Int64,
@@ -73,7 +73,7 @@ dynamoWriteWithRetry key value version = loop 0 DynamoWriteFailure
   where
     loop :: Int -> DynamoWriteResult -> ExceptT e DynamoCmdM DynamoWriteResult
     loop 100 previousResult = return previousResult
-    loop count DynamoWriteFailure = (lift $ writeToDynamo' key value version) >>= loop (count  + 1)
+    loop count DynamoWriteFailure = lift (writeToDynamo' key value version) >>= loop (count  + 1)
     loop _ previousResult = return previousResult
 
 getPageDynamoKey :: Int -> DynamoKey
@@ -82,7 +82,7 @@ getPageDynamoKey pageNumber =
   in DynamoKey (Constants.pageDynamoKeyPrefix <> paddedPageNumber) 0
 
 getMostRecentPage :: Int -> GlobalFeedWriterStack (Maybe FeedPage)
-getMostRecentPage startPageNumber = 
+getMostRecentPage startPageNumber =
   readFeedPage startPageNumber >>= findPage
   where
     readFeedPage :: Int -> GlobalFeedWriterStack (Maybe FeedPage)
@@ -91,7 +91,7 @@ getMostRecentPage startPageNumber =
       return $ toFeedPage startPageNumber <$> dynamoEntry
     toFeedPage :: Int -> DynamoReadResult -> FeedPage
     toFeedPage pageNumber readResult =
-      let 
+      let
         pageValues = dynamoReadResultValue readResult
         isVerified = HM.member Constants.pageIsVerifiedKey pageValues
         version = dynamoReadResultVersion readResult
@@ -114,14 +114,14 @@ entryIsPaged dynamoItem =
     not
 
 entryEventCount :: (MonadError EventStoreActionError m) => DynamoReadResult -> m Int
-entryEventCount dynamoItem = 
-  let 
+entryEventCount dynamoItem =
+  let
     value = dynamoItem &
               dynamoReadResultValue &
-              view (ix Constants.eventCountKey . avN) 
+              view (ix Constants.eventCountKey . avN)
     parsedValue = value >>= (Safe.readMay . T.unpack)
-  in case parsedValue of Nothing  -> throwError $ EventStoreActionErrorCouldNotReadEventCount value 
-                         (Just x) -> return x 
+  in case parsedValue of Nothing  -> throwError $ EventStoreActionErrorCouldNotReadEventCount value
+                         (Just x) -> return x
 
 readPageBody :: DynamoValues -> Seq.Seq FeedEntry
 readPageBody values = -- todo don't ignore errors
@@ -169,7 +169,7 @@ readFromDynamoMustExist key = do
   case r of Just x -> return x
             Nothing -> throwError $ EventStoreActionErrorEventDoesNotExist key
 
-emptyFeedPage :: Int -> FeedPage 
+emptyFeedPage :: Int -> FeedPage
 emptyFeedPage pageNumber = FeedPage { feedPageNumber = pageNumber, feedPageEntries = Seq.empty, feedPageIsVerified = False, feedPageVersion = -1 }
 
 getCurrentPage :: GlobalFeedWriterStack FeedPage
@@ -197,11 +197,11 @@ itemToJsonByteString = BL.toStrict . Aeson.encode . Aeson.toJSON
 getPreviousEntryEventNumber :: DynamoKey -> GlobalFeedWriterStack Int64
 getPreviousEntryEventNumber (DynamoKey _streamId (0)) = return (-1)
 getPreviousEntryEventNumber (DynamoKey streamId eventNumber) = do
-  result <- lift $ queryTable' QueryDirectionBackward streamId 1 (Just $ eventNumber)
+  result <- lift $ queryTable' QueryDirectionBackward streamId 1 (Just eventNumber)
   return $ getEventNumber result
-  where 
+  where
     getEventNumber [] = error "Could not find previous event"
-    getEventNumber ((DynamoReadResult (DynamoKey _key en) _version _values):_) = en
+    getEventNumber (DynamoReadResult (DynamoKey _key en) _version _values:_) = en
 
 feedEntriesContainsEntry :: StreamId -> Int64 -> Seq.Seq FeedEntry -> Bool
 feedEntriesContainsEntry streamId eventNumber = any (\(FeedEntry sId evN _) -> sId == streamId && evN == eventNumber)
@@ -235,7 +235,7 @@ updateGlobalFeed itemKey@DynamoKey { dynamoKeyKey = itemHashKey, dynamoKeyEventN
     onPageResult _ DynamoWriteWrongVersion = do
       log' Debug "Got wrong version writing page"
       updateGlobalFeed itemKey
-    onPageResult pageNumber DynamoWriteSuccess = 
+    onPageResult pageNumber DynamoWriteSuccess =
       void $ setEventEntryPage itemKey pageNumber
     onPageResult pageNumber DynamoWriteFailure = throwError $ EventStoreActionErrorOnWritingPage pageNumber
 

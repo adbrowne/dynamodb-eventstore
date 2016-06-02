@@ -51,29 +51,29 @@ itemAttribute key l value =
   (key, set l (Just value) attributeValue)
 
 readExcept :: (Read a) => (Text -> InterpreterError) -> Text -> Either InterpreterError a
-readExcept err t = 
-  let 
+readExcept err t =
+  let
     parsed = readMay t
   in case parsed of Nothing  -> Left $ err t
                     (Just a) -> Right a
 
 readField :: (MonadError InterpreterError m) => Text -> Lens' AttributeValue (Maybe a) -> DynamoValues -> m a
-readField = 
+readField =
    EventStoreCommands.readField FieldMissing
 
 fromAttributesToDynamoKey :: HM.HashMap Text AttributeValue -> Either InterpreterError DynamoKey
 fromAttributesToDynamoKey allValues = do
-  streamId <- readField fieldStreamId avS allValues 
+  streamId <- readField fieldStreamId avS allValues
   eventNumber <- readField fieldEventNumber avN allValues >>= readExcept EventNumberFormat
   return (DynamoKey streamId eventNumber)
 
 toDynamoReadResult :: HM.HashMap Text AttributeValue -> Either InterpreterError DynamoReadResult
 toDynamoReadResult allValues = do
-  let 
-    values = 
-      allValues 
-        & HM.delete fieldVersion 
-        & HM.delete fieldStreamId 
+  let
+    values =
+      allValues
+        & HM.delete fieldVersion
+        & HM.delete fieldStreamId
         & HM.delete fieldEventNumber
   eventKey <- fromAttributesToDynamoKey allValues
   version <- readField fieldVersion avN allValues >>= readExcept EventVersionFormat
@@ -82,9 +82,9 @@ toDynamoReadResult allValues = do
 allErrors :: (MonadError InterpreterError m) => [Either InterpreterError a] -> m [a]
 allErrors l =
   let
-    loop ((Left s):_)   _   = throwError s
+    loop (Left s:_)   _   = throwError s
     loop []             acc = return acc
-    loop ((Right a):xs) acc = loop xs (a:acc)
+    loop (Right a:xs) acc = loop xs (a:acc)
   in reverse <$> loop l []
 
 eitherToExcept :: (MonadError e m) => Either e a -> m a
@@ -97,52 +97,52 @@ runCmd _ (Wait' milliseconds n) = do
   n
 runCmd tn (ReadFromDynamo' eventKey n) = do
   let key = getDynamoKeyForEvent eventKey
-  let req = getItem tn 
+  let req = getItem tn
             & set giKey key
             & set giConsistentRead (Just True)
   resp <- send req
   result <- getResult resp
-  n $ result
+  n result
   where
     getResult :: (MonadError InterpreterError m) => GetItemResponse -> m (Maybe DynamoReadResult)
-    getResult r = 
+    getResult r =
       let item = view girsItem r
-      in 
+      in
         if item == mempty then return Nothing
         else eitherToExcept (Just <$> toDynamoReadResult item)
 runCmd tn (QueryTable' direction streamId limit exclusiveStartKey n) =
   getBackward
     where
       setStartKey Nothing = id
-      setStartKey (Just startKey) = (set qExclusiveStartKey (HM.fromList [("streamId", set avS (Just streamId) attributeValue),("eventNumber", set avN (Just $ show startKey) attributeValue)]))
+      setStartKey (Just startKey) = set qExclusiveStartKey (HM.fromList [("streamId", set avS (Just streamId) attributeValue),("eventNumber", set avN (Just $ show startKey) attributeValue)])
       scanForward = direction == QueryDirectionForward
       getBackward = do
         resp <- send $
                 query tn
-                & (setStartKey exclusiveStartKey)
-                & (set qConsistentRead (Just True))
-                & (set qLimit (Just limit))
-                & (set qScanIndexForward (Just scanForward))
-                & (set qExpressionAttributeValues (HM.fromList [(":streamId",set avS (Just streamId) attributeValue)]))
-                & (set qKeyConditionExpression (Just $ fieldStreamId <> " = :streamId"))
+                & setStartKey exclusiveStartKey
+                & set qConsistentRead (Just True)
+                & set qLimit (Just limit)
+                & set qScanIndexForward (Just scanForward)
+                & set qExpressionAttributeValues (HM.fromList [(":streamId",set avS (Just streamId) attributeValue)])
+                & set qKeyConditionExpression (Just $ fieldStreamId <> " = :streamId")
         let items :: [HM.HashMap Text AttributeValue] = view qrsItems resp
         let parsedItems = fmap toDynamoReadResult items
         allErrors parsedItems >>= n
-runCmd tn (WriteToDynamo' DynamoKey { dynamoKeyKey = streamId, dynamoKeyEventNumber = eventNumber } values version n) = 
-  catches writeItem [handler _ConditionalCheckFailedException (\_ -> n DynamoWriteWrongVersion)] 
+runCmd tn (WriteToDynamo' DynamoKey { dynamoKeyKey = streamId, dynamoKeyEventNumber = eventNumber } values version n) =
+  catches writeItem [handler _ConditionalCheckFailedException (\_ -> n DynamoWriteWrongVersion)]
   where
-    addVersionChecks 0 req = 
+    addVersionChecks 0 req =
         req & set piConditionExpression (Just $ "attribute_not_exists(" <> fieldEventNumber <> ")")
-    addVersionChecks _ req = 
+    addVersionChecks _ req =
         req & set piConditionExpression (Just $ fieldVersion <> " = :itemVersion")
         & set piExpressionAttributeValues (HM.singleton ":itemVersion" (set avN (Just (showt (version - 1))) attributeValue))
-        
+
     writeItem = do
         let item = HM.fromList [
                   itemAttribute fieldStreamId avS streamId,
                   itemAttribute fieldEventNumber avN (showt eventNumber),
                   itemAttribute fieldVersion avN (showt version)]
-                  <> values 
+                  <> values
         let req0 =
               putItem tn
               & set piItem item
@@ -177,16 +177,16 @@ buildTable tableName = do
   let req0 = createTable tableName
          (keySchemaElement fieldStreamId Hash :| [ keySchemaElement fieldEventNumber Range ])
          (provisionedThroughput 1 1)
-         & (set ctAttributeDefinitions attributeDefinitions)
-         & (set ctGlobalSecondaryIndexes [unpagedGlobalSecondary])
+         & set ctAttributeDefinitions attributeDefinitions
+         & set ctGlobalSecondaryIndexes [unpagedGlobalSecondary]
   _ <- send req0
   _ <- await (tableExists { _waitDelay = 4 }) (describeTable tableName)
   return ()
 
 doesTableExist :: Text -> MyAwsStack Bool
 doesTableExist tableName =
-  catches describe [handler _ResourceNotFoundException (const $ return False)] 
-  where 
+  catches describe [handler _ResourceNotFoundException (const $ return False)]
+  where
     describe = do
       (resp :: DescribeTableResponse) <- send $ describeTable tableName
       let tableDesc = view drsTable resp
@@ -205,7 +205,7 @@ runLocalDynamo x = do
   env <- newEnv Sydney (FromEnv "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" Nothing)
   runResourceT $ runAWST env $ reconfigure dynamo $ runExceptT x
 
-data InterpreterError = 
+data InterpreterError =
   FieldMissing Text |
   EventNumberFormat Text |
   EventVersionFormat Text
