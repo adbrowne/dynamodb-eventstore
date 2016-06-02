@@ -1,30 +1,30 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeFamilies               #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE FunctionalDependencies #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE FlexibleInstances          #-}
+{-# LANGUAGE FunctionalDependencies     #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE RankNTypes                 #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE TemplateHaskell            #-}
+{-# LANGUAGE TypeFamilies               #-}
 
 module DynamoDbEventStore.DynamoCmdInterpreter(TestState(..), runPrograms, runProgramGenerator, runProgram, emptyTestState, evalProgram, execProgram, execProgramUntilIdle, LoopState(..), testState, iopCounts, IopsCategory(..), IopsOperation(..)) where
 
 import           BasicPrelude
-import           GHC.Natural
-import qualified Prelude as P
 import           Control.Lens
-import           Control.Monad.State
+import qualified Control.Monad.Free                    as Free
+import qualified Control.Monad.Free.Church             as Church
 import           Control.Monad.Reader
-import           Data.Functor (($>))
-import qualified Data.HashMap.Lazy as HM
-import qualified Control.Monad.Free.Church as Church
-import qualified Test.Tasty.QuickCheck as QC
-import qualified Control.Monad.Free as Free
-import qualified Data.Map.Strict as Map
+import           Control.Monad.State
+import           Data.Functor                          (($>))
+import qualified Data.HashMap.Lazy                     as HM
+import qualified Data.Map.Strict                       as Map
+import           GHC.Natural
+import qualified Prelude                               as P
+import qualified Test.Tasty.QuickCheck                 as QC
 
-import qualified DynamoDbEventStore.Constants as Constants
+import qualified DynamoDbEventStore.Constants          as Constants
 import           DynamoDbEventStore.EventStoreCommands
 
 type DynamoCmdMFree = Free.Free DynamoCmd
@@ -32,19 +32,19 @@ type DynamoCmdMFree = Free.Free DynamoCmd
 type TestDynamoTable = Map DynamoKey (Int, DynamoValues)
 
 data RunningProgramState r = RunningProgramState {
-  runningProgramStateNext :: DynamoCmdMFree r,
+  runningProgramStateNext    :: DynamoCmdMFree r,
   runningProgramStateMaxIdle :: Int
 }
 
-data LoopActivity = 
+data LoopActivity =
   LoopActive { _loopActiveIdleCount :: Map ProgramId Bool } |
   LoopAllIdle { _loopAllIdleIterationsRemaining :: Map ProgramId Int }
 
 data LoopState r = LoopState {
-  _loopStateIterations :: Int,
-  _loopStateActivity :: LoopActivity,
-  _loopStateTestState :: TestState,
-  _loopStatePrograms :: Map ProgramId (RunningProgramState r),
+  _loopStateIterations     :: Int,
+  _loopStateActivity       :: LoopActivity,
+  _loopStateTestState      :: TestState,
+  _loopStatePrograms       :: Map ProgramId (RunningProgramState r),
   _loopStateProgramResults :: Map ProgramId r
 }
 
@@ -57,13 +57,13 @@ data IopsOperation = IopsScanUnpaged | IopsGetItem | IopsQuery | IopsWrite deriv
 type IopsTable = Map (IopsCategory, IopsOperation, ProgramId) Int
 
 data TestState = TestState {
-  _testStateDynamo :: TestDynamoTable,
-  _testStateLog :: Seq Text,
+  _testStateDynamo    :: TestDynamoTable,
+  _testStateLog       :: Seq Text,
   _testStateIopCounts :: IopsTable
 } deriving (Eq)
 
 instance P.Show TestState where
-  show a = 
+  show a =
     "Dynamo: \n" <> P.show (_testStateDynamo a) <> "\n" <> "Log: \n" <> foldl' (\s l -> s <> "\n" <> P.show l) "" (_testStateLog a)
 
 $(makeFields ''TestState)
@@ -95,8 +95,8 @@ isComplete = do
   tooManyIterations <- uses loopStateIterations (> maxIterations)
   allProgramsOverMaxIdle <- uses loopStateActivity allOverMaxIdle
   return $ allProgramsComplete || tooManyIterations || allProgramsOverMaxIdle
-  where 
-    allOverMaxIdle :: LoopActivity -> Bool 
+  where
+    allOverMaxIdle :: LoopActivity -> Bool
     allOverMaxIdle (LoopActive _) = False
     allOverMaxIdle (LoopAllIdle status) = Map.filter (>0) status == mempty
 
@@ -107,7 +107,7 @@ addLog m = do
   (loopStateTestState . testStateLog) %= appendMessage
 
 class Monad m => RandomFailure m where
-  checkFail :: Double -> m Bool 
+  checkFail :: Double -> m Bool
 
 instance RandomFailure QC.Gen where
   checkFail failurePercent = do
@@ -155,7 +155,7 @@ getReadResult :: DynamoKey -> (Maybe DynamoReadResult -> n) -> InterpreterOperat
 getReadResult key n = do
   addIops TableRead IopsGetItem 1
   entry <- uses (testState . testStateDynamo) $ Map.lookup key
-  return $ n $ (\(version, values) -> DynamoReadResult key version values) <$> entry
+  return $ n $ uncurry (DynamoReadResult key) <$> entry
 
 getUptoItem :: (a -> Bool) -> [a] -> [a]
 getUptoItem p =
@@ -169,9 +169,9 @@ queryTable :: QueryDirection -> Text -> Natural -> Maybe Int64 -> ([DynamoReadRe
 queryTable direction streamId maxEvents startEvent r =  do
   results <- uses (loopStateTestState . testStateDynamo) runQuery
   addIops TableRead IopsQuery $ length results
-  return $ r results 
-  where 
-    runQuery table = take (fromIntegral maxEvents) $ eventStream direction table 
+  return $ r results
+  where
+    runQuery table = take (fromIntegral maxEvents) $ eventStream direction table
     dynamoReadResultToEventNumber (DynamoReadResult (DynamoKey _key eventNumber) _version _values) = eventNumber
     eventStream QueryDirectionBackward table = reverse $ eventsBeforeStart startEvent table
     eventStream QueryDirectionForward  table = eventsAfter startEvent table
@@ -179,8 +179,8 @@ queryTable direction streamId maxEvents startEvent r =  do
     eventsAfter (Just start) table = dropWhile (\a -> dynamoReadResultToEventNumber a <= start) (allEvents table)
     eventsBeforeStart Nothing table = allEvents table
     eventsBeforeStart (Just start) table = getUptoItem (\a -> dynamoReadResultToEventNumber a >= start) (allEvents table)
-    allEvents table = 
-      let 
+    allEvents table =
+      let
         filteredMap = Map.filterWithKey (\(DynamoKey hashKey _rangeKey) _value -> hashKey == streamId) table
         eventList = (sortOn fst . Map.toList) filteredMap
       in (\(key, (version, values)) -> DynamoReadResult key version values) <$> eventList
@@ -190,9 +190,9 @@ scanNeedsPaging n = do
    results <- uses (testState . testStateDynamo) getEntries
    addIops UnpagedRead IopsScanUnpaged $ length results
    return $ n results
-   where 
-     getEntries = 
-       let 
+   where
+     getEntries =
+       let
          entryNeedsPaging = HM.member Constants.needsPagingKey . snd
        in Map.keys . Map.filter entryNeedsPaging
 
@@ -201,7 +201,7 @@ setPulseStatus isActive = do
   programId <- ask
   allInactiveState <- uses loopStatePrograms initialAllInactive
   loopStateActivity %= updatePulseStatus programId (LoopAllIdle allInactiveState) isActive
-  where 
+  where
     allInactive :: Map ProgramId Bool -> Bool
     allInactive m = Map.filter id m == mempty
     initialAllInactive :: Map ProgramId (RunningProgramState a) -> Map ProgramId Int
@@ -223,20 +223,20 @@ runCmd (Free.Free (Log' _ msg r)) = Right <$> (addLog msg >> return r)
 runCmd (Free.Free (SetPulseStatus' isActive r)) = Right <$> (setPulseStatus isActive >> return r)
 runCmd (Free.Free (ScanNeedsPaging' r)) = Right <$> scanNeedsPaging r
 
-stepProgram :: ProgramId -> RunningProgramState r -> InterpreterApp m r () 
+stepProgram :: ProgramId -> RunningProgramState r -> InterpreterApp m r ()
 stepProgram programId ps = do
   cmdResult <- runReaderT (runCmd $ runningProgramStateNext ps) programId
   bigBanana cmdResult
   where
     bigBanana :: Either r (DynamoCmdMFree r) -> InterpreterApp m r ()
-    bigBanana next = do 
+    bigBanana next = do
       let result = fmap setNextProgram next
       updateLoopState programId result
     setNextProgram :: DynamoCmdMFree r -> RunningProgramState r
     setNextProgram n = ps { runningProgramStateNext = n }
 
 updateLoopState :: ProgramId -> Either r (RunningProgramState r) -> InterpreterApp m r ()
-updateLoopState programName result = 
+updateLoopState programName result =
   loopStatePrograms %= updateProgramEntry result >>
   loopStateProgramResults %= updateProgramResults result
   where
@@ -284,7 +284,7 @@ runProgram programId program initialTestState =
         loop (Left x) = return x
         loop (Right n) = runCmd n >>= loop
 
-execProgramUntilIdle :: ProgramId -> DynamoCmdM a -> TestState -> (LoopState a)
+execProgramUntilIdle :: ProgramId -> DynamoCmdM a -> TestState -> LoopState a
 execProgramUntilIdle programId program initialTestState =
   runIdentity $ execStateT (runReaderT (loop $ Right (Church.fromF program)) programId) initialState
   where
@@ -300,5 +300,5 @@ execProgramUntilIdle programId program initialTestState =
 
 evalProgram :: ProgramId -> DynamoCmdM a -> TestState -> a
 evalProgram programId program initialTestState = fst $ runProgram programId program initialTestState
-execProgram :: ProgramId -> DynamoCmdM a -> TestState -> (LoopState a)
+execProgram :: ProgramId -> DynamoCmdM a -> TestState -> LoopState a
 execProgram programId program initialTestState = snd $ runProgram programId program initialTestState
