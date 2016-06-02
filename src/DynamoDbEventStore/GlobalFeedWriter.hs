@@ -1,6 +1,7 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleContexts      #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE ScopedTypeVariables   #-}
 
 module DynamoDbEventStore.GlobalFeedWriter (
   main,
@@ -13,20 +14,20 @@ module DynamoDbEventStore.GlobalFeedWriter (
   EventStoreActionError(..)) where
 
 import           BasicPrelude
-import           Safe
-import           Control.Monad.Except
-import qualified Data.Sequence         as Seq
-import qualified Data.Text             as T
-import qualified Data.ByteString.Lazy  as BL
-import qualified Data.ByteString       as BS
-import qualified Data.HashMap.Lazy as HM
-import qualified DynamoDbEventStore.Constants as Constants
-import           DynamoDbEventStore.EventStoreCommands
 import           Control.Lens
+import           Control.Monad.Except
+import qualified Data.Aeson                            as Aeson
+import qualified Data.ByteString                       as BS
+import qualified Data.ByteString.Lazy                  as BL
+import qualified Data.HashMap.Lazy                     as HM
+import qualified Data.Sequence                         as Seq
+import qualified Data.Text                             as T
+import qualified DynamoDbEventStore.Constants          as Constants
+import           DynamoDbEventStore.EventStoreCommands
 import           Network.AWS.DynamoDB
-import qualified Data.Aeson as Aeson
-import           Text.Printf (printf)
-import qualified Test.QuickCheck as QC
+import           Safe
+import qualified Test.QuickCheck                       as QC
+import           Text.Printf                           (printf)
 
 data EventStoreActionError =
   EventStoreActionErrorFieldMissing Text |
@@ -41,7 +42,7 @@ data EventStoreActionError =
 data FeedEntry = FeedEntry {
   feedEntryStream :: StreamId,
   feedEntryNumber :: Int64,
-  feedEntryCount :: Int
+  feedEntryCount  :: Int
 } deriving (Eq, Show)
 
 instance QC.Arbitrary FeedEntry where

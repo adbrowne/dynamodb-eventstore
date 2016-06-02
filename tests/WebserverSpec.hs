@@ -1,19 +1,19 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 module WebserverSpec (postEventSpec, getStreamSpec, getEventSpec) where
 
 import           BasicPrelude
-import           Test.Tasty.Hspec
-import           Network.Wai.Test
-import           Network.Wai
 import           Control.Monad.Reader
+import qualified Data.Text.Lazy                       as TL
 import           Data.Time.Clock
 import           Data.Time.Format
-import qualified Data.Text.Lazy as TL
-import qualified DynamoDbEventStore.Webserver as W
 import           DynamoDbEventStore.EventStoreActions (EventStoreAction)
-import qualified Web.Scotty.Trans as S
-import qualified Network.HTTP.Types as H
+import qualified DynamoDbEventStore.Webserver         as W
+import qualified Network.HTTP.Types                   as H
+import           Network.Wai
+import           Network.Wai.Test
+import           Test.Tasty.Hspec
+import qualified Web.Scotty.Trans                     as S
 
 addEventPost :: [H.Header] -> Session SResponse
 addEventPost headers =
@@ -36,7 +36,7 @@ showEventResponse eventStoreAction = S.text $ TL.fromStrict $ show eventStoreAct
 app :: IO Application
 app = do
   sampleTime <- parseTimeM True defaultTimeLocale rfc822DateFormat "Sun, 08 May 2016 12:49:41 +0000"
-  S.scottyAppT (flip runReaderT sampleTime) (W.app showEventResponse :: S.ScottyT LText (ReaderT UTCTime IO) ()) 
+  S.scottyAppT (flip runReaderT sampleTime) (W.app showEventResponse :: S.ScottyT LText (ReaderT UTCTime IO) ())
 
 postEventSpec :: Spec
 postEventSpec = do
@@ -95,29 +95,29 @@ assertSuccess desc path expectedType =
 
 getStreamSpec :: Spec
 getStreamSpec = do
-  assertSuccess 
-    "stream simple" 
-    ["streams","myStreamId"] 
+  assertSuccess
+    "stream simple"
+    ["streams","myStreamId"]
     "ReadStream (ReadStreamRequest {rsrStreamId = StreamId \"myStreamId\", rsrStartEventNumber = Nothing, rsrMaxItems = 10, rsrDirection = FeedDirectionBackward})"
 
-  assertSuccess 
-    "stream with start event and limit" 
-    ["streams","myStreamId","3","5"] 
+  assertSuccess
+    "stream with start event and limit"
+    ["streams","myStreamId","3","5"]
     "ReadStream (ReadStreamRequest {rsrStreamId = StreamId \"myStreamId\", rsrStartEventNumber = Just 3, rsrMaxItems = 5, rsrDirection = FeedDirectionBackward})"
 
-  assertSuccess 
-    "stream with start and limit, backward" 
-    ["streams","myStreamId","3","backward","5"] 
+  assertSuccess
+    "stream with start and limit, backward"
+    ["streams","myStreamId","3","backward","5"]
     "ReadStream (ReadStreamRequest {rsrStreamId = StreamId \"myStreamId\", rsrStartEventNumber = Just 3, rsrMaxItems = 5, rsrDirection = FeedDirectionBackward})"
 
-  assertSuccess 
-    "stream backward from head" 
-    ["streams","myStreamId","head","backward","5"] 
+  assertSuccess
+    "stream backward from head"
+    ["streams","myStreamId","head","backward","5"]
     "ReadStream (ReadStreamRequest {rsrStreamId = StreamId \"myStreamId\", rsrStartEventNumber = Nothing, rsrMaxItems = 5, rsrDirection = FeedDirectionBackward})"
 
-  assertSuccess 
-    "stream with start and limit, forward" 
-    ["streams","myStreamId","3","forward","5"] 
+  assertSuccess
+    "stream with start and limit, forward"
+    ["streams","myStreamId","3","forward","5"]
     "ReadStream (ReadStreamRequest {rsrStreamId = StreamId \"myStreamId\", rsrStartEventNumber = Just 3, rsrMaxItems = 5, rsrDirection = FeedDirectionForward})"
 
   describe "Get stream with missing stream name" $ do
@@ -132,7 +132,7 @@ getEvent streamId eventNumber =
                requestMethod = H.methodGet
             }
 
-getEventSpec :: Spec 
+getEventSpec :: Spec
 getEventSpec =
   describe "Get stream" $ do
     let getExample = getEvent "myStreamId" 0

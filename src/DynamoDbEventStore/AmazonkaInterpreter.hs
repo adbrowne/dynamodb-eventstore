@@ -1,32 +1,33 @@
-{-# LANGUAGE OverloadedStrings   #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeFamilies               #-}
-{-# LANGUAGE RankNTypes               #-}
+{-# LANGUAGE FlexibleContexts      #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE RankNTypes            #-}
+{-# LANGUAGE ScopedTypeVariables   #-}
+{-# LANGUAGE TypeFamilies          #-}
 
 module DynamoDbEventStore.AmazonkaInterpreter (runProgram, buildTable, runLocalDynamo, evalProgram, doesTableExist, MyAwsStack, InterpreterError(..)) where
 
 import           BasicPrelude
+import           Control.Concurrent                    (threadDelay)
+import           Control.Exception.Lens
+import           Control.Lens
+import           Control.Monad.Catch
+import           Control.Monad.Except
+import           Control.Monad.Free.Church
 import           Control.Monad.Representable.Reader
 import           Control.Monad.Trans.Resource
-import           Control.Monad.Except
-import           Control.Concurrent (threadDelay)
-import           Control.Exception.Lens
-import           Control.Monad.Free.Church
-import           Control.Monad.Catch
-import qualified Data.HashMap.Strict     as HM
-import           Control.Lens
-import           Data.List.NonEmpty      (NonEmpty (..))
-import           TextShow
-import qualified DynamoDbEventStore.Constants as Constants
-import           System.Random
+import qualified Data.HashMap.Strict                   as HM
+import           Data.List.NonEmpty                    (NonEmpty (..))
+import qualified DynamoDbEventStore.Constants          as Constants
 import           DynamoDbEventStore.EventStoreCommands hiding (readField)
 import qualified DynamoDbEventStore.EventStoreCommands as EventStoreCommands
+import           System.Random
+import           TextShow
 
-import Network.AWS(MonadAWS)
-import Control.Monad.Trans.AWS
-import Network.AWS.Waiter
-import Network.AWS.DynamoDB
+import           Control.Monad.Trans.AWS
+import           Network.AWS                           (MonadAWS)
+import           Network.AWS.DynamoDB
+import           Network.AWS.Waiter
 
 fieldStreamId :: Text
 fieldStreamId = "streamId"

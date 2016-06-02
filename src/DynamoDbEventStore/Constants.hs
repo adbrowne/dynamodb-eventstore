@@ -1,7 +1,8 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings     #-}
 module DynamoDbEventStore.Constants where
 
-import BasicPrelude
+import           BasicPrelude
 
 needsPagingKey :: Text
 needsPagingKey = "NeedsPaging"

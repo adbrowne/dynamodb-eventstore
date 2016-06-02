@@ -1,10 +1,11 @@
-{-# LANGUAGE OverloadedStrings    #-}
-{-# LANGUAGE RecordWildCards      #-}
-{-# LANGUAGE RankNTypes           #-}
-{-# LANGUAGE ScopedTypeVariables  #-}
-{-# LANGUAGE DeriveGeneric        #-}
-{-# LANGUAGE FlexibleContexts     #-}
+{-# LANGUAGE DeriveGeneric              #-}
+{-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE RankNTypes                 #-}
+{-# LANGUAGE RecordWildCards            #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
 
 module DynamoDbEventStore.EventStoreActions(
   ReadStreamRequest(..),
@@ -30,37 +31,37 @@ module DynamoDbEventStore.EventStoreActions(
   getReadAllRequestProgram,
   recordedEventProducerBackward) where
 
-import           Data.Either.Combinators
-import           Control.Monad.Except
 import           BasicPrelude
-import           Control.Lens hiding ((.=))
-import           Safe
-import           GHC.Natural
-import           TextShow hiding (fromString)
-import qualified Pipes.Prelude as P
-import           Pipes hiding (ListT, runListT)
-import qualified Data.ByteString.Lazy as BL
-import qualified Data.Text.Lazy as TL
-import qualified Data.Text as T
-import           Data.List.NonEmpty (NonEmpty (..))
-import qualified Data.List.NonEmpty as NonEmpty
-import           Data.Time.Format
+import           Control.Lens                          hiding ((.=))
+import           Control.Monad.Except
+import qualified Data.Aeson                            as Aeson
+import qualified Data.ByteString.Lazy                  as BL
+import           Data.Either.Combinators
+import qualified Data.HashMap.Strict                   as HM
+import           Data.List.NonEmpty                    (NonEmpty (..))
+import qualified Data.List.NonEmpty                    as NonEmpty
+import qualified Data.Serialize                        as Serialize
+import qualified Data.Text                             as T
+import qualified Data.Text.Lazy                        as TL
+import qualified Data.Text.Lazy.Encoding               as TL
 import           Data.Time.Calendar
 import           Data.Time.Clock
-import qualified Data.Text.Lazy.Encoding as TL
+import           Data.Time.Format
+import qualified DynamoDbEventStore.Constants          as Constants
 import           DynamoDbEventStore.EventStoreCommands hiding (readField)
 import qualified DynamoDbEventStore.EventStoreCommands as EventStoreCommands
-import qualified Data.HashMap.Strict     as HM
-import           Network.AWS.DynamoDB
-import           Text.Printf (printf)
-import qualified DynamoDbEventStore.Constants as Constants
-import qualified DynamoDbEventStore.GlobalFeedWriter as GlobalFeedWriter
-import           DynamoDbEventStore.GlobalFeedWriter (EventStoreActionError(..))
-import qualified Test.QuickCheck as QC
-import           Test.QuickCheck.Instances()
-import qualified Data.Aeson as Aeson
-import qualified Data.Serialize as Serialize
+import           DynamoDbEventStore.GlobalFeedWriter   (EventStoreActionError (..))
+import qualified DynamoDbEventStore.GlobalFeedWriter   as GlobalFeedWriter
 import           GHC.Generics
+import           GHC.Natural
+import           Network.AWS.DynamoDB
+import           Pipes                                 hiding (ListT, runListT)
+import qualified Pipes.Prelude                         as P
+import           Safe
+import qualified Test.QuickCheck                       as QC
+import           Test.QuickCheck.Instances             ()
+import           Text.Printf                           (printf)
+import           TextShow                              hiding (fromString)
 
 -- High level event store actions
 -- should map almost one to one with http interface
@@ -115,7 +116,7 @@ data StreamResult = StreamResult {
   , streamResultFirst    :: Maybe StreamOffset
   , streamResultNext     :: Maybe StreamOffset
   , streamResultPrevious :: Maybe StreamOffset
-  , streamResultLast :: Maybe StreamOffset
+  , streamResultLast     :: Maybe StreamOffset
 } deriving Show
 
 newtype PostEventResult = PostEventResult (Either EventStoreActionError EventWriteResult) deriving Show
@@ -164,8 +165,8 @@ data ReadStreamRequest = ReadStreamRequest {
 } deriving (Show)
 
 data ReadEventRequest = ReadEventRequest {
-   rerStreamId         :: Text,
-   rerEventNumber      :: Int64
+   rerStreamId    :: Text,
+   rerEventNumber :: Int64
 } deriving (Show)
 
 data ReadAllRequest = ReadAllRequest deriving (Show)

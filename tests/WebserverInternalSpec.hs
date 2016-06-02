@@ -3,11 +3,11 @@ module WebserverInternalSpec (spec) where
 
 
 import           BasicPrelude
+import qualified Data.Text.Lazy               as TL
+import qualified DynamoDbEventStore.Webserver as W
 import           Test.Tasty.Hspec
 import           Test.Tasty.QuickCheck
-import qualified DynamoDbEventStore.Webserver as W
-import qualified Data.Text.Lazy as TL
-import           Text.Read (readMaybe)
+import           Text.Read                    (readMaybe)
 
 showText :: Show a => a -> LText
 showText = TL.fromStrict . show

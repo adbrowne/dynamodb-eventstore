@@ -1,13 +1,13 @@
+{-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE FlexibleContexts #-}
 module Main where
 
 import           BasicPrelude
 import qualified DynamoCmdAmazonkaTests
+import qualified DynamoDbEventStore.AmazonkaInterpreter  as Ai
+import qualified DynamoDbEventStore.DynamoCmdInterpreter as TestInterpreter
 import           DynamoDbEventStore.EventStoreCommands
 import           DynamoDbEventStore.GlobalFeedWriterSpec as GlobalFeedWriterSpec
-import qualified DynamoDbEventStore.AmazonkaInterpreter as Ai
-import qualified DynamoDbEventStore.DynamoCmdInterpreter as TestInterpreter
 
 import           Test.Tasty
 import           Test.Tasty.Hspec

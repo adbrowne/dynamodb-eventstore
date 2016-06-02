@@ -1,11 +1,12 @@
-{-# LANGUAGE DeriveFunctor     #-}
-{-# LANGUAGE DeriveGeneric     #-}
-{-# LANGUAGE RankNTypes        #-}
-{-# LANGUAGE FlexibleContexts  #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards   #-}
-{-# LANGUAGE TemplateHaskell   #-}
+{-# LANGUAGE DeriveFunctor              #-}
+{-# LANGUAGE DeriveGeneric              #-}
+{-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE RankNTypes                 #-}
+{-# LANGUAGE RecordWildCards            #-}
+{-# LANGUAGE TemplateHaskell            #-}
 
 module DynamoDbEventStore.EventStoreCommands(
   StreamId(..),
@@ -32,21 +33,21 @@ module DynamoDbEventStore.EventStoreCommands(
   DynamoValues
   ) where
 import           BasicPrelude
-import           Control.Lens hiding ((.=))
+import           Control.Lens              hiding ((.=))
+import           Control.Monad.Except
 import           Control.Monad.Free.Church
 import           Control.Monad.Free.TH
-import           Control.Monad.Except
 import           GHC.Natural
 
 import           Data.Aeson
 import           GHC.Generics
 
-import qualified Data.Serialize as Serialize
-import qualified Data.UUID as UUID
+import qualified Data.HashMap.Strict       as HM
+import qualified Data.Serialize            as Serialize
 import           Data.Time.Clock
+import qualified Data.UUID                 as UUID
+import qualified Test.QuickCheck           as QC
 import           TextShow.TH
-import qualified Data.HashMap.Strict     as HM
-import qualified Test.QuickCheck as QC
 
 import           Network.AWS.DynamoDB
 
@@ -129,15 +130,15 @@ instance ToJSON EventKey where
            ]
 
 data DynamoKey = DynamoKey {
-  dynamoKeyKey :: Text,
+  dynamoKeyKey         :: Text,
   dynamoKeyEventNumber :: Int64
 } deriving (Show, Eq, Ord)
 
 type DynamoValues = HM.HashMap Text AttributeValue
 data DynamoReadResult = DynamoReadResult {
-  dynamoReadResultKey :: DynamoKey,
+  dynamoReadResultKey     :: DynamoKey,
   dynamoReadResultVersion :: Int,
-  dynamoReadResultValue :: DynamoValues
+  dynamoReadResultValue   :: DynamoValues
 } deriving (Show, Eq)
 
 type DynamoVersion = Int

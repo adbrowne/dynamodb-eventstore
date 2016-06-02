@@ -1,6 +1,7 @@
-{-# LANGUAGE OverloadedStrings   #-}
-{-# LANGUAGE RecordWildCards     #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE RecordWildCards       #-}
+{-# LANGUAGE ScopedTypeVariables   #-}
 module DynamoDbEventStore.Feed (jsonFeed,jsonEntry,Feed(..),recordedEventToFeedEntry,recordedEventsToFeed) where
 
 import           BasicPrelude

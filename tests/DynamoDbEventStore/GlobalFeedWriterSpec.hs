@@ -1,44 +1,45 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE FlexibleContexts    #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeFamilies               #-}
-{-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE TypeFamilies        #-}
 
 module DynamoDbEventStore.GlobalFeedWriterSpec (tests) where
 
 import           BasicPrelude
 import           Control.Lens
-import           Test.Tasty
-import           Test.Tasty.QuickCheck((===),testProperty)
-import qualified Test.Tasty.QuickCheck as QC
-import           Data.Maybe (fromJust)
-import           Data.Foldable hiding (concat)
-import qualified Data.UUID as UUID
-import           Test.Tasty.HUnit
-import           Control.Monad.State
-import           Control.Monad.Loops
 import           Control.Monad.Except
-import           Data.List.NonEmpty (NonEmpty (..))
-import qualified Data.List.NonEmpty as NonEmpty
+import           Control.Monad.Loops
+import           Control.Monad.State
+import qualified Data.Aeson                              as Aeson
+import qualified Data.ByteString.Lazy                    as BL
 import           Data.Either.Combinators
+import           Data.Foldable                           hiding (concat)
+import           Data.List.NonEmpty                      (NonEmpty (..))
+import qualified Data.List.NonEmpty                      as NonEmpty
+import           Data.Map.Strict                         ((!))
+import qualified Data.Map.Strict                         as Map
+import           Data.Maybe                              (fromJust)
+import qualified Data.Sequence                           as Seq
+import qualified Data.Set                                as Set
+import qualified Data.Text                               as T
+import qualified Data.Text.Encoding                      as T
+import qualified Data.Text.Lazy.Encoding                 as TL
 import           Data.Time.Format
-import qualified Data.Text             as T
-import qualified Data.Text.Encoding             as T
-import qualified Data.ByteString.Lazy        as BL
-import qualified Data.Text.Lazy.Encoding    as TL
-import qualified Data.Map.Strict as Map
-import           Data.Map.Strict((!))
-import qualified Data.Sequence as Seq
-import qualified Data.Aeson as Aeson
-import qualified Data.Set as Set
-import qualified Pipes.Prelude as P
+import qualified Data.UUID                               as UUID
 import           GHC.Natural
+import qualified Pipes.Prelude                           as P
+import           Test.Tasty
+import           Test.Tasty.HUnit
+import           Test.Tasty.QuickCheck                   (testProperty, (===))
+import qualified Test.Tasty.QuickCheck                   as QC
 
-import           DynamoDbEventStore.EventStoreCommands
-import           DynamoDbEventStore.EventStoreActions
-import qualified DynamoDbEventStore.GlobalFeedWriter as GlobalFeedWriter
-import           DynamoDbEventStore.GlobalFeedWriter (FeedEntry(),EventStoreActionError(..))
 import           DynamoDbEventStore.DynamoCmdInterpreter
+import           DynamoDbEventStore.EventStoreActions
+import           DynamoDbEventStore.EventStoreCommands
+import           DynamoDbEventStore.GlobalFeedWriter     (EventStoreActionError (..),
+                                                          FeedEntry ())
+import qualified DynamoDbEventStore.GlobalFeedWriter     as GlobalFeedWriter
 
 type UploadItem = (Text,Int64,NonEmpty EventEntry)
 newtype UploadList = UploadList [UploadItem] deriving (Show)

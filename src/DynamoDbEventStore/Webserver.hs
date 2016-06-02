@@ -1,32 +1,33 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE FlexibleInstances     #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE RankNTypes            #-}
+{-# LANGUAGE RecordWildCards       #-}
+{-# LANGUAGE ScopedTypeVariables   #-}
 
 module DynamoDbEventStore.Webserver(app, positiveInt64Parser, runParser, realRunner, EventStoreActionRunner(..)) where
 
 import           BasicPrelude
 import           Web.Scotty.Trans
 
-import           Control.Arrow             (left)
-import           Data.Attoparsec.Text.Lazy
-import           Data.Char                 (isDigit)
+import           Control.Arrow                          (left)
 import           Control.Monad.Reader
-import qualified Data.UUID as UUID
-import qualified Data.Text.Lazy            as TL
-import qualified Data.Text.Lazy.Encoding   as TL
-import           Data.List.NonEmpty (NonEmpty (..))
-import           Data.Time.Clock (UTCTime)
-import           Data.Time.Format
-import qualified Data.Time.Clock as Time
 import           Data.Aeson
 import           Data.Aeson.Encode.Pretty
-import           Network.HTTP.Types.Status
-import           DynamoDbEventStore.EventStoreActions
+import           Data.Attoparsec.Text.Lazy
+import           Data.Char                              (isDigit)
+import           Data.List.NonEmpty                     (NonEmpty (..))
+import qualified Data.Text.Lazy                         as TL
+import qualified Data.Text.Lazy.Encoding                as TL
+import           Data.Time.Clock                        (UTCTime)
+import qualified Data.Time.Clock                        as Time
+import           Data.Time.Format
+import qualified Data.UUID                              as UUID
 import           DynamoDbEventStore.AmazonkaInterpreter
+import           DynamoDbEventStore.EventStoreActions
 import           DynamoDbEventStore.EventStoreCommands
 import           DynamoDbEventStore.Feed
+import           Network.HTTP.Types.Status
 
 data ExpectedVersion = ExpectedVersion Int
   deriving (Show)
@@ -147,10 +148,10 @@ instance (Monad m) => MonadHasTime (ReaderT UTCTime m) where
   getCurrentTime = ask
 
 data EventStoreActionRunner = EventStoreActionRunner {
-    eventStoreActionRunnerPostEvent :: PostEventRequest -> IO (Either InterpreterError PostEventResult)
+    eventStoreActionRunnerPostEvent  :: PostEventRequest -> IO (Either InterpreterError PostEventResult)
   , eventStoreActionRunnerReadStream :: ReadStreamRequest -> IO (Either InterpreterError ReadStreamResult)
-  , eventStoreActionRunnerReadAll :: ReadAllRequest -> IO (Either InterpreterError ReadAllResult)
-  , eventStoreActionRunnerReadEvent :: ReadEventRequest -> IO (Either InterpreterError ReadEventResult)
+  , eventStoreActionRunnerReadAll    :: ReadAllRequest -> IO (Either InterpreterError ReadAllResult)
+  , eventStoreActionRunnerReadEvent  :: ReadEventRequest -> IO (Either InterpreterError ReadEventResult)
 }
 
 realRunner :: EventStoreActionRunner -> Process

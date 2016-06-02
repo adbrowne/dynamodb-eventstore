@@ -1,17 +1,17 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE RankNTypes        #-}
 
 module DynamoCmdAmazonkaTests where
 
 import           BasicPrelude
-import qualified Data.HashMap.Lazy       as HM
-import           Network.AWS.DynamoDB
-import           DynamoDbEventStore.EventStoreCommands
 import           Control.Lens
-import           Test.Tasty.HUnit
-import           Test.Tasty
+import qualified Data.HashMap.Lazy                      as HM
 import           DynamoDbEventStore.AmazonkaInterpreter (InterpreterError)
-import qualified DynamoDbEventStore.Constants as Constants
+import qualified DynamoDbEventStore.Constants           as Constants
+import           DynamoDbEventStore.EventStoreCommands
+import           Network.AWS.DynamoDB
+import           Test.Tasty
+import           Test.Tasty.HUnit
 
 testStreamId :: Text
 testStreamId  = "Brownie"
