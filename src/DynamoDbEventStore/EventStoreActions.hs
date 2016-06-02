@@ -345,6 +345,7 @@ buildStreamResult FeedDirectionBackward lastEvent events requestedStartEventNumb
 buildStreamResult FeedDirectionForward lastEvent events requestedStartEventNumber maxItems = 
   let 
     maxEventNumber = maximum $ recordedEventNumber <$> events
+    minEventNumber = minimumMay $ recordedEventNumber <$> events
     startEventNumber = fromMaybe maxEventNumber requestedStartEventNumber
     nextEventNumber = startEventNumber - fromIntegral maxItems
   in Just $ StreamResult { 
@@ -356,7 +357,7 @@ buildStreamResult FeedDirectionForward lastEvent events requestedStartEventNumbe
       else Nothing,
     streamResultPrevious = Just $ (FeedDirectionForward, EventStartPosition (startEventNumber + 1), maxItems), 
     streamResultLast =
-      if nextEventNumber > 0 then
+      if (maybe True (> 0) minEventNumber) then
         Just $ (FeedDirectionForward, EventStartPosition 0, maxItems) 
       else Nothing 
   }
