@@ -350,34 +350,40 @@ sampleUUIDs =
 sampleEventIds :: [EventId]
 sampleEventIds = EventId <$> sampleUUIDs
 
-testState1000Items :: TestState
-testState1000Items =
+testStateItems :: Int -> TestState
+testStateItems itemCount =
   let 
     streamId = "MyStream"
     postProgram eventId = postEventRequestProgram $ PostEventRequest { perStreamId = streamId, perExpectedVersion = Nothing, perEvents = (sampleEventEntry { eventEntryEventId = eventId } :| []) }
-    requests = take 1000 $ postProgram <$> sampleEventIds
+    requests = take itemCount $ postProgram <$> sampleEventIds
     writeState = execProgram "writeEvents" (forM_ requests id) emptyTestState 
   in view testState writeState
 
 getSampleItems :: (Maybe Int64) -> Natural -> FeedDirection -> Either EventStoreActionError StreamResult
 getSampleItems startEvent maxItems direction =
-  evalProgram "ReadStream" (getReadStreamRequestProgram (ReadStreamRequest (StreamId "MyStream") startEvent maxItems direction)) testState1000Items
+  evalProgram "ReadStream" (getReadStreamRequestProgram (ReadStreamRequest (StreamId "MyStream") startEvent maxItems direction)) (testStateItems 28)
 
 streamLinkTests :: [TestTree]
 streamLinkTests =
   let 
-    endOfFeed = ("End of feed", getSampleItems Nothing 20 FeedDirectionBackward)
+    endOfFeedBackward = ("End of feed backward", getSampleItems Nothing 20 FeedDirectionBackward)
     streamResultLast' = ("last", streamResultLast)
+    streamResultFirst' = ("first", streamResultFirst)
+    streamResultNext' = ("next", streamResultNext)
+    streamResultPrevious' = ("previous", streamResultPrevious)
     linkAssert (feedResultName, feedResult) (linkName, streamLink) expectedResult = 
-      testCase ("Unit - " <> feedResultName <> ":" <> linkName <> "link") $ assertEqual ("Should have" <> linkName <> " link") (Right expectedResult) (streamLink <$> feedResult)
+      testCase ("Unit - " <> feedResultName <> " - " <> linkName <> " link") $ assertEqual ("Should have " <> linkName <> " link") (Right expectedResult) (streamLink <$> feedResult)
   in [
-    linkAssert endOfFeed streamResultLast' (Just (FeedDirectionForward, EventStartPosition 0, 20))
+      linkAssert endOfFeedBackward streamResultFirst' (Just (FeedDirectionBackward, EventStartHead, 20))
+    , linkAssert endOfFeedBackward streamResultLast' (Just (FeedDirectionForward, EventStartPosition 0, 20))
+    , linkAssert endOfFeedBackward streamResultNext' (Just (FeedDirectionBackward, EventStartPosition 8, 20))
+    , linkAssert endOfFeedBackward streamResultPrevious' (Just (FeedDirectionForward, EventStartPosition 29, 20))
   ]
 
 whenIndexing1000ItemsIopsIsMinimal :: Assertion
 whenIndexing1000ItemsIopsIsMinimal = 
   let 
-    afterIndexState = execProgramUntilIdle "indexer" GlobalFeedWriter.main testState1000Items
+    afterIndexState = execProgramUntilIdle "indexer" GlobalFeedWriter.main (testStateItems 1000)
     expectedWriteState = Map.fromList [
       ((UnpagedRead,IopsScanUnpaged,"indexer"),1000)
      ,((TableRead,IopsGetItem,"indexer"),106986)

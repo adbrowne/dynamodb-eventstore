@@ -332,10 +332,10 @@ getReadStreamRequestProgram (ReadStreamRequest sId startEventNumber maxItems Fee
           >-> maxItemsFilter startEventNumber
     return $ StreamResult { 
       streamResultEvents = events, 
-      streamResultFirst = Nothing, 
-      streamResultNext = Nothing, 
+      streamResultFirst = Just $ (FeedDirectionBackward, EventStartHead, maxItems),
+      streamResultNext = Nothing, --Just $ (FeedDirectionBackward, EventStart Nothing, 
       streamResultPrevious = Nothing, 
-      streamResultLast = Nothing }
+      streamResultLast = Just $ (FeedDirectionForward, EventStartPosition 0, maxItems) }
   where
     maxItemsFilter Nothing = P.take (fromIntegral maxItems)
     maxItemsFilter (Just v) = P.takeWhile (\r -> recordedEventNumber r > (minimumEventNumber v))
