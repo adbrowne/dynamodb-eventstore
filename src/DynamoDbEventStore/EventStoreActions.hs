@@ -324,16 +324,42 @@ getReadEventRequestProgram (ReadEventRequest sId eventNumber) = runExceptT $ do
 
 buildStreamResult :: FeedDirection -> [RecordedEvent] -> Maybe Int64 -> Natural -> Maybe StreamResult
 buildStreamResult _ [] Nothing _ = Nothing
-buildStreamResult _ events requestedStartEventNumber maxItems = 
+buildStreamResult FeedDirectionBackward events requestedStartEventNumber maxItems = 
   let 
     maxEventNumber = maximum $ recordedEventNumber <$> events
     startEventNumber = fromMaybe maxEventNumber requestedStartEventNumber
+    nextEventNumber = startEventNumber - fromIntegral maxItems
   in Just $ StreamResult { 
     streamResultEvents = events, 
     streamResultFirst = Just $ (FeedDirectionBackward, EventStartHead, maxItems),
-    streamResultNext = Just $ (FeedDirectionBackward, EventStartPosition (startEventNumber - (fromIntegral maxItems)), maxItems), 
+    streamResultNext = 
+      if nextEventNumber > 0 then
+        Just $ (FeedDirectionBackward, EventStartPosition nextEventNumber, maxItems)
+      else Nothing,
     streamResultPrevious = Just $ (FeedDirectionForward, EventStartPosition (startEventNumber + 1), maxItems), 
-    streamResultLast = Just $ (FeedDirectionForward, EventStartPosition 0, maxItems) }
+    streamResultLast =
+      if nextEventNumber > 0 then
+        Just $ (FeedDirectionForward, EventStartPosition 0, maxItems) 
+      else Nothing 
+  }
+buildStreamResult FeedDirectionForward events requestedStartEventNumber maxItems = 
+  let 
+    maxEventNumber = maximum $ recordedEventNumber <$> events
+    startEventNumber = fromMaybe maxEventNumber requestedStartEventNumber
+    nextEventNumber = startEventNumber - fromIntegral maxItems
+  in Just $ StreamResult { 
+    streamResultEvents = events, 
+    streamResultFirst = Just $ (FeedDirectionBackward, EventStartHead, maxItems),
+    streamResultNext = 
+      if nextEventNumber > 0 then
+        Just $ (FeedDirectionBackward, EventStartPosition nextEventNumber, maxItems)
+      else Nothing,
+    streamResultPrevious = Just $ (FeedDirectionForward, EventStartPosition (startEventNumber + 1), maxItems), 
+    streamResultLast =
+      if nextEventNumber > 0 then
+        Just $ (FeedDirectionForward, EventStartPosition 0, maxItems) 
+      else Nothing 
+  }
 
 getReadStreamRequestProgram :: ReadStreamRequest -> DynamoCmdM (Either EventStoreActionError (Maybe StreamResult))
 getReadStreamRequestProgram (ReadStreamRequest sId startEventNumber maxItems FeedDirectionBackward) = 
