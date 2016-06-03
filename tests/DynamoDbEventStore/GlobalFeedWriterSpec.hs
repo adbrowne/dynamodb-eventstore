@@ -122,7 +122,7 @@ prop_EventShouldAppearInGlobalFeedInStreamOrder (UploadList uploadList) =
   in QC.forAll (runPrograms programs) check
      where
        check (_, testRunState) = QC.forAll (runReadAllProgram testRunState) (\feedItems -> (globalRecordedEventListToMap <$> feedItems) === (Right $ globalFeedFromUploadList uploadList))
-       runReadAllProgram = runProgramGenerator "readAllRequestProgram" (getReadAllRequestProgram ReadAllRequest { readAllRequestMaxItems = 20, readAllRequestDirection = FeedDirectionForward })
+       runReadAllProgram = runProgramGenerator "readAllRequestProgram" (getReadAllRequestProgram ReadAllRequest { readAllRequestStartPosition = Nothing, readAllRequestMaxItems = 20, readAllRequestDirection = FeedDirectionForward })
 
 unpositive :: QC.Positive Int -> Int
 unpositive (QC.Positive x) = x
