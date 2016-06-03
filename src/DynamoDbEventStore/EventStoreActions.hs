@@ -24,6 +24,7 @@ module DynamoDbEventStore.EventStoreActions(
   ReadEventResult(..),
   FeedDirection(..),
   StreamResult(..),
+  StreamOffset,
   EventStartPosition(..),
   postEventRequestProgram,
   getReadStreamRequestProgram,

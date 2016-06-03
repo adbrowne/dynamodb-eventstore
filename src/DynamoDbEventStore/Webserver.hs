@@ -117,11 +117,11 @@ eventStoreReadEventResultToText AtomJsonEncoding (ReadEventResult (Right Nothing
 eventStoreReadStreamResultToText :: (MonadIO m, ScottyError e) => StreamId -> ResponseEncoding -> ReadStreamResult -> ActionT e m ()
 eventStoreReadStreamResultToText _ AtomJsonEncoding (ReadStreamResult (Left err)) = (error500 . TL.fromStrict . show) err
 eventStoreReadStreamResultToText _streamId AtomJsonEncoding (ReadStreamResult (Right Nothing)) = notFoundResponse
-eventStoreReadStreamResultToText streamId AtomJsonEncoding (ReadStreamResult (Right (Just StreamResult{..}))) =
+eventStoreReadStreamResultToText streamId AtomJsonEncoding (ReadStreamResult (Right (Just streamResult))) =
   let
     sampleTime = parseTimeOrError True defaultTimeLocale rfc822DateFormat "Sun, 08 May 2016 12:49:41 +0000" -- todo
-    buildFeed' = recordedEventsToFeed baseUri streamId sampleTime
-  in raw . encodePretty . jsonFeed . buildFeed' $ streamResultEvents
+    buildFeed' = streamResultsToFeed baseUri streamId sampleTime
+  in raw . encodePretty . jsonFeed . buildFeed' $ streamResult
 
 eventStoreReadAllResultToText :: (MonadIO m, ScottyError e) => ResponseEncoding -> ReadAllResult -> ActionT e m ()
 eventStoreReadAllResultToText AtomJsonEncoding (ReadAllResult (Left err)) = (error500 . TL.fromStrict . show) err
@@ -129,8 +129,14 @@ eventStoreReadAllResultToText AtomJsonEncoding (ReadAllResult (Right xs)) =
   let
     streamId = StreamId "%24all"
     sampleTime = parseTimeOrError True defaultTimeLocale rfc822DateFormat "Sun, 08 May 2016 12:49:41 +0000" -- todo
-    buildFeed' = recordedEventsToFeed baseUri streamId sampleTime
-  in raw . encodePretty . jsonFeed . buildFeed' $ xs
+    buildFeed' = streamResultsToFeed baseUri streamId sampleTime
+  in raw . encodePretty . jsonFeed . buildFeed' $ StreamResult {
+    streamResultEvents = xs,
+    streamResultLast = Nothing,
+    streamResultFirst = Nothing,
+    streamResultNext = Nothing,
+    streamResultPrevious = Nothing
+  }
 
 data ResponseEncoding = AtomJsonEncoding
 

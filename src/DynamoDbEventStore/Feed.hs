@@ -2,7 +2,7 @@
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
-module DynamoDbEventStore.Feed (jsonFeed,jsonEntry,Feed(..),recordedEventToFeedEntry,recordedEventsToFeed) where
+module DynamoDbEventStore.Feed (jsonFeed,jsonEntry,Feed(..),recordedEventToFeedEntry,streamResultsToFeed) where
 
 import           BasicPrelude
 import           Data.Aeson
@@ -12,6 +12,7 @@ import           Data.Time.Clock
 import           Data.Time.Format
 import qualified Data.Vector                           as V
 import           DynamoDbEventStore.EventStoreCommands
+import           DynamoDbEventStore.EventStoreActions
 
 data Feed
  = Feed
@@ -59,10 +60,22 @@ data Link
       }
      deriving (Show)
 
-recordedEventsToFeed :: Text -> StreamId -> UTCTime -> [RecordedEvent] -> Feed
-recordedEventsToFeed baseUri (StreamId streamId) updated xs =
+buildStreamLink :: Text -> Text -> StreamOffset -> Link
+buildStreamLink streamUri rel (direction, position, maxItems)=
   let
-    selfuri = baseUri <> "/" <> streamId
+    positionName = case position of EventStartHead -> "head"
+                                    EventStartPosition x -> show x
+    directionName = case direction of FeedDirectionForward -> "forward"
+                                      FeedDirectionBackward -> "backward"
+    href = streamUri <> "/" <> positionName <> "/" <> directionName <> "/" <> show maxItems
+
+  in Link { linkHref = href, linkRel = rel }
+
+streamResultsToFeed :: Text -> StreamId -> UTCTime -> StreamResult -> Feed
+streamResultsToFeed baseUri (StreamId streamId) updated StreamResult{..} =
+  let
+    selfuri = baseUri <> "/streams/" <> streamId
+    buildStreamLink' = buildStreamLink selfuri
   in Feed
        { feedId = selfuri
        , feedTitle = "EventStream '" <> streamId <> "'"
@@ -70,8 +83,14 @@ recordedEventsToFeed baseUri (StreamId streamId) updated xs =
        , feedSelfUrl = selfuri
        , feedStreamId = streamId
        , feedAuthor = Author { authorName = "EventStore" }
-       , feedLinks = []
-       , feedEntries = recordedEventToFeedEntry baseUri <$> xs
+       , feedLinks = catMaybes [
+              buildStreamLink' "first" <$> streamResultFirst
+            , buildStreamLink' "last" <$> streamResultLast
+            , buildStreamLink' "previous" <$> streamResultPrevious
+            , buildStreamLink' "next" <$> streamResultNext
+            , Just Link { linkHref = selfuri, linkRel = "self" }
+         ]
+       , feedEntries = recordedEventToFeedEntry baseUri <$> streamResultEvents
        }
 
 recordedEventToFeedEntry :: Text -> RecordedEvent -> Entry
