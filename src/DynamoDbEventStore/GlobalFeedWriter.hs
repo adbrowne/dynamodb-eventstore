@@ -11,6 +11,7 @@ module DynamoDbEventStore.GlobalFeedWriter (
   feedEntryCount,
   dynamoWriteWithRetry,
   entryEventCount,
+  writePage,
   EventStoreActionError(..)) where
 
 import           BasicPrelude
@@ -207,6 +208,13 @@ getPreviousEntryEventNumber (DynamoKey streamId eventNumber) = do
 feedEntriesContainsEntry :: StreamId -> Int64 -> Seq.Seq FeedEntry -> Bool
 feedEntriesContainsEntry streamId eventNumber = any (\(FeedEntry sId evN _) -> sId == streamId && evN == eventNumber)
 
+writePage :: Int -> Seq FeedEntry -> DynamoVersion -> GlobalFeedWriterStack DynamoWriteResult
+writePage pageNumber entries version = do
+  let feedEntry = itemToJsonByteString entries
+  let dynamoKey = getPageDynamoKey pageNumber
+  let body = HM.singleton Constants.pageBodyKey (set avB (Just feedEntry) attributeValue)
+  dynamoWriteWithRetry dynamoKey body version
+
 updateGlobalFeed :: DynamoKey -> GlobalFeedWriterStack ()
 updateGlobalFeed itemKey@DynamoKey { dynamoKeyKey = itemHashKey, dynamoKeyEventNumber = itemEventNumber } = do
   lift $ log' Debug ("updateGlobalFeed " <> show itemKey)
@@ -222,12 +230,12 @@ updateGlobalFeed itemKey@DynamoKey { dynamoKeyKey = itemHashKey, dynamoKeyEventN
       void $ setEventEntryPage itemKey pageNumber
     else do
       itemEventCount <- entryEventCount item
-      let feedEntry = itemToJsonByteString (currentPageFeedEntries |> FeedEntry streamId itemEventNumber itemEventCount)
       previousEntryEventNumber <- getPreviousEntryEventNumber itemKey
       log' Debug $ "itemKey: " <> show itemKey <> " previousEntryEventNumber: " <> show previousEntryEventNumber
       when (previousEntryEventNumber > -1) (updateGlobalFeed itemKey { dynamoKeyEventNumber = previousEntryEventNumber })
       let version = feedPageVersion currentPage + 1
-      pageResult <- dynamoWriteWithRetry (getPageDynamoKey (feedPageNumber currentPage)) (HM.singleton Constants.pageBodyKey (set avB (Just feedEntry) attributeValue)) version
+      let newEntrySequence = currentPageFeedEntries |> FeedEntry streamId itemEventNumber itemEventCount
+      pageResult <- writePage pageNumber newEntrySequence version
       onPageResult pageNumber pageResult
       return ()
   return ()
