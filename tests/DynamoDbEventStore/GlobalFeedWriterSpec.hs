@@ -367,6 +367,10 @@ getSampleItems :: Maybe Int64 -> Natural -> FeedDirection -> Either EventStoreAc
 getSampleItems startEvent maxItems direction =
   evalProgram "ReadStream" (getReadStreamRequestProgram (ReadStreamRequest (StreamId "MyStream") startEvent maxItems direction)) (testStateItems 29)
 
+getSampleGlobalItems :: Maybe GlobalFeedPosition -> Natural -> FeedDirection -> Either EventStoreActionError [RecordedEvent]
+getSampleGlobalItems startPosition maxItems direction =
+  evalProgram "ReadAllStream" (getReadAllRequestProgram (ReadAllRequest startPosition maxItems direction)) (testStateItems 29)
+
 streamLinkTests :: [TestTree]
 streamLinkTests =
   let
