@@ -26,6 +26,8 @@ module DynamoDbEventStore.EventStoreActions(
   StreamResult(..),
   StreamOffset,
   EventStartPosition(..),
+  GlobalStartPosition(..),
+  GlobalFeedPosition(..),
   postEventRequestProgram,
   getReadStreamRequestProgram,
   getReadEventRequestProgram,
@@ -105,6 +107,7 @@ instance Serialize.Serialize EventTime where
     return $ EventTime time
 
 data EventStartPosition = EventStartHead | EventStartPosition Int64 deriving (Show, Eq)
+data GlobalStartPosition = GlobalStartHead | GlobalStartPosition GlobalFeedPosition deriving (Show, Eq)
 
 instance Serialize.Serialize EventType where
   put (EventType t) = (Serialize.put . encodeUtf8) t
@@ -170,7 +173,21 @@ data ReadEventRequest = ReadEventRequest {
    rerEventNumber :: Int64
 } deriving (Show)
 
-data ReadAllRequest = ReadAllRequest deriving (Show)
+data GlobalFeedPosition = GlobalFeedPosition {
+    globalFeedPositionPage   :: Int64
+  , globalFeedPositionOffset :: Int
+} deriving (Show, Eq)
+
+instance QC.Arbitrary GlobalFeedPosition where
+  arbitrary = GlobalFeedPosition
+                <$> ((\(QC.Positive p) -> fromInteger p) <$> QC.arbitrary)
+                <*> ((\(QC.Positive p) -> p) <$> QC.arbitrary)
+
+data ReadAllRequest = ReadAllRequest {
+      readAllRequestStartPosition :: Maybe GlobalFeedPosition
+    , readAllRequestMaxItems      :: Natural
+    , readAllRequestDirection     :: FeedDirection
+} deriving (Show)
 
 data EventWriteResult = WriteSuccess | WrongExpectedVersion | EventExists | WriteError deriving (Eq, Show)
 
@@ -441,4 +458,4 @@ lookupEventKey = forever $ do
   maybe (throwError $ EventStoreActionErrorCouldNotFindEvent eventKey) yield maybeRecordedEvent
 
 getReadAllRequestProgram :: ReadAllRequest -> DynamoCmdM (Either EventStoreActionError [RecordedEvent])
-getReadAllRequestProgram ReadAllRequest = runExceptT $ P.toListM (getPagesAfter 0 >-> lookupEventKey)
+getReadAllRequestProgram ReadAllRequest{..} = runExceptT $ P.toListM (getPagesAfter 0 >-> lookupEventKey)

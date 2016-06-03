@@ -5,7 +5,15 @@
 {-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
 
-module DynamoDbEventStore.Webserver(app, positiveInt64Parser, runParser, realRunner, EventStoreActionRunner(..)) where
+module DynamoDbEventStore.Webserver(
+    app
+  , positiveInt64Parser
+  , runParser
+  , realRunner
+  , EventStoreActionRunner(..)
+  , parseGlobalFeedPosition
+  , globalFeedPositionToText
+  ) where
 
 import           BasicPrelude
 import           Web.Scotty.Trans
@@ -52,6 +60,19 @@ maybeToEither :: a -> Maybe b ->Either a b
 maybeToEither a Nothing = Left a
 maybeToEither _ (Just a) = Right a
 
+globalFeedPositionToText :: GlobalFeedPosition -> Text
+globalFeedPositionToText GlobalFeedPosition{..} = show globalFeedPositionPage <> "-" <> show globalFeedPositionOffset
+
+globalFeedPositionParser :: Parser GlobalFeedPosition
+globalFeedPositionParser =
+  GlobalFeedPosition
+    <$> positiveInt64Parser
+    <*> (string "-" *> positiveIntParser)
+
+parseGlobalFeedPosition :: Text -> Maybe GlobalFeedPosition
+parseGlobalFeedPosition =
+  maybeResult . parse (globalFeedPositionParser <* endOfInput) . TL.fromStrict
+
 parseMandatoryHeader :: (MonadIO m, ScottyError e) => LText -> Parser a -> ActionT e m (Either LText a)
 parseMandatoryHeader headerName parser = do
   headerText <- header headerName
@@ -75,7 +96,7 @@ maxInt64 = toInteger (maxBound :: Int64)
 
 positiveIntegerParser :: Parser Integer
 positiveIntegerParser =
-  fmap (read . fromString) $ many1 (satisfy isDigit) <* endOfInput
+  (read . fromString) <$> many1 (satisfy isDigit)
 
 textParser :: Parser Text
 textParser =
@@ -86,6 +107,15 @@ uuidParser = do
   t <- textParser
   case UUID.fromText t of Nothing  -> fail "Could not parse UUID"
                           (Just v) -> return v
+
+positiveIntParser :: Parser Int
+positiveIntParser =
+  filterInt =<< positiveIntegerParser
+  where
+    filterInt :: Integer -> Parser Int
+    filterInt a
+     | a <= toInteger (maxBound :: Int) = return (fromInteger a)
+     | otherwise = fail "too large"
 
 positiveInt64Parser :: Parser Int64
 positiveInt64Parser =
@@ -180,17 +210,29 @@ realRunner mainRunner (ReadAll readAllRequest) = do
 
 type Process = forall m. forall e. (MonadIO m, Monad m, ScottyError e) => EventStoreAction -> ActionT e m ()
 
+globalFeedStartPositionParser :: Parser GlobalStartPosition
+globalFeedStartPositionParser =
+  let
+    headParser = (const GlobalStartHead <$> string "head")
+    eventNumberParser = GlobalStartPosition <$> globalFeedPositionParser
+  in (headParser <|> eventNumberParser) <* endOfInput
+
 eventStartPositionParser :: Parser EventStartPosition
 eventStartPositionParser =
   let
-    headParser = const EventStartHead <$> string "head"
+    headParser = (const EventStartHead <$> string "head")
     eventNumberParser = EventStartPosition <$> positiveInt64Parser
-  in headParser <|> eventNumberParser
+  in (headParser <|> eventNumberParser) <* endOfInput
 
 eventStartPositionToMaybeInt64 :: Maybe EventStartPosition -> Maybe Int64
 eventStartPositionToMaybeInt64 Nothing = Nothing
 eventStartPositionToMaybeInt64 (Just EventStartHead) = Nothing
 eventStartPositionToMaybeInt64 (Just (EventStartPosition x)) = Just x
+
+globalStartPositionToMaybeInt64 :: Maybe GlobalStartPosition -> Maybe GlobalFeedPosition
+globalStartPositionToMaybeInt64 Nothing = Nothing
+globalStartPositionToMaybeInt64 (Just GlobalStartHead) = Nothing
+globalStartPositionToMaybeInt64 (Just (GlobalStartPosition x)) = Just x
 
 readOptionalParameter :: (Read a, Monad m, ScottyError e) => LText -> Maybe (ActionT e m Text) -> ActionT e m (Either LText (Maybe a))
 readOptionalParameter errorMsg parameter =
@@ -209,22 +251,26 @@ toResult' process (Right action) = process action
 readStreamHandler :: (MonadIO m, ScottyError e) => Process -> ActionT e m Text -> Maybe (ActionT e m Text) -> Maybe (ActionT e m Text) -> FeedDirection -> ActionT e m ()
 readStreamHandler process streamIdAction startEventParameter eventCountParameter feedDirection = do
     streamId <- streamIdAction
-    startEvent <- parseOptionalParameter "Invalid event number" eventStartPositionParser startEventParameter
     eventCount <- readOptionalParameter "Invalid event count" eventCountParameter
-    if streamId == "$all" then -- todo check for other valid values
-      process $ ReadAll ReadAllRequest
-    else
+    if streamId == "$all" || streamId == "%24all" then do
+      startPosition <- parseOptionalParameter "Invalid global position" globalFeedStartPositionParser startEventParameter
+      toResult' process (ReadAll <$> (ReadAllRequest
+        <$> (globalStartPositionToMaybeInt64 <$> startPosition)
+        <*> (fromMaybe 20 <$> eventCount)
+        <*> Right feedDirection))
+    else do
+      startEvent <- parseOptionalParameter "Invalid event number" eventStartPositionParser startEventParameter
       toResult' process (ReadStream <$> (ReadStreamRequest
             <$> (StreamId <$> notEmpty streamId)
             <*> (eventStartPositionToMaybeInt64 <$> startEvent)
-            <*> (fromMaybe 10 <$> eventCount)
+            <*> (fromMaybe 20 <$> eventCount)
             <*> Right feedDirection))
 
 app :: (MonadIO m, MonadHasTime m, ScottyError e) => Process -> ScottyT e m ()
 app process = do
   post "/streams/:streamId" $ do
     streamId <- param "streamId"
-    expectedVersion <- parseOptionalHeader "ES-ExpectedVersion" positiveInt64Parser
+    expectedVersion <- parseOptionalHeader "ES-ExpectedVersion" (positiveInt64Parser <* endOfInput)
     eventType <- parseMandatoryHeader "ES-EventType" textParser
     eventData <- body
     eventTime <- lift getCurrentTime
@@ -245,7 +291,7 @@ app process = do
     eventNumber <- param "eventNumber"
     toResult' process (ReadEvent <$> (ReadEventRequest
           <$> notEmpty streamId
-          <*> runParser positiveInt64Parser "Invalid Event Number" eventNumber))
+          <*> runParser (positiveInt64Parser <* endOfInput) "Invalid Event Number" eventNumber))
   get "/streams/:streamId" $ readStreamHandler process (param "streamId") Nothing Nothing FeedDirectionBackward
   get "/streams/:streamId/:eventNumber/:count" $ readStreamHandler process (param "streamId") (Just $ param "eventNumber") (Just $ param "count") FeedDirectionBackward
   get "/streams/:streamId/:eventNumber/backward/:count" $ readStreamHandler process (param "streamId") (Just $ param "eventNumber") (Just $ param "count") FeedDirectionBackward

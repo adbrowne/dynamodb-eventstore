@@ -36,7 +36,7 @@ showEventResponse eventStoreAction = S.text $ TL.fromStrict $ show eventStoreAct
 app :: IO Application
 app = do
   sampleTime <- parseTimeM True defaultTimeLocale rfc822DateFormat "Sun, 08 May 2016 12:49:41 +0000"
-  S.scottyAppT (flip runReaderT sampleTime) (W.app showEventResponse :: S.ScottyT LText (ReaderT UTCTime IO) ())
+  S.scottyAppT (`runReaderT` sampleTime) (W.app showEventResponse :: S.ScottyT LText (ReaderT UTCTime IO) ())
 
 postEventSpec :: Spec
 postEventSpec = do
@@ -98,7 +98,12 @@ getStreamSpec = do
   assertSuccess
     "stream simple"
     ["streams","myStreamId"]
-    "ReadStream (ReadStreamRequest {rsrStreamId = StreamId \"myStreamId\", rsrStartEventNumber = Nothing, rsrMaxItems = 10, rsrDirection = FeedDirectionBackward})"
+    "ReadStream (ReadStreamRequest {rsrStreamId = StreamId \"myStreamId\", rsrStartEventNumber = Nothing, rsrMaxItems = 20, rsrDirection = FeedDirectionBackward})"
+
+  assertSuccess
+    "stream $all simple"
+    ["streams","%24all"]
+    "ReadAll (ReadAllRequest {readAllRequestStartPosition = Nothing, readAllRequestMaxItems = 20, readAllRequestDirection = FeedDirectionBackward})"
 
   assertSuccess
     "stream with start event and limit"
@@ -106,9 +111,19 @@ getStreamSpec = do
     "ReadStream (ReadStreamRequest {rsrStreamId = StreamId \"myStreamId\", rsrStartEventNumber = Just 3, rsrMaxItems = 5, rsrDirection = FeedDirectionBackward})"
 
   assertSuccess
+    "stream $all with start event and limit"
+    ["streams","%24all","3-2","5"]
+    "ReadAll (ReadAllRequest {readAllRequestStartPosition = Just (GlobalFeedPosition {globalFeedPositionPage = 3, globalFeedPositionOffset = 2}), readAllRequestMaxItems = 5, readAllRequestDirection = FeedDirectionBackward})"
+
+  assertSuccess
     "stream with start and limit, backward"
     ["streams","myStreamId","3","backward","5"]
     "ReadStream (ReadStreamRequest {rsrStreamId = StreamId \"myStreamId\", rsrStartEventNumber = Just 3, rsrMaxItems = 5, rsrDirection = FeedDirectionBackward})"
+
+  assertSuccess
+    "stream $all with start and limit, backward"
+    ["streams","%24all","3-2","backward","5"]
+    "ReadAll (ReadAllRequest {readAllRequestStartPosition = Just (GlobalFeedPosition {globalFeedPositionPage = 3, globalFeedPositionOffset = 2}), readAllRequestMaxItems = 5, readAllRequestDirection = FeedDirectionBackward})"
 
   assertSuccess
     "stream backward from head"
@@ -116,9 +131,19 @@ getStreamSpec = do
     "ReadStream (ReadStreamRequest {rsrStreamId = StreamId \"myStreamId\", rsrStartEventNumber = Nothing, rsrMaxItems = 5, rsrDirection = FeedDirectionBackward})"
 
   assertSuccess
+    "stream $all backward from head"
+    ["streams","%24all","head","backward","5"]
+    "ReadAll (ReadAllRequest {readAllRequestStartPosition = Nothing, readAllRequestMaxItems = 5, readAllRequestDirection = FeedDirectionBackward})"
+
+  assertSuccess
     "stream with start and limit, forward"
     ["streams","myStreamId","3","forward","5"]
     "ReadStream (ReadStreamRequest {rsrStreamId = StreamId \"myStreamId\", rsrStartEventNumber = Just 3, rsrMaxItems = 5, rsrDirection = FeedDirectionForward})"
+
+  assertSuccess
+    "stream $all with start and limit, forward"
+    ["streams","%24all","3-2","forward","5"]
+    "ReadAll (ReadAllRequest {readAllRequestStartPosition = Just (GlobalFeedPosition {globalFeedPositionPage = 3, globalFeedPositionOffset = 2}), readAllRequestMaxItems = 5, readAllRequestDirection = FeedDirectionForward})"
 
   describe "Get stream with missing stream name" $ do
     let getExample = getStream ""
@@ -146,4 +171,3 @@ waiCase :: Session SResponse -> (SResponse -> Session ()) -> IO ()
 waiCase r assertion = do
   app' <- app
   flip runSession app' $ assertion =<< r
-

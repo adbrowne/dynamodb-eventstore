@@ -13,7 +13,7 @@ showText :: Show a => a -> LText
 showText = TL.fromStrict . show
 
 spec :: Spec
-spec =
+spec = do
   describe "parseInt64" $ do
     let run = W.runParser W.positiveInt64Parser ()
 
@@ -29,3 +29,6 @@ spec =
     it "will not parse numbers that are too large" $ do
       let tooLarge = toInteger (maxBound :: Int64) + 1
       run (showText tooLarge) == Left ()
+  describe "global feed position" $ do
+    it "can round trip any position" $ property $
+      \position -> W.parseGlobalFeedPosition(W.globalFeedPositionToText(position)) === Just position
