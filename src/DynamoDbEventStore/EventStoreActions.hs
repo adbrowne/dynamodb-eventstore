@@ -25,6 +25,8 @@ module DynamoDbEventStore.EventStoreActions(
   FeedDirection(..),
   StreamResult(..),
   StreamOffset,
+  GlobalStreamResult(..),
+  GlobalStreamOffset,
   EventStartPosition(..),
   GlobalStartPosition(..),
   GlobalFeedPosition(..),
@@ -123,9 +125,19 @@ data StreamResult = StreamResult {
   , streamResultLast     :: Maybe StreamOffset
 } deriving Show
 
+type GlobalStreamOffset = (FeedDirection, GlobalStartPosition, Natural)
+
+data GlobalStreamResult = GlobalStreamResult {
+    globalStreamResultEvents   :: [RecordedEvent]
+  , globalStreamResultFirst    :: Maybe GlobalStreamOffset
+  , globalStreamResultNext     :: Maybe GlobalStreamOffset
+  , globalStreamResultPrevious :: Maybe GlobalStreamOffset
+  , globalStreamResultLast     :: Maybe GlobalStreamOffset
+} deriving Show
+
 newtype PostEventResult = PostEventResult (Either EventStoreActionError EventWriteResult) deriving Show
 newtype ReadStreamResult = ReadStreamResult (Either EventStoreActionError (Maybe StreamResult)) deriving Show
-newtype ReadAllResult = ReadAllResult (Either EventStoreActionError [RecordedEvent]) deriving Show
+newtype ReadAllResult = ReadAllResult (Either EventStoreActionError GlobalStreamResult) deriving Show
 newtype ReadEventResult = ReadEventResult (Either EventStoreActionError (Maybe RecordedEvent)) deriving Show
 
 data PostEventRequest = PostEventRequest {
@@ -457,5 +469,13 @@ lookupEventKey = forever $ do
   (maybeRecordedEvent :: Maybe RecordedEvent) <- lift $ lookupEvent streamId eventNumber
   maybe (throwError $ EventStoreActionErrorCouldNotFindEvent eventKey) yield maybeRecordedEvent
 
-getReadAllRequestProgram :: ReadAllRequest -> DynamoCmdM (Either EventStoreActionError [RecordedEvent])
-getReadAllRequestProgram ReadAllRequest{..} = runExceptT $ P.toListM (getPagesAfter 0 >-> lookupEventKey)
+getReadAllRequestProgram :: ReadAllRequest -> DynamoCmdM (Either EventStoreActionError GlobalStreamResult)
+getReadAllRequestProgram ReadAllRequest{..} = runExceptT $ do
+  events <- P.toListM (getPagesAfter 0 >-> lookupEventKey)
+  return GlobalStreamResult {
+    globalStreamResultEvents = events,
+    globalStreamResultNext = Just $ (readAllRequestDirection, GlobalStartPosition $ GlobalFeedPosition 0 (length events), readAllRequestMaxItems),
+    globalStreamResultPrevious = Nothing,
+    globalStreamResultFirst = Nothing,
+    globalStreamResultLast = Nothing
+  }

@@ -2,7 +2,13 @@
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
-module DynamoDbEventStore.Feed (jsonFeed,jsonEntry,Feed(..),recordedEventToFeedEntry,streamResultsToFeed) where
+module DynamoDbEventStore.Feed (
+  jsonFeed,
+  jsonEntry,
+  Feed(..),
+  recordedEventToFeedEntry,
+  streamResultsToFeed,
+  globalStreamResultsToFeed) where
 
 import           BasicPrelude
 import           Data.Aeson
@@ -71,27 +77,58 @@ buildStreamLink streamUri rel (direction, position, maxItems)=
 
   in Link { linkHref = href, linkRel = rel }
 
+buildGlobalStreamLink :: Text -> Text -> GlobalStreamOffset -> Link
+buildGlobalStreamLink streamUri rel (direction, position, maxItems)=
+  let
+    positionName = case position of GlobalStartHead -> "head"
+                                    GlobalStartPosition x -> show x
+    directionName = case direction of FeedDirectionForward -> "forward"
+                                      FeedDirectionBackward -> "backward"
+    href = streamUri <> "/" <> positionName <> "/" <> directionName <> "/" <> show maxItems
+
+  in Link { linkHref = href, linkRel = rel }
+
+buildFeed :: Text -> StreamId -> Text -> UTCTime -> [RecordedEvent] -> [Link] -> Feed
+buildFeed baseUri (StreamId streamId) selfuri updated events links =
+  Feed {
+    feedId = selfuri
+    , feedTitle = "EventStream '" <> streamId <> "'"
+    , feedUpdated = updated
+    , feedSelfUrl = selfuri
+    , feedStreamId = streamId
+    , feedAuthor = Author { authorName = "EventStore" }
+    , feedLinks = links
+    , feedEntries = recordedEventToFeedEntry baseUri <$> events
+   }
+
 streamResultsToFeed :: Text -> StreamId -> UTCTime -> StreamResult -> Feed
 streamResultsToFeed baseUri (StreamId streamId) updated StreamResult{..} =
   let
     selfuri = baseUri <> "/streams/" <> streamId
     buildStreamLink' = buildStreamLink selfuri
-  in Feed
-       { feedId = selfuri
-       , feedTitle = "EventStream '" <> streamId <> "'"
-       , feedUpdated = updated
-       , feedSelfUrl = selfuri
-       , feedStreamId = streamId
-       , feedAuthor = Author { authorName = "EventStore" }
-       , feedLinks = catMaybes [
+    links = catMaybes [
               buildStreamLink' "first" <$> streamResultFirst
             , buildStreamLink' "last" <$> streamResultLast
             , buildStreamLink' "previous" <$> streamResultPrevious
             , buildStreamLink' "next" <$> streamResultNext
             , Just Link { linkHref = selfuri, linkRel = "self" }
          ]
-       , feedEntries = recordedEventToFeedEntry baseUri <$> streamResultEvents
-       }
+  in buildFeed baseUri (StreamId streamId) selfuri updated streamResultEvents links
+
+globalStreamResultsToFeed :: Text -> StreamId -> UTCTime -> GlobalStreamResult -> Feed
+globalStreamResultsToFeed baseUri streamId updated GlobalStreamResult{..} =
+  let
+    selfuri = baseUri <> "/streams/%24all"
+    buildStreamLink' = buildGlobalStreamLink selfuri
+    links = catMaybes [
+              buildStreamLink' "first" <$> globalStreamResultFirst
+            , buildStreamLink' "last" <$> globalStreamResultLast
+            , buildStreamLink' "previous" <$> globalStreamResultPrevious
+            , buildStreamLink' "next" <$> globalStreamResultNext
+            , Just Link { linkHref = selfuri, linkRel = "self" }
+         ]
+  in buildFeed baseUri streamId selfuri updated globalStreamResultEvents links
+
 
 recordedEventToFeedEntry :: Text -> RecordedEvent -> Entry
 recordedEventToFeedEntry baseUri recordedEvent =

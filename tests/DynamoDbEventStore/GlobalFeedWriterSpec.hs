@@ -102,9 +102,9 @@ globalFeedFromUploadList =
         newValue = maybe eventVersions (Seq.>< eventVersions) $ Map.lookup stream s
       in Map.insert stream newValue s
 
-globalRecordedEventListToMap :: [RecordedEvent] -> Map.Map Text (Seq.Seq Int64)
-globalRecordedEventListToMap =
-  foldl' acc Map.empty
+globalStreamResultToMap :: GlobalStreamResult -> Map.Map Text (Seq.Seq Int64)
+globalStreamResultToMap GlobalStreamResult{..} =
+  foldl' acc Map.empty globalStreamResultEvents
   where
     acc :: Map.Map Text (Seq.Seq Int64) -> RecordedEvent -> Map.Map Text (Seq.Seq Int64)
     acc s RecordedEvent {..} =
@@ -121,7 +121,7 @@ prop_EventShouldAppearInGlobalFeedInStreamOrder (UploadList uploadList) =
       ]
   in QC.forAll (runPrograms programs) check
      where
-       check (_, testRunState) = QC.forAll (runReadAllProgram testRunState) (\feedItems -> (globalRecordedEventListToMap <$> feedItems) === (Right $ globalFeedFromUploadList uploadList))
+       check (_, testRunState) = QC.forAll (runReadAllProgram testRunState) (\feedItems -> (globalStreamResultToMap <$> feedItems) === (Right $ globalFeedFromUploadList uploadList))
        runReadAllProgram = runProgramGenerator "readAllRequestProgram" (getReadAllRequestProgram ReadAllRequest { readAllRequestStartPosition = Nothing, readAllRequestMaxItems = 20, readAllRequestDirection = FeedDirectionForward })
 
 unpositive :: QC.Positive Int -> Int
@@ -361,16 +361,111 @@ testStateItems itemCount =
     postProgram eventId = postEventRequestProgram PostEventRequest { perStreamId = streamId, perExpectedVersion = Nothing, perEvents = sampleEventEntry { eventEntryEventId = eventId } :| [] }
     requests = take itemCount $ postProgram <$> sampleEventIds
     writeState = execProgram "writeEvents" (forM_ requests id) emptyTestState
-  in view testState writeState
+    feedEntries = (\x -> GlobalFeedWriter.FeedEntry { feedEntryCount = 1, feedEntryNumber = fromIntegral x, feedEntryStream = StreamId streamId}) <$> [0..itemCount-1]
+    pages = zip  [0..] (Seq.fromList <$> groupByFibs feedEntries)
+    writePage' (pageNumber, pageEntries) = GlobalFeedWriter.writePage pageNumber pageEntries 0
+    writePagesProgram = runExceptT $ forM_ pages writePage'
+    globalFeedCreatedState = execProgram "writeGlobalFeed" writePagesProgram (view testState writeState)
+  in view testState globalFeedCreatedState
 
 getSampleItems :: Maybe Int64 -> Natural -> FeedDirection -> Either EventStoreActionError (Maybe StreamResult)
 getSampleItems startEvent maxItems direction =
   evalProgram "ReadStream" (getReadStreamRequestProgram (ReadStreamRequest (StreamId "MyStream") startEvent maxItems direction)) (testStateItems 29)
 
-getSampleGlobalItems :: Maybe GlobalFeedPosition -> Natural -> FeedDirection -> Either EventStoreActionError [RecordedEvent]
+getSampleGlobalItems :: Maybe GlobalFeedPosition -> Natural -> FeedDirection -> Either EventStoreActionError GlobalStreamResult
 getSampleGlobalItems startPosition maxItems direction =
-  evalProgram "ReadAllStream" (getReadAllRequestProgram (ReadAllRequest startPosition maxItems direction)) (testStateItems 29)
+  let
+    readAllRequest = ReadAllRequest startPosition maxItems direction
+    programState = testStateItems 29
+  in evalProgram "ReadAllStream" (getReadAllRequestProgram readAllRequest) programState
 
+fibs :: [Int]
+fibs =
+  let acc (a,b) = Just (a+b,(b,a+b))
+  in 1:1:unfoldr acc (1,1)
+
+groupByFibs :: [a] -> [[a]]
+groupByFibs as =
+  let
+    acc (_, []) = Nothing
+    acc ([], _) = error "ran out of fibs that should not happen"
+    acc (x:xs, ys) = Just (take x ys, (xs, drop x ys))
+  in unfoldr acc (fibs,as)
+
+{-
+globalStreamPages:
+0: 0 (1)
+1: 1 (1)
+2: 2,3 (2)
+3: 4,5,6 (3)
+4: 7,8,9,10,11 (5)
+5: 12,13,14,15,16,17,18,19 (8)
+6: 20,21,22,23,24,25,26,27,28,29,30,31,32 (13)
+7: 33..53 (21)
+8: 54..87 (34)
+9: 88,89,90,91,92,93,94,95,96,97,98,99,100.. (55)
+-}
+
+globalStreamLinkTests :: [TestTree]
+globalStreamLinkTests =
+  let
+    toFeedPosition page offset = Just GlobalFeedPosition {
+        globalFeedPositionPage = page
+      , globalFeedPositionOffset = offset }
+    endOfFeedBackward = ("End of feed backward", getSampleGlobalItems Nothing 20 FeedDirectionBackward)
+    middleOfFeedBackward = ("Middle of feed backward", getSampleGlobalItems (toFeedPosition 6 5) 20 FeedDirectionBackward)
+    startOfFeedBackward = ("Start of feed backward", getSampleGlobalItems (toFeedPosition 1 0) 20 FeedDirectionBackward)
+    pastEndOfFeedBackward = ("Past end of feed backward", getSampleGlobalItems (toFeedPosition 9 12) 20 FeedDirectionBackward)
+    startOfFeedForward = ("Start of feed forward", getSampleGlobalItems Nothing 20 FeedDirectionForward)
+    middleOfFeedForward = ("Middle of feed forward", getSampleGlobalItems (toFeedPosition 2 1) 20 FeedDirectionForward)
+    endOfFeedForward = ("End of feed forward", getSampleGlobalItems (toFeedPosition 6 0) 20 FeedDirectionForward)
+    pastEndOfFeedForward = ("Past end of feed forward", getSampleGlobalItems (toFeedPosition 9 12) 20 FeedDirectionForward)
+    streamResultLast' = ("last", globalStreamResultLast)
+    streamResultFirst' = ("first", globalStreamResultFirst)
+    streamResultNext' = ("next", globalStreamResultNext)
+    streamResultPrevious' = ("previous", globalStreamResultPrevious)
+    toStartPosition page offset = GlobalStartPosition $ GlobalFeedPosition page offset
+    linkAssert (feedResultName, feedResult) (linkName, streamLink) expectedResult =
+      testCase
+        ("Unit - " <> feedResultName <> " - " <> linkName <> " link") $
+        assertEqual
+          ("Should have " <> linkName <> " link")
+          (Right expectedResult)
+          (fmap streamLink feedResult)
+  in [
+      linkAssert endOfFeedBackward streamResultFirst' (Just  (FeedDirectionBackward, GlobalStartHead, 20))
+    , linkAssert endOfFeedBackward streamResultLast' (Just (FeedDirectionForward, toStartPosition 0 0, 20))
+    , linkAssert endOfFeedBackward streamResultNext' (Just (FeedDirectionBackward, toStartPosition 4 2, 20))
+    , linkAssert endOfFeedBackward streamResultPrevious' (Just (FeedDirectionForward, toStartPosition 6 5, 20))
+    , linkAssert middleOfFeedBackward streamResultFirst' (Just (FeedDirectionBackward, GlobalStartHead, 20))
+    , linkAssert middleOfFeedBackward streamResultLast' (Just (FeedDirectionForward, toStartPosition 0 0, 20))
+{-    , linkAssert middleOfFeedBackward streamResultNext' (Just (FeedDirectionBackward, EventStartPosition 6, 20))
+    , linkAssert middleOfFeedBackward streamResultPrevious' (Just (FeedDirectionForward, EventStartPosition 27, 20))
+    , linkAssert startOfFeedBackward streamResultFirst' (Just (FeedDirectionBackward, GlobalStartHead, 20))
+    , linkAssert startOfFeedBackward streamResultLast' Nothing
+    , linkAssert startOfFeedBackward streamResultNext' Nothing
+    , linkAssert startOfFeedBackward streamResultPrevious' (Just (FeedDirectionForward, EventStartPosition 2, 20))
+    , linkAssert pastEndOfFeedBackward streamResultFirst' (Just (FeedDirectionBackward, GlobalStartHead, 20))
+    , linkAssert pastEndOfFeedBackward streamResultLast' (Just (FeedDirectionForward, EventStartPosition 0, 20))
+    , linkAssert pastEndOfFeedBackward streamResultNext' (Just (FeedDirectionBackward, EventStartPosition 80, 20))
+    , linkAssert pastEndOfFeedBackward streamResultPrevious' (Just (FeedDirectionForward, EventStartPosition 29, 20))
+    , linkAssert startOfFeedForward streamResultFirst' (Just (FeedDirectionBackward, GlobalStartHead, 20))
+    , linkAssert startOfFeedForward streamResultLast' Nothing
+    , linkAssert startOfFeedForward streamResultNext' Nothing
+    , linkAssert startOfFeedForward streamResultPrevious' (Just (FeedDirectionForward, EventStartPosition 20, 20))
+    , linkAssert middleOfFeedForward streamResultFirst' (Just (FeedDirectionBackward, GlobalStartHead, 20))
+    , linkAssert middleOfFeedForward streamResultLast' (Just (FeedDirectionForward, EventStartPosition 0, 20))
+    , linkAssert middleOfFeedForward streamResultNext' (Just (FeedDirectionBackward, EventStartPosition 2, 20))
+    , linkAssert middleOfFeedForward streamResultPrevious' (Just (FeedDirectionForward, EventStartPosition 23, 20))
+    , linkAssert endOfFeedForward streamResultFirst' (Just (FeedDirectionBackward, GlobalStartHead, 20))
+    , linkAssert endOfFeedForward streamResultLast' (Just (FeedDirectionForward, EventStartPosition 0, 20))
+    , linkAssert endOfFeedForward streamResultNext' (Just (FeedDirectionBackward, EventStartPosition 19, 20))
+    , linkAssert endOfFeedForward streamResultPrevious' (Just (FeedDirectionForward, EventStartPosition 29, 20))
+    , linkAssert pastEndOfFeedForward streamResultFirst' (Just (FeedDirectionBackward, GlobalStartHead, 20))
+    , linkAssert pastEndOfFeedForward streamResultLast' (Just (FeedDirectionForward, EventStartPosition 0, 20))
+    , linkAssert pastEndOfFeedForward streamResultNext' (Just (FeedDirectionBackward, EventStartPosition 99, 20))
+    , linkAssert pastEndOfFeedForward streamResultPrevious' Nothing -}
+  ]
 streamLinkTests :: [TestTree]
 streamLinkTests =
   let
@@ -513,5 +608,6 @@ tests = [
       testCase "Unit - Check Iops usage" whenIndexing1000ItemsIopsIsMinimal,
       testCase "Unit - Error thrown if trying to write an event in a multiple gap" errorThrownIfTryingToWriteAnEventInAMultipleGap,
       testCase "Unit - EventNumbers are calculated when there are multiple events" eventNumbersCorrectForMultipleEvents,
-      testGroup "Stream Link Tests" streamLinkTests
+      testGroup "Single Stream Link Tests" streamLinkTests,
+      testGroup "Global Stream Link Tests" globalStreamLinkTests
   ]

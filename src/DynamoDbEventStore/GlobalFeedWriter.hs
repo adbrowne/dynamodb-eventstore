@@ -5,10 +5,7 @@
 
 module DynamoDbEventStore.GlobalFeedWriter (
   main,
-  FeedEntry(FeedEntry),
-  feedEntryStream,
-  feedEntryNumber,
-  feedEntryCount,
+  FeedEntry(..),
   dynamoWriteWithRetry,
   entryEventCount,
   writePage,
