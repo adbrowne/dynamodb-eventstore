@@ -421,6 +421,11 @@ globalStreamPagingTests =
     , resultAssert "Middle of the feed forward" (Just $ GlobalFeedPosition 1 0) 3 FeedDirectionForward ["1","2","3"]
     , resultAssert "End of the feed forward" (Just $ GlobalFeedPosition 6 8) 3 FeedDirectionForward ["28"]
     , resultAssert "Past End of the feed forward" (Just $ GlobalFeedPosition 6 9) 3 FeedDirectionForward []
+    , resultAssert "Before end of feed backward" (Just $ GlobalFeedPosition 9 0) 3 FeedDirectionBackward []
+    , resultAssert "End of feed backward - start = Nothing" Nothing 1 FeedDirectionBackward ["28","27","26"]
+    , resultAssert "End of the feed backward" (Just $ GlobalFeedPosition 6 8) 3 FeedDirectionBackward ["28","27","26"]
+    , resultAssert "Middle of the feed backward" (Just $ GlobalFeedPosition 5 8) 3 FeedDirectionBackward ["19","18","17"]
+    , resultAssert "End of feed backward" (Just $ GlobalFeedPosition 0 0) 1 FeedDirectionBackward ["0"]
   ]
 
 {-
