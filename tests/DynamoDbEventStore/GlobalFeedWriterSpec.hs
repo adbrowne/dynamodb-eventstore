@@ -53,8 +53,11 @@ eventIdFromString = EventId . fromJust . UUID.fromString
 sampleEventId :: EventId
 sampleEventId = eventIdFromString "c2cc10e1-57d6-4b6f-9899-38d972112d8c"
 
+buildSampleEvent :: Text -> EventEntry
+buildSampleEvent eventType = EventEntry (TL.encodeUtf8 "My Content") (EventType eventType) sampleEventId sampleTime False
+
 sampleEventEntry :: EventEntry
-sampleEventEntry = EventEntry (TL.encodeUtf8 "My Content") "MyEvent" sampleEventId sampleTime False
+sampleEventEntry = buildSampleEvent "MyEvent"
 
 -- Generateds a list of length between 1 and maxLength
 cappedList :: QC.Arbitrary a => Int -> QC.Gen [a]
@@ -358,8 +361,8 @@ testStateItems :: Int -> TestState
 testStateItems itemCount =
   let
     streamId = "MyStream"
-    postProgram eventId = postEventRequestProgram PostEventRequest { perStreamId = streamId, perExpectedVersion = Nothing, perEvents = sampleEventEntry { eventEntryEventId = eventId } :| [] }
-    requests = take itemCount $ postProgram <$> sampleEventIds
+    postProgram (eventId, eventNumber) = postEventRequestProgram PostEventRequest { perStreamId = streamId, perExpectedVersion = Nothing, perEvents = sampleEventEntry { eventEntryType = (EventType . show) eventNumber, eventEntryEventId = eventId } :| [] }
+    requests = take itemCount $ postProgram <$> zip sampleEventIds [(0::Int)..]
     writeState = execProgram "writeEvents" (forM_ requests id) emptyTestState
     feedEntries = (\x -> GlobalFeedWriter.FeedEntry { feedEntryCount = 1, feedEntryNumber = fromIntegral x, feedEntryStream = StreamId streamId}) <$> [0..itemCount-1]
     pages = zip  [0..] (Seq.fromList <$> groupByFibs feedEntries)
@@ -406,6 +409,21 @@ globalStreamPages:
 9: 88,89,90,91,92,93,94,95,96,97,98,99,100.. (55)
 -}
 
+globalStreamPagingTests :: [TestTree]
+globalStreamPagingTests =
+  let
+    getEventTypes start maxItems direction = fmap2 recordedEventType $ globalStreamResultEvents <$> getSampleGlobalItems start maxItems direction
+    resultAssert testName start maxItems direction expectedBodies =
+      testCase testName $ assertEqual "Should return events" (Right expectedBodies) (getEventTypes start maxItems direction)
+  in [
+      resultAssert "Start of feed forward - start = Nothing" Nothing 1 FeedDirectionForward ["0"]
+    , resultAssert "Start of feed forward" (Just $ GlobalFeedPosition 0 0) 1 FeedDirectionForward ["0"]
+    , resultAssert "Middle of the feed forward" (Just $ GlobalFeedPosition 1 0) 3 FeedDirectionForward ["1","2","3"]
+    , resultAssert "End of the feed forward" (Just $ GlobalFeedPosition 6 8) 3 FeedDirectionForward ["28"]
+    , resultAssert "Past End of the feed forward" (Just $ GlobalFeedPosition 6 9) 3 FeedDirectionForward []
+  ]
+
+{-
 globalStreamLinkTests :: [TestTree]
 globalStreamLinkTests =
   let
@@ -466,6 +484,8 @@ globalStreamLinkTests =
     , linkAssert pastEndOfFeedForward streamResultNext' (Just (FeedDirectionBackward, EventStartPosition 99, 20))
     , linkAssert pastEndOfFeedForward streamResultPrevious' Nothing -}
   ]
+-}
+
 streamLinkTests :: [TestTree]
 streamLinkTests =
   let
@@ -609,5 +629,6 @@ tests = [
       testCase "Unit - Error thrown if trying to write an event in a multiple gap" errorThrownIfTryingToWriteAnEventInAMultipleGap,
       testCase "Unit - EventNumbers are calculated when there are multiple events" eventNumbersCorrectForMultipleEvents,
       testGroup "Single Stream Link Tests" streamLinkTests,
-      testGroup "Global Stream Link Tests" globalStreamLinkTests
+--      testGroup "Global Stream Link Tests" globalStreamLinkTests,
+      testGroup "Global Stream Paging Tests" globalStreamPagingTests
   ]

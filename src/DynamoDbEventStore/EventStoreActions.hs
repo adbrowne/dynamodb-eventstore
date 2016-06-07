@@ -188,7 +188,7 @@ data ReadEventRequest = ReadEventRequest {
 data GlobalFeedPosition = GlobalFeedPosition {
     globalFeedPositionPage   :: Int64
   , globalFeedPositionOffset :: Int
-} deriving (Show, Eq)
+} deriving (Show, Eq, Ord)
 
 instance QC.Arbitrary GlobalFeedPosition where
   arbitrary = GlobalFeedPosition
@@ -450,12 +450,13 @@ readPageKeys (DynamoReadResult _key _version values) = do
    feedEntries <- jsonDecode body
    return $ feedEntries >>= feedEntryToEventKeys
 
-getPagesAfter :: Int -> Producer EventKey UserProgramStack ()
+getPagesAfter :: Int -> Producer (GlobalFeedPosition, EventKey) UserProgramStack ()
 getPagesAfter startPage = do
   result <- lift $ readFromDynamo' (getPageDynamoKey startPage)
   case result of (Just entries) -> do
                    pageKeys <- lift $ readPageKeys entries
-                   forM_ pageKeys yield >> getPagesAfter (startPage + 1)
+                   let pageKeysWithPosition = zip (GlobalFeedPosition (fromIntegral startPage) <$> [0..]) pageKeys
+                   forM_ pageKeysWithPosition yield >> getPagesAfter (startPage + 1)
                  Nothing        -> return ()
 
 lookupEvent :: StreamId -> Int64 -> UserProgramStack (Maybe RecordedEvent)
@@ -463,19 +464,28 @@ lookupEvent streamId eventNumber = do
   (events :: [RecordedEvent]) <- P.toListM $ recordedEventProducerBackward streamId (Just eventNumber) 1
   return $ find ((== eventNumber) . recordedEventNumber) events
 
-lookupEventKey :: Pipe EventKey RecordedEvent UserProgramStack ()
+lookupEventKey :: Pipe (GlobalFeedPosition, EventKey) (GlobalFeedPosition, RecordedEvent) UserProgramStack ()
 lookupEventKey = forever $ do
-  (eventKey@(EventKey(streamId, eventNumber))) <- await
+  (position, eventKey@(EventKey(streamId, eventNumber))) <- await
   (maybeRecordedEvent :: Maybe RecordedEvent) <- lift $ lookupEvent streamId eventNumber
-  maybe (throwError $ EventStoreActionErrorCouldNotFindEvent eventKey) yield maybeRecordedEvent
+  let withPosition = (\e -> (position, e)) <$> maybeRecordedEvent
+  maybe (throwError $ EventStoreActionErrorCouldNotFindEvent eventKey) yield withPosition
 
 getReadAllRequestProgram :: ReadAllRequest -> DynamoCmdM (Either EventStoreActionError GlobalStreamResult)
 getReadAllRequestProgram ReadAllRequest{..} = runExceptT $ do
-  events <- P.toListM (getPagesAfter 0 >-> lookupEventKey)
+  events <- P.toListM $
+    getPagesAfter 0
+    >-> lookupEventKey
+    >-> filterFirstEvent readAllRequestStartPosition
+    >-> P.take (fromIntegral readAllRequestMaxItems)
+    >-> P.map snd
   return GlobalStreamResult {
     globalStreamResultEvents = events,
-    globalStreamResultNext = Just $ (readAllRequestDirection, GlobalStartPosition $ GlobalFeedPosition 0 (length events), readAllRequestMaxItems),
+    globalStreamResultNext = Just (readAllRequestDirection, GlobalStartPosition $ GlobalFeedPosition 0 (length events), readAllRequestMaxItems),
     globalStreamResultPrevious = Nothing,
     globalStreamResultFirst = Nothing,
     globalStreamResultLast = Nothing
   }
+  where
+    filterFirstEvent Nothing = P.filter (const True)
+    filterFirstEvent (Just startPosition) = P.filter ((>= startPosition) . fst)
