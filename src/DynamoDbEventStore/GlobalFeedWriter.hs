@@ -9,6 +9,7 @@ module DynamoDbEventStore.GlobalFeedWriter (
   dynamoWriteWithRetry,
   entryEventCount,
   writePage,
+  GlobalFeedPosition(..),
   EventStoreActionError(..)) where
 
 import           BasicPrelude
@@ -34,8 +35,19 @@ data EventStoreActionError =
   EventStoreActionErrorBodyDecode DynamoKey String |
   EventStoreActionErrorEventDoesNotExist DynamoKey |
   EventStoreActionErrorOnWritingPage Int |
-  EventStoreActionErrorCouldNotFindEvent EventKey
+  EventStoreActionErrorCouldNotFindEvent EventKey |
+  EventStoreActionErrorInvalidGlobalFeedPosition GlobalFeedPosition
   deriving (Show, Eq)
+
+data GlobalFeedPosition = GlobalFeedPosition {
+    globalFeedPositionPage   :: Int64
+  , globalFeedPositionOffset :: Int
+} deriving (Show, Eq, Ord)
+
+instance QC.Arbitrary GlobalFeedPosition where
+  arbitrary = GlobalFeedPosition
+                <$> ((\(QC.Positive p) -> fromInteger p) <$> QC.arbitrary)
+                <*> ((\(QC.Positive p) -> p) <$> QC.arbitrary)
 
 data FeedEntry = FeedEntry {
   feedEntryStream :: StreamId,

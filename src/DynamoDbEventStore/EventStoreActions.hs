@@ -29,7 +29,7 @@ module DynamoDbEventStore.EventStoreActions(
   GlobalStreamOffset,
   EventStartPosition(..),
   GlobalStartPosition(..),
-  GlobalFeedPosition(..),
+  GlobalFeedWriter.GlobalFeedPosition(..),
   postEventRequestProgram,
   getReadStreamRequestProgram,
   getReadEventRequestProgram,
@@ -109,7 +109,7 @@ instance Serialize.Serialize EventTime where
     return $ EventTime time
 
 data EventStartPosition = EventStartHead | EventStartPosition Int64 deriving (Show, Eq)
-data GlobalStartPosition = GlobalStartHead | GlobalStartPosition GlobalFeedPosition deriving (Show, Eq)
+data GlobalStartPosition = GlobalStartHead | GlobalStartPosition GlobalFeedWriter.GlobalFeedPosition deriving (Show, Eq)
 
 instance Serialize.Serialize EventType where
   put (EventType t) = (Serialize.put . encodeUtf8) t
@@ -185,18 +185,8 @@ data ReadEventRequest = ReadEventRequest {
    rerEventNumber :: Int64
 } deriving (Show)
 
-data GlobalFeedPosition = GlobalFeedPosition {
-    globalFeedPositionPage   :: Int64
-  , globalFeedPositionOffset :: Int
-} deriving (Show, Eq, Ord)
-
-instance QC.Arbitrary GlobalFeedPosition where
-  arbitrary = GlobalFeedPosition
-                <$> ((\(QC.Positive p) -> fromInteger p) <$> QC.arbitrary)
-                <*> ((\(QC.Positive p) -> p) <$> QC.arbitrary)
-
 data ReadAllRequest = ReadAllRequest {
-      readAllRequestStartPosition :: Maybe GlobalFeedPosition
+      readAllRequestStartPosition :: Maybe GlobalFeedWriter.GlobalFeedPosition
     , readAllRequestMaxItems      :: Natural
     , readAllRequestDirection     :: FeedDirection
 } deriving (Show)
@@ -458,13 +448,13 @@ getPagesBackward page = do
                       Nothing        -> return ()
   getPagesBackward (page - 1)
 
-pageToEventKeys :: (Int, DynamoReadResult) -> UserProgramStack [(GlobalFeedPosition, EventKey)]
+pageToEventKeys :: (Int, DynamoReadResult) -> UserProgramStack [(GlobalFeedWriter.GlobalFeedPosition, EventKey)]
 pageToEventKeys (page, entries) = do
   pageKeys <- readPageKeys entries
-  let pageKeysWithPosition = zip (GlobalFeedPosition (fromIntegral page) <$> [0..]) pageKeys
+  let pageKeysWithPosition = zip (GlobalFeedWriter.GlobalFeedPosition (fromIntegral page) <$> [0..]) pageKeys
   return pageKeysWithPosition
 
-getPageItemsBackward :: Int -> Producer (GlobalFeedPosition, EventKey) UserProgramStack ()
+getPageItemsBackward :: Int -> Producer (GlobalFeedWriter.GlobalFeedPosition, EventKey) UserProgramStack ()
 getPageItemsBackward startPage =
   getPagesBackward startPage >-> readResultToEventKeys
   where
@@ -477,7 +467,7 @@ getPagesForward startPage = do
   case result of (Just entries) -> yield (startPage, entries) >> getPagesForward (startPage + 1)
                  Nothing        -> return ()
 
-getPageItemsForward :: Int -> Producer (GlobalFeedPosition, EventKey) UserProgramStack ()
+getPageItemsForward :: Int -> Producer (GlobalFeedWriter.GlobalFeedPosition, EventKey) UserProgramStack ()
 getPageItemsForward startPage =
   getPagesForward startPage >-> readResultToEventKeys
   where
@@ -489,7 +479,7 @@ lookupEvent streamId eventNumber = do
   (events :: [RecordedEvent]) <- P.toListM $ recordedEventProducerBackward streamId (Just eventNumber) 1
   return $ find ((== eventNumber) . recordedEventNumber) events
 
-lookupEventKey :: Pipe (GlobalFeedPosition, EventKey) (GlobalFeedPosition, RecordedEvent) UserProgramStack ()
+lookupEventKey :: Pipe (GlobalFeedWriter.GlobalFeedPosition, EventKey) (GlobalFeedWriter.GlobalFeedPosition, RecordedEvent) UserProgramStack ()
 lookupEventKey = forever $ do
   (position, eventKey@(EventKey(streamId, eventNumber))) <- await
   (maybeRecordedEvent :: Maybe RecordedEvent) <- lift $ lookupEvent streamId eventNumber
@@ -511,7 +501,7 @@ getReadAllRequestProgram ReadAllRequest
     >-> P.map snd
   return GlobalStreamResult {
     globalStreamResultEvents = events,
-    globalStreamResultNext = Just (FeedDirectionForward, GlobalStartPosition $ GlobalFeedPosition 0 (length events), readAllRequestMaxItems),
+    globalStreamResultNext = Just (FeedDirectionForward, GlobalStartPosition $ GlobalFeedWriter.GlobalFeedPosition 0 (length events), readAllRequestMaxItems),
     globalStreamResultPrevious = Nothing,
     globalStreamResultFirst = Nothing,
     globalStreamResultLast = Nothing
@@ -533,7 +523,7 @@ getReadAllRequestProgram ReadAllRequest
     >-> P.map snd
   return GlobalStreamResult {
     globalStreamResultEvents = events,
-    globalStreamResultNext = Just (FeedDirectionForward, GlobalStartPosition $ GlobalFeedPosition 0 (length events), readAllRequestMaxItems),
+    globalStreamResultNext = Just (FeedDirectionForward, GlobalStartPosition $ GlobalFeedWriter.GlobalFeedPosition 0 (length events), readAllRequestMaxItems),
     globalStreamResultPrevious = Nothing,
     globalStreamResultFirst = Nothing,
     globalStreamResultLast = Nothing
