@@ -450,6 +450,27 @@ readPageKeys (DynamoReadResult _key _version values) = do
    feedEntries <- jsonDecode body
    return $ feedEntries >>= feedEntryToEventKeys
 
+getPagesBackward :: Int -> Producer (Int, DynamoReadResult) UserProgramStack ()
+getPagesBackward (-1) = return ()
+getPagesBackward page = do
+  result <- lift $ readFromDynamo' (getPageDynamoKey page)
+  _ <- case result of (Just entries) -> yield (page, entries)
+                      Nothing        -> return ()
+  getPagesBackward (page - 1)
+
+pageToEventKeys :: (Int, DynamoReadResult) -> UserProgramStack [(GlobalFeedPosition, EventKey)]
+pageToEventKeys (page, entries) = do
+  pageKeys <- readPageKeys entries
+  let pageKeysWithPosition = zip (GlobalFeedPosition (fromIntegral page) <$> [0..]) pageKeys
+  return pageKeysWithPosition
+
+getPageItemsBackward :: Int -> Producer (GlobalFeedPosition, EventKey) UserProgramStack ()
+getPageItemsBackward startPage =
+  getPagesBackward startPage >-> readResultToEventKeys
+  where
+    readResultToEventKeys = forever $
+      await >>= lift . fmap reverse . pageToEventKeys >>= mapM_ yield
+
 getPagesForward :: Int -> Producer (Int, DynamoReadResult) UserProgramStack ()
 getPagesForward startPage = do
   result <- lift $ readFromDynamo' (getPageDynamoKey startPage)
@@ -460,11 +481,8 @@ getPageItemsForward :: Int -> Producer (GlobalFeedPosition, EventKey) UserProgra
 getPageItemsForward startPage =
   getPagesForward startPage >-> readResultToEventKeys
   where
-    readResultToEventKeys = forever $ do
-      (page, entries) <- await
-      pageKeys <- lift $ readPageKeys entries
-      let pageKeysWithPosition = zip (GlobalFeedPosition (fromIntegral page) <$> [0..]) pageKeys
-      forM_ pageKeysWithPosition yield
+    readResultToEventKeys = forever $
+      await >>= lift . pageToEventKeys >>= mapM_ yield
 
 lookupEvent :: StreamId -> Int64 -> UserProgramStack (Maybe RecordedEvent)
 lookupEvent streamId eventNumber = do
@@ -479,7 +497,12 @@ lookupEventKey = forever $ do
   maybe (throwError $ EventStoreActionErrorCouldNotFindEvent eventKey) yield withPosition
 
 getReadAllRequestProgram :: ReadAllRequest -> DynamoCmdM (Either EventStoreActionError GlobalStreamResult)
-getReadAllRequestProgram ReadAllRequest{..} = runExceptT $ do
+getReadAllRequestProgram ReadAllRequest
+  {
+    readAllRequestDirection = FeedDirectionForward
+  , readAllRequestStartPosition = readAllRequestStartPosition
+  , readAllRequestMaxItems = readAllRequestMaxItems
+  } = runExceptT $ do
   events <- P.toListM $
     getPageItemsForward 0
     >-> lookupEventKey
@@ -488,7 +511,7 @@ getReadAllRequestProgram ReadAllRequest{..} = runExceptT $ do
     >-> P.map snd
   return GlobalStreamResult {
     globalStreamResultEvents = events,
-    globalStreamResultNext = Just (readAllRequestDirection, GlobalStartPosition $ GlobalFeedPosition 0 (length events), readAllRequestMaxItems),
+    globalStreamResultNext = Just (FeedDirectionForward, GlobalStartPosition $ GlobalFeedPosition 0 (length events), readAllRequestMaxItems),
     globalStreamResultPrevious = Nothing,
     globalStreamResultFirst = Nothing,
     globalStreamResultLast = Nothing
@@ -496,3 +519,25 @@ getReadAllRequestProgram ReadAllRequest{..} = runExceptT $ do
   where
     filterFirstEvent Nothing = P.filter (const True)
     filterFirstEvent (Just startPosition) = P.filter ((>= startPosition) . fst)
+getReadAllRequestProgram ReadAllRequest
+  {
+    readAllRequestDirection = FeedDirectionBackward
+  , readAllRequestStartPosition = readAllRequestStartPosition
+  , readAllRequestMaxItems = readAllRequestMaxItems
+  } = runExceptT $ do
+  events <- P.toListM $
+    getPageItemsBackward 100
+    >-> lookupEventKey
+    >-> filterLastEvent readAllRequestStartPosition
+    >-> P.take (fromIntegral readAllRequestMaxItems)
+    >-> P.map snd
+  return GlobalStreamResult {
+    globalStreamResultEvents = events,
+    globalStreamResultNext = Just (FeedDirectionForward, GlobalStartPosition $ GlobalFeedPosition 0 (length events), readAllRequestMaxItems),
+    globalStreamResultPrevious = Nothing,
+    globalStreamResultFirst = Nothing,
+    globalStreamResultLast = Nothing
+  }
+  where
+    filterLastEvent Nothing = P.filter (const True)
+    filterLastEvent (Just startPosition) = P.filter ((<= startPosition) . fst)
