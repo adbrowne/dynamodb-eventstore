@@ -450,14 +450,21 @@ readPageKeys (DynamoReadResult _key _version values) = do
    feedEntries <- jsonDecode body
    return $ feedEntries >>= feedEntryToEventKeys
 
-getPagesAfter :: Int -> Producer (GlobalFeedPosition, EventKey) UserProgramStack ()
-getPagesAfter startPage = do
+getPagesForward :: Int -> Producer (Int, DynamoReadResult) UserProgramStack ()
+getPagesForward startPage = do
   result <- lift $ readFromDynamo' (getPageDynamoKey startPage)
-  case result of (Just entries) -> do
-                   pageKeys <- lift $ readPageKeys entries
-                   let pageKeysWithPosition = zip (GlobalFeedPosition (fromIntegral startPage) <$> [0..]) pageKeys
-                   forM_ pageKeysWithPosition yield >> getPagesAfter (startPage + 1)
+  case result of (Just entries) -> yield (startPage, entries) >> getPagesForward (startPage + 1)
                  Nothing        -> return ()
+
+getPageItemsForward :: Int -> Producer (GlobalFeedPosition, EventKey) UserProgramStack ()
+getPageItemsForward startPage =
+  getPagesForward startPage >-> readResultToEventKeys
+  where
+    readResultToEventKeys = forever $ do
+      (page, entries) <- await
+      pageKeys <- lift $ readPageKeys entries
+      let pageKeysWithPosition = zip (GlobalFeedPosition (fromIntegral page) <$> [0..]) pageKeys
+      forM_ pageKeysWithPosition yield
 
 lookupEvent :: StreamId -> Int64 -> UserProgramStack (Maybe RecordedEvent)
 lookupEvent streamId eventNumber = do
@@ -474,7 +481,7 @@ lookupEventKey = forever $ do
 getReadAllRequestProgram :: ReadAllRequest -> DynamoCmdM (Either EventStoreActionError GlobalStreamResult)
 getReadAllRequestProgram ReadAllRequest{..} = runExceptT $ do
   events <- P.toListM $
-    getPagesAfter 0
+    getPageItemsForward 0
     >-> lookupEventKey
     >-> filterFirstEvent readAllRequestStartPosition
     >-> P.take (fromIntegral readAllRequestMaxItems)
