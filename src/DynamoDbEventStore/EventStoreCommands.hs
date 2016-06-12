@@ -67,6 +67,12 @@ data PageStatus = Version Int | Full | Verified deriving (Eq, Show, Generic)
 
 newtype EventId = EventId UUID.UUID deriving (Show, Eq, Ord, Generic)
 
+instance QC.Arbitrary PageKey where
+  arbitrary =
+    let
+      positiveToPageKey (QC.Positive p) = PageKey p
+    in positiveToPageKey <$> QC.arbitrary
+
 instance Serialize.Serialize EventId where
   put (EventId uuid) = do
     let (w0, w1, w2, w3) = UUID.toWords uuid

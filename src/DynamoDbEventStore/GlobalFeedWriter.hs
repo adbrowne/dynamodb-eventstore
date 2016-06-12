@@ -48,7 +48,7 @@ data GlobalFeedPosition = GlobalFeedPosition {
 
 instance QC.Arbitrary GlobalFeedPosition where
   arbitrary = GlobalFeedPosition
-                <$> ((\(QC.Positive p) -> (PageKey . fromInteger) p) <$> QC.arbitrary)
+                <$> QC.arbitrary
                 <*> ((\(QC.Positive p) -> p) <$> QC.arbitrary)
 
 data FeedEntry = FeedEntry {
