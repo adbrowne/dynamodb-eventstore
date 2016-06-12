@@ -542,7 +542,7 @@ getReadAllRequestProgram ReadAllRequest
   , readAllRequestMaxItems = readAllRequestMaxItems
   } = runExceptT $ do
   events <- P.toListM $
-    (getGlobalFeedBackward readAllRequestStartPosition)
+    getGlobalFeedBackward readAllRequestStartPosition
     >-> lookupEventKey
     >-> filterLastEvent readAllRequestStartPosition
     >-> P.take (fromIntegral readAllRequestMaxItems)
