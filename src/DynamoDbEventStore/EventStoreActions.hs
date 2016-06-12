@@ -56,7 +56,8 @@ import qualified DynamoDbEventStore.Constants          as Constants
 import           DynamoDbEventStore.EventStoreCommands hiding (readField)
 import qualified DynamoDbEventStore.EventStoreCommands as EventStoreCommands
 import           DynamoDbEventStore.GlobalFeedWriter   (EventStoreActionError (..),
-                                                        GlobalFeedPosition (..))
+                                                        GlobalFeedPosition (..),
+                                                        getPageDynamoKey)
 import qualified DynamoDbEventStore.GlobalFeedWriter   as GlobalFeedWriter
 import           GHC.Generics
 import           GHC.Natural
@@ -67,7 +68,6 @@ import           Safe
 import           Safe.Exact
 import qualified Test.QuickCheck                       as QC
 import           Test.QuickCheck.Instances             ()
-import           Text.Printf                           (printf)
 import           TextShow                              hiding (fromString)
 
 -- High level event store actions
@@ -424,11 +424,6 @@ getReadStreamRequestProgram (ReadStreamRequest streamId startEventNumber maxItem
     filterFirstEvent Nothing = P.filter (const True)
     filterFirstEvent (Just v) = P.filter ((>= v) . recordedEventNumber)
 
-getPageDynamoKey :: Int -> DynamoKey
-getPageDynamoKey pageNumber =
-  let paddedPageNumber = fromString (printf "%08d" pageNumber)
-  in DynamoKey (Constants.pageDynamoKeyPrefix <> paddedPageNumber) 0
-
 feedEntryToEventKeys :: GlobalFeedWriter.FeedEntry -> [EventKey]
 feedEntryToEventKeys GlobalFeedWriter.FeedEntry { GlobalFeedWriter.feedEntryStream = streamId, GlobalFeedWriter.feedEntryNumber = eventNumber, GlobalFeedWriter.feedEntryCount = entryCount } =
   (\number -> EventKey(streamId, number)) <$> take entryCount [eventNumber..]
@@ -442,27 +437,27 @@ readPageKeys (DynamoReadResult _key _version values) = do
    feedEntries <- jsonDecode body
    return $ feedEntries >>= feedEntryToEventKeys
 
-readPage :: Int -> UserProgramStack (Maybe [(GlobalFeedPosition,EventKey)])
+readPage :: PageKey -> UserProgramStack (Maybe [(GlobalFeedPosition,EventKey)])
 readPage page = do
   result <- lift $ readFromDynamo' (getPageDynamoKey page)
   case result of Just x  -> Just <$> pageToEventKeys page x
                  Nothing -> return Nothing
 
-getPagesBackward :: Int -> Producer [(GlobalFeedPosition,EventKey)] UserProgramStack ()
-getPagesBackward (-1) = return ()
+getPagesBackward :: PageKey -> Producer [(GlobalFeedPosition,EventKey)] UserProgramStack ()
+getPagesBackward (PageKey (-1)) = return ()
 getPagesBackward page = do
   result <- lift $ readPage page
   _ <- case result of (Just entries) -> yield entries
                       Nothing        -> lift $ throwError (EventStoreActionErrorInvalidGlobalFeedPage page)
   getPagesBackward (page - 1)
 
-pageToEventKeys :: Int -> DynamoReadResult -> UserProgramStack [(GlobalFeedPosition, EventKey)]
+pageToEventKeys :: PageKey -> DynamoReadResult -> UserProgramStack [(GlobalFeedPosition, EventKey)]
 pageToEventKeys page entries = do
   pageKeys <- readPageKeys entries
-  let pageKeysWithPosition = zip (GlobalFeedPosition (fromIntegral page) <$> [0..]) pageKeys
+  let pageKeysWithPosition = zip (GlobalFeedPosition page <$> [0..]) pageKeys
   return pageKeysWithPosition
 
-getPageItemsBackward :: Int -> Producer (GlobalFeedPosition, EventKey) UserProgramStack ()
+getPageItemsBackward :: PageKey -> Producer (GlobalFeedPosition, EventKey) UserProgramStack ()
 getPageItemsBackward startPage =
   getPagesBackward startPage >-> readResultToEventKeys
   where
@@ -471,7 +466,7 @@ getPageItemsBackward startPage =
 
 getFirstPageBackward :: GlobalFeedPosition -> Producer (GlobalFeedPosition, EventKey) UserProgramStack ()
 getFirstPageBackward position@GlobalFeedPosition{..} = do
-  items <- lift $ readPage (fromIntegral globalFeedPositionPage)
+  items <- lift $ readPage globalFeedPositionPage
   let itemsBeforePosition = items >>= takeExactMay (globalFeedPositionOffset + 1)
   maybe notFoundError yieldItemsInReverse itemsBeforePosition
   where
@@ -485,15 +480,15 @@ getGlobalFeedBackward Nothing = do
   maybe (return ()) (getGlobalFeedBackward . Just) lastPosition
 
 getGlobalFeedBackward (Just (position@GlobalFeedPosition{..})) =
-  getFirstPageBackward position >> getPageItemsBackward (fromIntegral globalFeedPositionPage - 1)
+  getFirstPageBackward position >> getPageItemsBackward (globalFeedPositionPage - 1)
 
-getPagesForward :: Int -> Producer [(GlobalFeedPosition,EventKey)] UserProgramStack ()
+getPagesForward :: PageKey -> Producer [(GlobalFeedPosition,EventKey)] UserProgramStack ()
 getPagesForward startPage = do
   result <- lift $ readPage startPage
   case result of (Just entries) -> yield entries >> getPagesForward (startPage + 1)
                  Nothing        -> return ()
 
-getPageItemsForward :: Int -> Producer (GlobalFeedPosition, EventKey) UserProgramStack ()
+getPageItemsForward :: PageKey -> Producer (GlobalFeedPosition, EventKey) UserProgramStack ()
 getPageItemsForward startPage =
   getPagesForward startPage >-> readResultToEventKeys
   where

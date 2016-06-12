@@ -66,7 +66,7 @@ globalFeedPositionToText GlobalFeedPosition{..} = show globalFeedPositionPage <>
 globalFeedPositionParser :: Parser GlobalFeedPosition
 globalFeedPositionParser =
   GlobalFeedPosition
-    <$> positiveInt64Parser
+    <$> pageKeyParser
     <*> (string "-" *> positiveIntParser)
 
 parseGlobalFeedPosition :: Text -> Maybe GlobalFeedPosition
@@ -125,6 +125,9 @@ positiveInt64Parser =
     filterInt64 a
      | a <= maxInt64 = return (fromInteger a)
      | otherwise = fail "too large"
+
+pageKeyParser :: Parser PageKey
+pageKeyParser = PageKey <$> positiveInt64Parser
 
 readEventResultJsonValue :: RecordedEvent -> Value
 readEventResultJsonValue recordedEvent =
