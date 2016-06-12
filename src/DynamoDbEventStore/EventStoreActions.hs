@@ -63,6 +63,7 @@ import           Network.AWS.DynamoDB
 import           Pipes                                 hiding (ListT, runListT)
 import qualified Pipes.Prelude                         as P
 import           Safe
+import           Safe.Exact
 import qualified Test.QuickCheck                       as QC
 import           Test.QuickCheck.Instances             ()
 import           Text.Printf                           (printf)
@@ -440,16 +441,22 @@ readPageKeys (DynamoReadResult _key _version values) = do
    feedEntries <- jsonDecode body
    return $ feedEntries >>= feedEntryToEventKeys
 
-getPagesBackward :: Int -> Producer (Int, DynamoReadResult) UserProgramStack ()
+readPage :: Int -> UserProgramStack (Maybe [(GlobalFeedWriter.GlobalFeedPosition,EventKey)])
+readPage page = do
+  result <- lift $ readFromDynamo' (getPageDynamoKey page)
+  case result of Just x  -> Just <$> pageToEventKeys page x
+                 Nothing -> return Nothing
+
+getPagesBackward :: Int -> Producer [(GlobalFeedWriter.GlobalFeedPosition,EventKey)] UserProgramStack ()
 getPagesBackward (-1) = return ()
 getPagesBackward page = do
-  result <- lift $ readFromDynamo' (getPageDynamoKey page)
-  _ <- case result of (Just entries) -> yield (page, entries)
-                      Nothing        -> return ()
+  result <- lift $ readPage page
+  _ <- case result of (Just entries) -> yield entries
+                      Nothing        -> lift $ throwError (EventStoreActionErrorInvalidGlobalFeedPage page)
   getPagesBackward (page - 1)
 
-pageToEventKeys :: (Int, DynamoReadResult) -> UserProgramStack [(GlobalFeedWriter.GlobalFeedPosition, EventKey)]
-pageToEventKeys (page, entries) = do
+pageToEventKeys :: Int -> DynamoReadResult -> UserProgramStack [(GlobalFeedWriter.GlobalFeedPosition, EventKey)]
+pageToEventKeys page entries = do
   pageKeys <- readPageKeys entries
   let pageKeysWithPosition = zip (GlobalFeedWriter.GlobalFeedPosition (fromIntegral page) <$> [0..]) pageKeys
   return pageKeysWithPosition
@@ -459,12 +466,30 @@ getPageItemsBackward startPage =
   getPagesBackward startPage >-> readResultToEventKeys
   where
     readResultToEventKeys = forever $
-      await >>= lift . fmap reverse . pageToEventKeys >>= mapM_ yield
+      (reverse <$> await) >>= mapM_ yield
 
-getPagesForward :: Int -> Producer (Int, DynamoReadResult) UserProgramStack ()
+getFirstPageBackward :: GlobalFeedWriter.GlobalFeedPosition -> Producer (GlobalFeedWriter.GlobalFeedPosition, EventKey) UserProgramStack ()
+getFirstPageBackward position@GlobalFeedWriter.GlobalFeedPosition{..} = do
+  items <- lift $ readPage (fromIntegral globalFeedPositionPage)
+  let itemsBeforePosition = items >>= takeExactMay (globalFeedPositionOffset + 1)
+  maybe notFoundError yieldItemsInReverse itemsBeforePosition
+  where
+    notFoundError = lift $ throwError (EventStoreActionErrorInvalidGlobalFeedPosition position)
+    yieldItemsInReverse = mapM_ yield . reverse
+
+getGlobalFeedBackward :: Maybe GlobalFeedWriter.GlobalFeedPosition -> Producer (GlobalFeedWriter.GlobalFeedPosition, EventKey) UserProgramStack ()
+getGlobalFeedBackward Nothing = do
+  lastItem <- lift $ P.last (getPageItemsForward 0) -- todo make this much more efficient
+  let lastPosition = fst <$> lastItem
+  maybe (return ()) (getGlobalFeedBackward . Just) lastPosition
+
+getGlobalFeedBackward (Just (position@GlobalFeedWriter.GlobalFeedPosition{..})) =
+  getFirstPageBackward position >> getPageItemsBackward (fromIntegral globalFeedPositionPage - 1)
+
+getPagesForward :: Int -> Producer [(GlobalFeedWriter.GlobalFeedPosition,EventKey)] UserProgramStack ()
 getPagesForward startPage = do
-  result <- lift $ readFromDynamo' (getPageDynamoKey startPage)
-  case result of (Just entries) -> yield (startPage, entries) >> getPagesForward (startPage + 1)
+  result <- lift $ readPage startPage
+  case result of (Just entries) -> yield entries >> getPagesForward (startPage + 1)
                  Nothing        -> return ()
 
 getPageItemsForward :: Int -> Producer (GlobalFeedWriter.GlobalFeedPosition, EventKey) UserProgramStack ()
@@ -472,7 +497,7 @@ getPageItemsForward startPage =
   getPagesForward startPage >-> readResultToEventKeys
   where
     readResultToEventKeys = forever $
-      await >>= lift . pageToEventKeys >>= mapM_ yield
+      await >>= mapM_ yield
 
 lookupEvent :: StreamId -> Int64 -> UserProgramStack (Maybe RecordedEvent)
 lookupEvent streamId eventNumber = do
@@ -516,7 +541,7 @@ getReadAllRequestProgram ReadAllRequest
   , readAllRequestMaxItems = readAllRequestMaxItems
   } = runExceptT $ do
   events <- P.toListM $
-    getPageItemsBackward 100
+    (getGlobalFeedBackward readAllRequestStartPosition)
     >-> lookupEventKey
     >-> filterLastEvent readAllRequestStartPosition
     >-> P.take (fromIntegral readAllRequestMaxItems)

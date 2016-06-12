@@ -125,7 +125,7 @@ prop_EventShouldAppearInGlobalFeedInStreamOrder (UploadList uploadList) =
   in QC.forAll (runPrograms programs) check
      where
        check (_, testRunState) = QC.forAll (runReadAllProgram testRunState) (\feedItems -> (globalStreamResultToMap <$> feedItems) === (Right $ globalFeedFromUploadList uploadList))
-       runReadAllProgram = runProgramGenerator "readAllRequestProgram" (getReadAllRequestProgram ReadAllRequest { readAllRequestStartPosition = Nothing, readAllRequestMaxItems = 20, readAllRequestDirection = FeedDirectionForward })
+       runReadAllProgram = runProgramGenerator "readAllRequestProgram" (getReadAllRequestProgram ReadAllRequest { readAllRequestStartPosition = Nothing, readAllRequestMaxItems = 2000, readAllRequestDirection = FeedDirectionForward })
 
 unpositive :: QC.Positive Int -> Int
 unpositive (QC.Positive x) = x
@@ -421,10 +421,10 @@ globalStreamPagingTests =
     , resultAssert "Middle of the feed forward" (Just $ GlobalFeedPosition 1 0) 3 FeedDirectionForward ["1","2","3"]
     , resultAssert "End of the feed forward" (Just $ GlobalFeedPosition 6 8) 3 FeedDirectionForward ["28"]
     , resultAssert "Past End of the feed forward" (Just $ GlobalFeedPosition 6 9) 3 FeedDirectionForward []
-    , resultAssert "Before end of feed backward" (Just $ GlobalFeedPosition 9 0) 3 FeedDirectionBackward []
+    , testCase "Before the end of feed backward" $ assertEqual "Should return error" (Left (EventStoreActionErrorInvalidGlobalFeedPosition (GlobalFeedPosition {globalFeedPositionPage = 9, globalFeedPositionOffset = 0}))) (getEventTypes (Just $ GlobalFeedPosition 9 0) 3 FeedDirectionBackward)
     , resultAssert "End of feed backward - start = Nothing" Nothing 3 FeedDirectionBackward ["28","27","26"]
     , resultAssert "End of the feed backward" (Just $ GlobalFeedPosition 6 8) 3 FeedDirectionBackward ["28","27","26"]
-    , resultAssert "Middle of the feed backward" (Just $ GlobalFeedPosition 5 8) 3 FeedDirectionBackward ["19","18","17"]
+    , resultAssert "Middle of the feed backward" (Just $ GlobalFeedPosition 5 7) 3 FeedDirectionBackward ["19","18","17"]
     , resultAssert "End of feed backward" (Just $ GlobalFeedPosition 0 0) 1 FeedDirectionBackward ["0"]
   ]
 
@@ -549,10 +549,11 @@ whenIndexing1000ItemsIopsIsMinimal =
     afterIndexState = execProgramUntilIdle "indexer" GlobalFeedWriter.main (testStateItems 1000)
     expectedWriteState = Map.fromList [
       ((UnpagedRead,IopsScanUnpaged,"indexer"),1000)
-     ,((TableRead,IopsGetItem,"indexer"),106986)
-     ,((TableRead,IopsQuery,"indexer"),999)
+     ,((TableRead,IopsGetItem,"indexer"),135318)
+     ,((TableRead,IopsQuery,"indexer"),985)
      ,((TableRead,IopsQuery,"writeEvents"),999)
-     ,((TableWrite,IopsWrite,"indexer"),3089)
+     ,((TableWrite,IopsWrite,"indexer"),3065)
+     ,((TableWrite,IopsWrite,"writeGlobalFeed"),15)
      ,((TableWrite,IopsWrite,"writeEvents"),1000)]
   in assertEqual "Should be small iops" expectedWriteState (view iopCounts afterIndexState)
 

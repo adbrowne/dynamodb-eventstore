@@ -36,7 +36,8 @@ data EventStoreActionError =
   EventStoreActionErrorEventDoesNotExist DynamoKey |
   EventStoreActionErrorOnWritingPage Int |
   EventStoreActionErrorCouldNotFindEvent EventKey |
-  EventStoreActionErrorInvalidGlobalFeedPosition GlobalFeedPosition
+  EventStoreActionErrorInvalidGlobalFeedPosition GlobalFeedPosition |
+  EventStoreActionErrorInvalidGlobalFeedPage Int
   deriving (Show, Eq)
 
 data GlobalFeedPosition = GlobalFeedPosition {
