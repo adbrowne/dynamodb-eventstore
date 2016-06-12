@@ -28,7 +28,6 @@ module DynamoDbEventStore.EventStoreCommands(
   DynamoCmd(..),
   DynamoKey(..),
   DynamoWriteResult(..),
-  EventReadResult,
   DynamoReadResult(..),
   DynamoValues,
   PageKey(..)
@@ -60,13 +59,11 @@ instance QC.Arbitrary StreamId where
 
 newtype EventKey = EventKey (StreamId, Int64) deriving (Ord, Eq, Show)
 deriveTextShow ''EventKey
-type EventType = Text
 newtype PageKey = PageKey { unPageKey :: Int64 } deriving (Ord, Eq, Num, Enum)
 
 instance Show PageKey where
   showsPrec precendence (PageKey p) = showsPrec precendence p
 
-type EventReadResult = Maybe (EventType, ByteString, Maybe PageKey)
 data PageStatus = Version Int | Full | Verified deriving (Eq, Show, Generic)
 
 newtype EventId = EventId UUID.UUID deriving (Show, Eq, Ord, Generic)
