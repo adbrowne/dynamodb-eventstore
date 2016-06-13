@@ -519,35 +519,46 @@ getReadAllRequestProgram ReadAllRequest
     >-> lookupEventKey
     >-> filterFirstEvent readAllRequestStartPosition
     >-> P.take (fromIntegral readAllRequestMaxItems)
-    >-> P.map snd
+  let previousEventPosition = fst <$> lastMay events
+  nextEvent <- case readAllRequestStartPosition of Nothing -> return Nothing
+                                                   Just startPosition -> do
+                                                     nextEvents <- P.toListM $
+                                                      getGlobalFeedBackward (Just startPosition)
+                                                      >-> P.map fst
+                                                      >-> P.filter (<= startPosition)
+                                                      >-> P.take 1
+                                                     return $ listToMaybe nextEvents
   return GlobalStreamResult {
-    globalStreamResultEvents = events,
-    globalStreamResultNext = Just (FeedDirectionForward, GlobalStartPosition $ GlobalFeedPosition 0 (length events), readAllRequestMaxItems),
-    globalStreamResultPrevious = Nothing,
-    globalStreamResultFirst = Nothing,
-    globalStreamResultLast = Nothing
+    globalStreamResultEvents = snd <$> events,
+    globalStreamResultNext = (\pos -> (FeedDirectionBackward, GlobalStartPosition pos, readAllRequestMaxItems)) <$> nextEvent,
+    globalStreamResultPrevious = (\pos -> (FeedDirectionForward, GlobalStartPosition pos, readAllRequestMaxItems)) <$> previousEventPosition,
+    globalStreamResultFirst = Just (FeedDirectionBackward, GlobalStartHead, readAllRequestMaxItems),
+    globalStreamResultLast = Just (FeedDirectionForward, GlobalStartHead, readAllRequestMaxItems)
   }
   where
     filterFirstEvent Nothing = P.filter (const True)
-    filterFirstEvent (Just startPosition) = P.filter ((>= startPosition) . fst)
+    filterFirstEvent (Just startPosition) = P.filter ((> startPosition) . fst)
 getReadAllRequestProgram ReadAllRequest
   {
     readAllRequestDirection = FeedDirectionBackward
   , readAllRequestStartPosition = readAllRequestStartPosition
   , readAllRequestMaxItems = readAllRequestMaxItems
   } = runExceptT $ do
-  events <- P.toListM $
+  let maxItems = fromIntegral readAllRequestMaxItems
+  eventsPlus1 <- P.toListM $
     getGlobalFeedBackward readAllRequestStartPosition
     >-> lookupEventKey
     >-> filterLastEvent readAllRequestStartPosition
-    >-> P.take (fromIntegral readAllRequestMaxItems)
-    >-> P.map snd
+    >-> P.take (maxItems + 1)
+  let events = snd <$> take maxItems eventsPlus1
+  let previousEventPosition = fst <$> headMay eventsPlus1
+  let nextEventBackwardPosition = fst <$> listToMaybe (drop maxItems eventsPlus1)
   return GlobalStreamResult {
     globalStreamResultEvents = events,
-    globalStreamResultNext = Just (FeedDirectionForward, GlobalStartPosition $ GlobalFeedPosition 0 (length events), readAllRequestMaxItems),
-    globalStreamResultPrevious = Nothing,
-    globalStreamResultFirst = Nothing,
-    globalStreamResultLast = Nothing
+    globalStreamResultNext = (\pos -> (FeedDirectionBackward, GlobalStartPosition pos, readAllRequestMaxItems)) <$> nextEventBackwardPosition,
+    globalStreamResultPrevious = (\pos -> (FeedDirectionForward, GlobalStartPosition pos, readAllRequestMaxItems)) <$> previousEventPosition,
+    globalStreamResultFirst = Just (FeedDirectionBackward, GlobalStartHead, readAllRequestMaxItems),
+    globalStreamResultLast = Just (FeedDirectionForward, GlobalStartHead, readAllRequestMaxItems)
   }
   where
     filterLastEvent Nothing = P.filter (const True)
