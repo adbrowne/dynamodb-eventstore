@@ -60,9 +60,6 @@ maybeToEither :: a -> Maybe b ->Either a b
 maybeToEither a Nothing = Left a
 maybeToEither _ (Just a) = Right a
 
-globalFeedPositionToText :: GlobalFeedPosition -> Text
-globalFeedPositionToText GlobalFeedPosition{..} = show globalFeedPositionPage <> "-" <> show globalFeedPositionOffset
-
 globalFeedPositionParser :: Parser GlobalFeedPosition
 globalFeedPositionParser =
   GlobalFeedPosition

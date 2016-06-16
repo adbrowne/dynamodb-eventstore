@@ -8,7 +8,8 @@ module DynamoDbEventStore.Feed (
   Feed(..),
   recordedEventToFeedEntry,
   streamResultsToFeed,
-  globalStreamResultsToFeed) where
+  globalStreamResultsToFeed,
+  globalFeedPositionToText) where
 
 import           BasicPrelude
 import           Data.Aeson
@@ -17,8 +18,8 @@ import qualified Data.Text                             as T
 import           Data.Time.Clock
 import           Data.Time.Format
 import qualified Data.Vector                           as V
-import           DynamoDbEventStore.EventStoreCommands
 import           DynamoDbEventStore.EventStoreActions
+import           DynamoDbEventStore.EventStoreCommands
 
 data Feed
  = Feed
@@ -77,11 +78,14 @@ buildStreamLink streamUri rel (direction, position, maxItems)=
 
   in Link { linkHref = href, linkRel = rel }
 
+globalFeedPositionToText :: GlobalFeedPosition -> Text
+globalFeedPositionToText GlobalFeedPosition{..} = show globalFeedPositionPage <> "-" <> show globalFeedPositionOffset
+
 buildGlobalStreamLink :: Text -> Text -> GlobalStreamOffset -> Link
 buildGlobalStreamLink streamUri rel (direction, position, maxItems)=
   let
     positionName = case position of GlobalStartHead -> "head"
-                                    GlobalStartPosition x -> show x
+                                    GlobalStartPosition x -> globalFeedPositionToText x
     directionName = case direction of FeedDirectionForward -> "forward"
                                       FeedDirectionBackward -> "backward"
     href = streamUri <> "/" <> positionName <> "/" <> directionName <> "/" <> show maxItems
