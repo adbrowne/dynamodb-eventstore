@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleInstances     #-}
+{-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE RankNTypes            #-}
@@ -19,6 +20,7 @@ import           BasicPrelude
 import           Web.Scotty.Trans
 
 import           Control.Arrow                          (left)
+import           Control.Monad.Except
 import           Control.Monad.Reader
 import           Data.Aeson
 import           Data.Aeson.Encode.Pretty
@@ -162,7 +164,7 @@ eventStoreReadAllResultToText AtomJsonEncoding (ReadAllResult (Right globalStrea
     buildFeed' = globalStreamResultsToFeed baseUri streamId sampleTime
   in raw . encodePretty . jsonFeed . buildFeed' $ globalStreamResult
 
-data ResponseEncoding = AtomJsonEncoding
+data ResponseEncoding = AtomJsonEncoding | AtomXmlEncoding
 
 notEmpty :: Text -> Either LText Text
 notEmpty "" = Left "streamId required"
@@ -177,6 +179,11 @@ instance MonadHasTime IO where
 instance (Monad m) => MonadHasTime (ReaderT UTCTime m) where
   getCurrentTime = ask
 
+data WebError =
+  UnknownAcceptValue
+  | WebErrorInterpreter InterpreterError
+  deriving Show
+
 data EventStoreActionRunner = EventStoreActionRunner {
     eventStoreActionRunnerPostEvent  :: PostEventRequest -> IO (Either InterpreterError PostEventResult)
   , eventStoreActionRunnerReadStream :: ReadStreamRequest -> IO (Either InterpreterError ReadStreamResult)
@@ -184,23 +191,44 @@ data EventStoreActionRunner = EventStoreActionRunner {
   , eventStoreActionRunnerReadEvent  :: ReadEventRequest -> IO (Either InterpreterError ReadEventResult)
 }
 
+getEncoding :: forall m. forall e. (Monad m, ScottyError e) => ExceptT WebError (ActionT e m) ResponseEncoding
+getEncoding = do
+  accept <- lift $ header "Accept"
+  case accept of (Just "application/vnd.eventstore.events+json") -> return AtomJsonEncoding
+                 (Just "application/vnd.eventstore.events+xml")  -> return AtomXmlEncoding
+                 _                                               -> throwError UnknownAcceptValue
+
+runActionWithEncodedResponse :: (Monad m, MonadIO m, ScottyError e) => IO (Either InterpreterError r) -> (ResponseEncoding -> r -> ActionT e m ()) -> ActionT e m ()
+runActionWithEncodedResponse runAction processResponse = runExceptT (do
+  encoding <- getEncoding
+  result <- liftAction runAction
+  return (encoding, result)) >>= \case
+    (Left err) -> (error500 . TL.fromStrict . show) err
+    (Right (encoding, a)) -> processResponse encoding a
+  where
+    liftAction :: (Monad m, MonadIO m, ScottyError e) => IO (Either InterpreterError r) -> ExceptT WebError (ActionT e m) r
+    liftAction f = do
+      r <- liftIO f
+      case r of (Left err) -> throwError (WebErrorInterpreter err)
+                (Right x) -> return x
+
 realRunner :: EventStoreActionRunner -> Process
-realRunner mainRunner (PostEvent postEventRequest) = do
-  result <- liftIO $ eventStoreActionRunnerPostEvent mainRunner postEventRequest
-  case result of (Left err) -> (error500 . TL.fromStrict . show) err
-                 (Right a) -> eventStorePostResultToText AtomJsonEncoding a
-realRunner mainRunner (ReadEvent readEventRequest) = do
-  result <- liftIO $ eventStoreActionRunnerReadEvent mainRunner readEventRequest
-  case result of (Left err) -> (error500 . TL.fromStrict . show) err
-                 (Right a) -> eventStoreReadEventResultToText AtomJsonEncoding a
-realRunner mainRunner (ReadStream readStreamRequest@ReadStreamRequest{..}) = do
-  result <- liftIO $ eventStoreActionRunnerReadStream mainRunner readStreamRequest
-  case result of (Left err) -> (error500 . TL.fromStrict . show) err
-                 (Right a) -> eventStoreReadStreamResultToText rsrStreamId AtomJsonEncoding a
-realRunner mainRunner (ReadAll readAllRequest) = do
-  result <- liftIO $ eventStoreActionRunnerReadAll mainRunner readAllRequest
-  case result of (Left err) -> (error500 . TL.fromStrict . show) err
-                 (Right a) -> eventStoreReadAllResultToText AtomJsonEncoding a
+realRunner mainRunner (PostEvent postEventRequest) =
+  runActionWithEncodedResponse
+    (eventStoreActionRunnerPostEvent mainRunner postEventRequest)
+    eventStorePostResultToText
+realRunner mainRunner (ReadEvent readEventRequest) =
+  runActionWithEncodedResponse
+    (eventStoreActionRunnerReadEvent mainRunner readEventRequest)
+    eventStoreReadEventResultToText
+realRunner mainRunner (ReadStream readStreamRequest@ReadStreamRequest{..}) =
+  runActionWithEncodedResponse
+    (eventStoreActionRunnerReadStream mainRunner readStreamRequest)
+    (eventStoreReadStreamResultToText rsrStreamId)
+realRunner mainRunner (ReadAll readAllRequest) =
+  runActionWithEncodedResponse
+    (eventStoreActionRunnerReadAll mainRunner readAllRequest)
+    eventStoreReadAllResultToText
 
 type Process = forall m. forall e. (MonadIO m, Monad m, ScottyError e) => EventStoreAction -> ActionT e m ()
 
