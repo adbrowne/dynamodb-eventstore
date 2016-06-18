@@ -51,6 +51,7 @@ library
                        aeson >= 0.8,
                        aeson-pretty,
                        random >= 1.1,
+                       taggy,
                        transformers >= 0.4,
                        mtl,
                        text-format,

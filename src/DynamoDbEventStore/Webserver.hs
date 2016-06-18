@@ -38,6 +38,7 @@ import           DynamoDbEventStore.EventStoreActions
 import           DynamoDbEventStore.EventStoreCommands
 import           DynamoDbEventStore.Feed
 import           Network.HTTP.Types.Status
+import           Text.Taggy.Renderer
 
 data ExpectedVersion = ExpectedVersion Int
   deriving (Show)
@@ -147,12 +148,9 @@ eventStoreReadEventResultToText AtomJsonEncoding (ReadEventResult (Right (Just r
 eventStoreReadEventResultToText AtomXmlEncoding (ReadEventResult (Right (Just r))) = (raw . encodePretty . readEventResultJsonValue) r -- todo this isn't right
 eventStoreReadEventResultToText _ (ReadEventResult (Right Nothing)) = notFoundResponse
 
-xmlFeed :: Feed -> LByteString
-xmlFeed = error "todo xmlFeed"
-
 encodeFeed :: (MonadIO m, ScottyError e) => ResponseEncoding -> Feed -> ActionT e m ()
 encodeFeed AtomJsonEncoding = raw . encodePretty . jsonFeed
-encodeFeed AtomXmlEncoding  = raw . xmlFeed
+encodeFeed AtomXmlEncoding  = raw . TL.encodeUtf8 . ("<?xml version=\"1.0\" encoding=\"UTF-8\"?>" <>) . render . xmlFeed
 
 eventStoreReadStreamResultToText :: (MonadIO m, ScottyError e) => StreamId -> ResponseEncoding -> ReadStreamResult -> ActionT e m ()
 eventStoreReadStreamResultToText _ _ (ReadStreamResult (Left err)) = (error500 . TL.fromStrict . show) err
@@ -203,8 +201,8 @@ getEncoding :: forall m. forall e. (Monad m, ScottyError e) => ExceptT WebError 
 getEncoding = do
   accept <- lift $ header "Accept"
   case accept of (Just "application/vnd.eventstore.events+json") -> return AtomJsonEncoding
-                 (Just "application/vnd.eventstore.events+xml")  -> return AtomXmlEncoding
-                 _                                               -> throwError UnknownAcceptValue
+                 (Just "application/atom+xml")                   -> return AtomXmlEncoding
+                 _                                              -> throwError UnknownAcceptValue
 
 runActionWithEncodedResponse :: (Monad m, MonadIO m, ScottyError e) => IO (Either InterpreterError r) -> (ResponseEncoding -> r -> ActionT e m ()) -> ActionT e m ()
 runActionWithEncodedResponse runAction processResponse = runExceptT (do

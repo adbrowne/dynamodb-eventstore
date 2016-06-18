@@ -3,6 +3,7 @@
 {-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
 module DynamoDbEventStore.Feed (
+  xmlFeed,
   jsonFeed,
   jsonEntry,
   Feed(..),
@@ -14,12 +15,14 @@ module DynamoDbEventStore.Feed (
 import           BasicPrelude
 import           Data.Aeson
 import qualified Data.Attoparsec.ByteString            as APBS
+import           Data.HashMap.Strict                   as HM
 import qualified Data.Text                             as T
 import           Data.Time.Clock
 import           Data.Time.Format
 import qualified Data.Vector                           as V
 import           DynamoDbEventStore.EventStoreActions
 import           DynamoDbEventStore.EventStoreCommands
+import           Text.Taggy.DOM
 
 data Feed
  = Feed
@@ -173,6 +176,31 @@ jsonLink :: Link -> Value
 jsonLink Link {..} =
   object [ "relation" .= linkRel, "uri" .= linkHref ]
 
+xmlLink :: Link -> Node
+xmlLink Link {..} =
+  let
+    attrs = [
+        ("rel", linkRel)
+      , ("href", linkHref)
+            ]
+  in NodeElement Element { eltName = "link", eltAttrs = HM.fromList attrs, eltChildren = [] }
+
+xmlEntry :: Entry -> Node
+xmlEntry Entry{..} =
+  let
+    entryid = simpleXmlNode "id" entryId
+    title =  simpleXmlNode "title" entryTitle
+    updated = simpleXmlNode "updated" $ formatJsonTime entryUpdated
+    summary = simpleXmlNode "summary" entrySummary
+    links = xmlLink <$> entryLinks
+    children = [
+      entryid
+      , title
+      , updated
+      , summary
+               ] ++ links
+  in NodeElement Element { eltName = "entry", eltAttrs = mempty, eltChildren = children }
+
 jsonEntryContent :: EntryContent -> Value
 jsonEntryContent EntryContent{..} =
   let
@@ -187,6 +215,39 @@ jsonEntryContent EntryContent{..} =
 jsonAuthor :: Author -> Value
 jsonAuthor Author {..} =
   object [ "name" .= authorName ]
+
+simpleXmlNode :: Text -> Text -> Node
+simpleXmlNode tagName tagContent =
+  NodeElement Element { eltName = tagName, eltAttrs = mempty, eltChildren = [NodeContent tagContent]}
+
+xmlAuthor :: Author -> Node
+xmlAuthor Author {..} =
+  NodeElement Element { eltName = "author", eltAttrs = mempty, eltChildren = [simpleXmlNode "name" authorName]}
+
+xmlFeed :: Feed -> Node
+xmlFeed Feed {..} =
+  let
+    title = simpleXmlNode "title" feedTitle
+    feedid = simpleXmlNode "id" feedId
+    headofstream = simpleXmlNode "headOfStream" "True"
+    updated = simpleXmlNode "updated" $ formatJsonTime feedUpdated
+    selfurl = simpleXmlNode "selfUrl" feedSelfUrl
+    streamid = simpleXmlNode "streamId" feedStreamId
+    etag = simpleXmlNode "etag" ( "todo" :: Text)
+    author = xmlAuthor feedAuthor
+    links = xmlLink <$> feedLinks
+    entries = xmlEntry <$> feedEntries
+    children = [
+      title
+      , feedid
+      , headofstream
+      , updated
+      , selfurl
+      , streamid
+      , etag
+      , author
+     ] ++ links ++ entries
+  in NodeElement Element { eltName = "feed", eltAttrs = mempty, eltChildren = children }
 
 jsonFeed :: Feed -> Value
 jsonFeed Feed {..} =
