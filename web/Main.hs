@@ -1,28 +1,29 @@
+{-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE RankNTypes          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE FlexibleContexts #-}
 module Main where
 
 import           BasicPrelude
-import           Control.Lens
-import           System.Exit
-import           Control.Monad.Except
-import           Network.Wai.Handler.Warp
-import           Web.Scotty
-import           System.IO (stdout)
-import           DynamoDbEventStore.Webserver (app, realRunner, EventStoreActionRunner(..))
 import           Control.Concurrent
+import           Control.Lens
+import           Control.Monad.Except
+import           Control.Monad.Trans.AWS
+import qualified Control.Monad.Trans.AWS                as AWS
+import qualified Data.Text                              as T
 import           DynamoDbEventStore.AmazonkaInterpreter
 import           DynamoDbEventStore.EventStoreActions
 import           DynamoDbEventStore.EventStoreCommands
-import           DynamoDbEventStore.GlobalFeedWriter (EventStoreActionError(..))
-import qualified DynamoDbEventStore.GlobalFeedWriter as GlobalFeedWriter
-import           Options.Applicative as Opt
-import qualified Data.Text               as T
-import           Control.Monad.Trans.AWS
-import qualified Control.Monad.Trans.AWS as AWS
+import           DynamoDbEventStore.GlobalFeedWriter    (EventStoreActionError (..))
+import qualified DynamoDbEventStore.GlobalFeedWriter    as GlobalFeedWriter
+import           DynamoDbEventStore.Webserver           (EventStoreActionRunner (..),
+                                                         app, realRunner)
 import           Network.AWS.DynamoDB
+import           Network.Wai.Handler.Warp
+import           Options.Applicative                    as Opt
+import           System.Exit
+import           System.IO                              (stdout)
+import           Web.Scotty
 
 runDynamoLocal :: Env -> MyAwsStack a -> IO (Either InterpreterError a)
 runDynamoLocal env x = do
@@ -33,7 +34,7 @@ runDynamoCloud :: Env -> MyAwsStack a -> IO (Either InterpreterError a)
 runDynamoCloud env x = runResourceT $ runAWST env $ runExceptT x
 
 runMyAws :: (MyAwsStack a -> ExceptT InterpreterError IO a) -> Text -> DynamoCmdM a -> ExceptT InterpreterError IO a
-runMyAws runner tableName program = 
+runMyAws runner tableName program =
   runner $ runProgram tableName program
 
 printEvent :: (MonadIO m) => EventStoreAction -> m EventStoreAction
@@ -43,18 +44,18 @@ printEvent a = do
 
 buildActionRunner :: (forall a. DynamoCmdM a -> ExceptT InterpreterError IO a) -> EventStoreActionRunner
 buildActionRunner runner =
-  EventStoreActionRunner { 
+  EventStoreActionRunner {
     eventStoreActionRunnerPostEvent = (\req -> liftIO $ runExceptT $ (PostEventResult <$> runner (postEventRequestProgram req)))
     , eventStoreActionRunnerReadEvent = (\req -> liftIO $ runExceptT $ (ReadEventResult <$> runner (getReadEventRequestProgram req)))
     , eventStoreActionRunnerReadStream = (\req -> liftIO $ runExceptT $ (ReadStreamResult <$> runner (getReadStreamRequestProgram req)))
     , eventStoreActionRunnerReadAll = (\req -> liftIO $ runExceptT $ (ReadAllResult <$> runner (getReadAllRequestProgram req)))
   }
 
-data Config = Config 
-  { configTableName :: String,
-    configPort :: Int,
+data Config = Config
+  { configTableName     :: String,
+    configPort          :: Int,
     configLocalDynamoDB :: Bool,
-    configCreateTable :: Bool }
+    configCreateTable   :: Bool }
 
 config :: Parser Config
 config = Config
@@ -88,7 +89,7 @@ toApplicationError runner a = do
 
 data ApplicationError =
   ApplicationErrorInterpreter InterpreterError |
-  ApplicationErrorGlobalFeedWriter EventStoreActionError 
+  ApplicationErrorGlobalFeedWriter EventStoreActionError
   deriving Show
 
 start :: Config -> ExceptT ApplicationError IO ()
@@ -100,7 +101,7 @@ start parsedConfig = do
   let runner = toExceptT interperter
   tableAlreadyExists <- (toApplicationError interperter) $ doesTableExist tableName
   let shouldCreateTable = configCreateTable parsedConfig
-  when (not tableAlreadyExists && shouldCreateTable) 
+  when (not tableAlreadyExists && shouldCreateTable)
     (putStrLn "Creating table..." >> (toApplicationError interperter) (buildTable tableName) >> putStrLn "Table created")
   if tableAlreadyExists || shouldCreateTable then runApp runner tableName else failNoTable
   where
@@ -113,8 +114,9 @@ start parsedConfig = do
        putMVar exitMVar result
      let httpPort = (configPort parsedConfig)
      let warpSettings = setPort httpPort $ setHost (fromString httpHost) defaultSettings
-     putStrLn $ "Server listenting on: http://" <> fromString httpHost <> ":" <> show httpPort
-     _ <- lift $ forkIO $ void $ scottyApp (app (printEvent >=> realRunner (buildActionRunner runner'))) >>= runSettings warpSettings
+     let baseUri = "http://" <> fromString httpHost <> ":" <> show httpPort
+     putStrLn $ "Server listenting on: " <> baseUri
+     _ <- lift $ forkIO $ void $ scottyApp (app (printEvent >=> realRunner baseUri (buildActionRunner runner'))) >>= runSettings warpSettings
      programResult <- liftIO $ takeMVar exitMVar
      print programResult
      case programResult of (Left err)         -> throwError $ ApplicationErrorInterpreter err

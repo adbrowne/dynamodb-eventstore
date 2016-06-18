@@ -129,12 +129,9 @@ positiveInt64Parser =
 pageKeyParser :: Parser PageKey
 pageKeyParser = PageKey <$> positiveInt64Parser
 
-readEventResultJsonValue :: RecordedEvent -> Value
-readEventResultJsonValue recordedEvent =
+readEventResultJsonValue :: Text -> RecordedEvent -> Value
+readEventResultJsonValue baseUri recordedEvent =
   jsonEntry $ recordedEventToFeedEntry baseUri recordedEvent
-
-baseUri :: Text
-baseUri = "http://localhost:2114"
 
 eventStorePostResultToText :: (MonadIO m, ScottyError e) => ResponseEncoding -> PostEventResult -> ActionT e m ()
 eventStorePostResultToText _ (PostEventResult r) = (raw . TL.encodeUtf8 . TL.fromStrict) $ show r
@@ -142,28 +139,28 @@ eventStorePostResultToText _ (PostEventResult r) = (raw . TL.encodeUtf8 . TL.fro
 notFoundResponse :: (MonadIO m, ScottyError e) => ActionT e m ()
 notFoundResponse = status (mkStatus 404 (toByteString "Not Found")) >> raw "{}"
 
-eventStoreReadEventResultToText :: (MonadIO m, ScottyError e) => ResponseEncoding -> ReadEventResult -> ActionT e m ()
-eventStoreReadEventResultToText _ (ReadEventResult (Left err)) = (error500 . TL.fromStrict . show) err
-eventStoreReadEventResultToText AtomJsonEncoding (ReadEventResult (Right (Just r))) = (raw . encodePretty . readEventResultJsonValue) r
-eventStoreReadEventResultToText AtomXmlEncoding (ReadEventResult (Right (Just r))) = (raw . encodePretty . readEventResultJsonValue) r -- todo this isn't right
-eventStoreReadEventResultToText _ (ReadEventResult (Right Nothing)) = notFoundResponse
+eventStoreReadEventResultToText :: (MonadIO m, ScottyError e) => Text -> ResponseEncoding -> ReadEventResult -> ActionT e m ()
+eventStoreReadEventResultToText _ _ (ReadEventResult (Left err)) = (error500 . TL.fromStrict . show) err
+eventStoreReadEventResultToText baseUri AtomJsonEncoding (ReadEventResult (Right (Just r))) = (raw . encodePretty . readEventResultJsonValue baseUri) r
+eventStoreReadEventResultToText baseUri AtomXmlEncoding (ReadEventResult (Right (Just r))) = (raw . encodePretty . readEventResultJsonValue baseUri) r -- todo this isn't right
+eventStoreReadEventResultToText _ _ (ReadEventResult (Right Nothing)) = notFoundResponse
 
 encodeFeed :: (MonadIO m, ScottyError e) => ResponseEncoding -> Feed -> ActionT e m ()
 encodeFeed AtomJsonEncoding = raw . encodePretty . jsonFeed
 encodeFeed AtomXmlEncoding  = raw . TL.encodeUtf8 . ("<?xml version=\"1.0\" encoding=\"UTF-8\"?>" <>) . render . xmlFeed
 
-eventStoreReadStreamResultToText :: (MonadIO m, ScottyError e) => StreamId -> ResponseEncoding -> ReadStreamResult -> ActionT e m ()
-eventStoreReadStreamResultToText _ _ (ReadStreamResult (Left err)) = (error500 . TL.fromStrict . show) err
-eventStoreReadStreamResultToText _streamId _ (ReadStreamResult (Right Nothing)) = notFoundResponse
-eventStoreReadStreamResultToText streamId encoding (ReadStreamResult (Right (Just streamResult))) =
+eventStoreReadStreamResultToText :: (MonadIO m, ScottyError e) => Text -> StreamId -> ResponseEncoding -> ReadStreamResult -> ActionT e m ()
+eventStoreReadStreamResultToText _ _ _ (ReadStreamResult (Left err)) = (error500 . TL.fromStrict . show) err
+eventStoreReadStreamResultToText _ _streamId _ (ReadStreamResult (Right Nothing)) = notFoundResponse
+eventStoreReadStreamResultToText baseUri streamId encoding (ReadStreamResult (Right (Just streamResult))) =
   let
     sampleTime = parseTimeOrError True defaultTimeLocale rfc822DateFormat "Sun, 08 May 2016 12:49:41 +0000" -- todo
     buildFeed' = streamResultsToFeed baseUri streamId sampleTime
   in encodeFeed encoding . buildFeed' $ streamResult
 
-eventStoreReadAllResultToText :: (MonadIO m, ScottyError e) => ResponseEncoding -> ReadAllResult -> ActionT e m ()
-eventStoreReadAllResultToText _ (ReadAllResult (Left err)) = (error500 . TL.fromStrict . show) err
-eventStoreReadAllResultToText encoding (ReadAllResult (Right globalStreamResult)) =
+eventStoreReadAllResultToText :: (MonadIO m, ScottyError e) => Text -> ResponseEncoding -> ReadAllResult -> ActionT e m ()
+eventStoreReadAllResultToText _ _ (ReadAllResult (Left err)) = (error500 . TL.fromStrict . show) err
+eventStoreReadAllResultToText baseUri encoding (ReadAllResult (Right globalStreamResult)) =
   let
     streamId = StreamId "%24all"
     sampleTime = parseTimeOrError True defaultTimeLocale rfc822DateFormat "Sun, 08 May 2016 12:49:41 +0000" -- todo
@@ -218,23 +215,23 @@ runActionWithEncodedResponse runAction processResponse = runExceptT (do
       case r of (Left err) -> throwError (WebErrorInterpreter err)
                 (Right x) -> return x
 
-realRunner :: EventStoreActionRunner -> Process
-realRunner mainRunner (PostEvent postEventRequest) =
+realRunner :: Text -> EventStoreActionRunner -> Process
+realRunner _baseUri mainRunner (PostEvent postEventRequest) =
   runActionWithEncodedResponse
     (eventStoreActionRunnerPostEvent mainRunner postEventRequest)
     eventStorePostResultToText
-realRunner mainRunner (ReadEvent readEventRequest) =
+realRunner baseUri mainRunner (ReadEvent readEventRequest) =
   runActionWithEncodedResponse
     (eventStoreActionRunnerReadEvent mainRunner readEventRequest)
-    eventStoreReadEventResultToText
-realRunner mainRunner (ReadStream readStreamRequest@ReadStreamRequest{..}) =
+    (eventStoreReadEventResultToText baseUri)
+realRunner baseUri mainRunner (ReadStream readStreamRequest@ReadStreamRequest{..}) =
   runActionWithEncodedResponse
     (eventStoreActionRunnerReadStream mainRunner readStreamRequest)
-    (eventStoreReadStreamResultToText rsrStreamId)
-realRunner mainRunner (ReadAll readAllRequest) =
+    (eventStoreReadStreamResultToText baseUri rsrStreamId)
+realRunner baseUri mainRunner (ReadAll readAllRequest) =
   runActionWithEncodedResponse
     (eventStoreActionRunnerReadAll mainRunner readAllRequest)
-    eventStoreReadAllResultToText
+    (eventStoreReadAllResultToText baseUri)
 
 type Process = forall m. forall e. (MonadIO m, Monad m, ScottyError e) => EventStoreAction -> ActionT e m ()
 
