@@ -95,11 +95,11 @@ buildGlobalStreamLink streamUri rel (direction, position, maxItems)=
 
   in Link { linkHref = href, linkRel = rel }
 
-buildFeed :: Text -> StreamId -> Text -> UTCTime -> [RecordedEvent] -> [Link] -> Feed
-buildFeed baseUri (StreamId streamId) selfuri updated events links =
+buildFeed :: Text -> Text -> StreamId -> Text -> UTCTime -> [RecordedEvent] -> [Link] -> Feed
+buildFeed baseUri title (StreamId streamId) selfuri updated events links =
   Feed {
     feedId = selfuri
-    , feedTitle = "EventStream '" <> streamId <> "'"
+    , feedTitle = title
     , feedUpdated = updated
     , feedSelfUrl = selfuri
     , feedStreamId = streamId
@@ -120,7 +120,8 @@ streamResultsToFeed baseUri (StreamId streamId) updated StreamResult{..} =
             , buildStreamLink' "next" <$> streamResultNext
             , Just Link { linkHref = selfuri, linkRel = "self" }
          ]
-  in buildFeed baseUri (StreamId streamId) selfuri updated streamResultEvents links
+    title = "EventStream '" <> streamId <> "'"
+  in buildFeed baseUri title (StreamId streamId) selfuri updated streamResultEvents links
 
 globalStreamResultsToFeed :: Text -> StreamId -> UTCTime -> GlobalStreamResult -> Feed
 globalStreamResultsToFeed baseUri streamId updated GlobalStreamResult{..} =
@@ -134,7 +135,7 @@ globalStreamResultsToFeed baseUri streamId updated GlobalStreamResult{..} =
             , buildStreamLink' "next" <$> globalStreamResultNext
             , Just Link { linkHref = selfuri, linkRel = "self" }
          ]
-  in buildFeed baseUri streamId selfuri updated globalStreamResultEvents links
+  in buildFeed baseUri "All events" streamId selfuri updated globalStreamResultEvents links
 
 
 recordedEventToFeedEntry :: Text -> RecordedEvent -> Entry
@@ -247,7 +248,10 @@ xmlFeed Feed {..} =
       , etag
       , author
      ] ++ links ++ entries
-  in NodeElement Element { eltName = "feed", eltAttrs = mempty, eltChildren = children }
+  in NodeElement Element {
+    eltName = "feed"
+    , eltAttrs = HM.singleton "xmlns" "http://www.w3.org/2005/Atom"
+    , eltChildren = children }
 
 jsonFeed :: Feed -> Value
 jsonFeed Feed {..} =
