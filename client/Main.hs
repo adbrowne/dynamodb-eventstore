@@ -5,7 +5,7 @@
 module Main where
 
 import           BasicPrelude
-import           Control.Lens
+import           Control.Lens             hiding (children, element)
 import qualified Data.Text                as T
 import           Data.Text.Encoding.Error (lenientDecode)
 import qualified Data.Text.Lazy           as TL
@@ -15,46 +15,75 @@ import qualified Options.Applicative      as Opt
 import           Text.Taggy.Lens
 import           Turtle.Prelude
 
-extractPrevious :: Text -> IO ([Text], Response LByteString)
-extractPrevious url = do
-  print url
+getFeedPage :: Text -> IO (Response LByteString)
+getFeedPage url = do
   let opts =
         defaults
         & header "Accept" .~ ["application/atom+xml"]
         & auth ?~ basicAuth "admin" "changeit"
-  r <- getWith opts (T.unpack url)
-  let blah = r ^. (responseBody . to (decodeUtf8With lenientDecode))
-  let foo = (toListOf $ html . allNamed (only "link") . attributed (ix "rel" . only "previous") . attr "href") blah
-  return (catMaybes foo, r)
+  getWith opts (T.unpack url)
 
-followPrevious :: Text -> IO [Response LByteString]
+getEntry :: Text -> IO (Response LByteString)
+getEntry url = do
+  let opts =
+        defaults
+        & header "Accept" .~ ["application/vnd.eventstore.atom+json"]
+        & auth ?~ basicAuth "admin" "changeit"
+  getWith opts (T.unpack url)
+
+extractPrevious :: Text -> IO ([Text], [Text], Response LByteString)
+extractPrevious url = do
+  r <- getFeedPage url
+  let bodyText = r ^. (responseBody . to (decodeUtf8With lenientDecode))
+  let feedLinks = (toListOf $ html . allNamed (only "link") . attributed (ix "rel" . only "previous") . attr "href") bodyText
+  let feedEntries = (toListOf $ html . allNamed (only "link") . attributed (ix "rel" . only "edit") . attr "href") bodyText
+  return (catMaybes feedLinks, catMaybes feedEntries, r)
+
+followPrevious :: Text -> IO [([Text],Response LByteString)]
 followPrevious startUrl = go [startUrl]
   where
     go [] = return []
     go urls = do
       results <- sequence $ extractPrevious <$> urls
-      let nextUrls = join $ fst <$> results
-      let responses = snd <$> results
+      let nextUrls = join $ (\(a,_b,_c) -> a) <$> results
+      let responses = (\(_a,b,c) -> (b,c)) <$> results
       nextResponses <- go nextUrls
       return $ responses ++ nextResponses
 
 data Config = Config
-  { configStartUrl        :: Text,
-    configOutputDirectory :: Text }
+  { configCommand :: Command }
+
+data Command
+  = DownloadGlobalStream DownloadGlobalStreamConfig
+    | CopyGlobalStream
+
+data DownloadGlobalStreamConfig = DownloadGlobalStreamConfig {
+  downloadGlobalStreamOutputDirectory :: Text,
+  downloadGlobalStreamStartUrl        :: Text }
 
 config :: Opt.Parser Config
 config = Config
-   <$> (T.pack <$> Opt.strOption (Opt.long "startUrl"
-       <> Opt.metavar "STARTURL"
-       <> Opt.help "starting url"))
-   <*> (T.pack <$> Opt.strOption (Opt.long "outputDirectory"
-       <> Opt.metavar "OUTPUTDIRECTORY"
-       <> Opt.help "ouput directory for responses"))
+   <$> Opt.subparser
+         (Opt.command "downloadGlobalStream" (Opt.info downloadGlobalStreamOptions (Opt.progDesc "Download global stream moving forward in time") )
+         <>
+          Opt.command "copyGlobalStream" (Opt.info copyGlobalStreamOptions (Opt.progDesc "Copy global stream"))
+         )
+   where
+     downloadGlobalStreamOptions :: Opt.Parser Command
+     downloadGlobalStreamOptions = DownloadGlobalStream <$>
+       (DownloadGlobalStreamConfig
+        <$> (T.pack <$> Opt.strOption (Opt.long "outputDirectory"
+            <> Opt.metavar "OUTPUTDIRECTORY"
+            <> Opt.help "ouput directory for responses"))
+        <*> (T.pack <$> Opt.strOption (Opt.long "startUrl"
+            <> Opt.metavar "STARTURL"
+            <> Opt.help "starting url"))
+       )
+     copyGlobalStreamOptions :: Opt.Parser Command
+     copyGlobalStreamOptions = pure CopyGlobalStream
 
-outputResponse :: Text -> Text -> (Int, Response LByteString) -> IO ()
-outputResponse baseDir responseType (sequenceNumber, response) = do
-  let directory = baseDir <> "/" <> responseType <> "/"
-  let filename = T.unpack $ directory <> show sequenceNumber
+saveResponse :: Text -> Text -> Response LByteString -> IO ()
+saveResponse directory filename response = do
   let fileContent =
         response
         ^. (responseBody
@@ -62,14 +91,29 @@ outputResponse baseDir responseType (sequenceNumber, response) = do
             . to TL.toStrict
            )
   mktree (fromString $ T.unpack directory )
-  writeTextFile (fromString filename) fileContent
+  writeTextFile (fromString $ T.unpack filename) fileContent
+
+outputResponse :: Text -> Text -> (Int, ([Text],Response LByteString)) -> IO ()
+outputResponse baseDir responseType (sequenceNumber, (_editLinks, response)) = do
+  let directory = baseDir <> "/" <> responseType <> "/"
+  let filename = directory <> show sequenceNumber
+  saveResponse directory filename response
+
+outputEntry :: Text -> Text -> (Int, Response LByteString) -> IO ()
+outputEntry baseDir responseType (sequenceNumber, response) = do
+  let directory = baseDir <> "/" <> responseType <> "/entries/"
+  let filename = directory <> show sequenceNumber
+  saveResponse directory filename response
 
 start :: Config -> IO ()
-start Config{..} = do
-  responses <- followPrevious configStartUrl
+start Config { configCommand = DownloadGlobalStream DownloadGlobalStreamConfig{..}} = do
+  responses <- followPrevious downloadGlobalStreamStartUrl
   let numberedResponses = zip [0..]  responses
-  void $ sequence $ outputResponse configOutputDirectory "previous" <$> numberedResponses
-
+  entryBodies <- sequence $ getEntry <$> join (fst <$> responses)
+  let numberedEntries = zip [0..] entryBodies
+  void $ sequence $ outputResponse downloadGlobalStreamOutputDirectory "previous" <$> numberedResponses
+  void $ sequence $ outputEntry downloadGlobalStreamOutputDirectory "previous" <$> numberedEntries
+start Config { configCommand = CopyGlobalStream } = return () -- todo
 main :: IO ()
 main = Opt.execParser opts >>= start
   where

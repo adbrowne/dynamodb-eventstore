@@ -197,7 +197,7 @@ data EventStoreActionRunner = EventStoreActionRunner {
 getEncoding :: forall m. forall e. (Monad m, ScottyError e) => ExceptT WebError (ActionT e m) ResponseEncoding
 getEncoding = do
   accept <- lift $ header "Accept"
-  case accept of (Just "application/vnd.eventstore.events+json") -> return AtomJsonEncoding
+  case accept of (Just "application/vnd.eventstore.atom+json") -> return AtomJsonEncoding
                  (Just "application/atom+xml")                   -> return AtomXmlEncoding
                  _                                              -> throwError UnknownAcceptValue
 
