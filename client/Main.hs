@@ -5,13 +5,19 @@
 module Main where
 
 import           BasicPrelude
-import           Control.Lens             hiding (children, element)
-import qualified Data.Text                as T
-import           Data.Text.Encoding.Error (lenientDecode)
-import qualified Data.Text.Lazy           as TL
-import           Data.Text.Lazy.Encoding  (decodeUtf8With)
+import           Control.Lens                    hiding (children, element)
+import           Data.Aeson
+import           Data.Aeson.Encode
+import           Data.Aeson.Lens
+import           Data.Attoparsec.ByteString.Lazy
+import           Data.ByteString.Builder
+import           Data.Maybe
+import qualified Data.Text                       as T
+import           Data.Text.Encoding.Error        (lenientDecode)
+import qualified Data.Text.Lazy                  as TL
+import           Data.Text.Lazy.Encoding         (decodeUtf8With)
 import           Network.Wreq
-import qualified Options.Applicative      as Opt
+import qualified Options.Applicative             as Opt
 import           Text.Taggy.Lens
 import           Turtle.Prelude
 
@@ -29,7 +35,7 @@ getEntry url = do
         defaults
         & header "Accept" .~ ["application/vnd.eventstore.atom+json"]
         & auth ?~ basicAuth "admin" "changeit"
-  getWith opts (T.unpack url)
+  getWith opts (T.unpack url <> "?embed=tryharder")
 
 extractPrevious :: Text -> IO ([Text], [Text], Response LByteString)
 extractPrevious url = do
@@ -55,11 +61,15 @@ data Config = Config
 
 data Command
   = DownloadGlobalStream DownloadGlobalStreamConfig
-    | CopyGlobalStream
+    | CopyGlobalStream CopyGlobalStreamConfig
 
 data DownloadGlobalStreamConfig = DownloadGlobalStreamConfig {
   downloadGlobalStreamOutputDirectory :: Text,
   downloadGlobalStreamStartUrl        :: Text }
+
+data CopyGlobalStreamConfig = CopyGlobalStreamConfig {
+  copyGlobalStreamConfigStartUrl    :: Text,
+  copyGlobalStreamConfigDestination :: Text }
 
 config :: Opt.Parser Config
 config = Config
@@ -80,7 +90,15 @@ config = Config
             <> Opt.help "starting url"))
        )
      copyGlobalStreamOptions :: Opt.Parser Command
-     copyGlobalStreamOptions = pure CopyGlobalStream
+     copyGlobalStreamOptions = CopyGlobalStream <$>
+       (CopyGlobalStreamConfig
+        <$> (T.pack <$> Opt.strOption (Opt.long "startUrl"
+            <> Opt.metavar "STARTURL"
+            <> Opt.help "starting url"))
+        <*> (T.pack <$> Opt.strOption (Opt.long "destination"
+            <> Opt.metavar "destination"
+            <> Opt.help "destination event store - base url"))
+       )
 
 saveResponse :: Text -> Text -> Response LByteString -> IO ()
 saveResponse directory filename response = do
@@ -105,6 +123,27 @@ outputEntry baseDir responseType (sequenceNumber, response) = do
   let filename = directory <> show sequenceNumber
   saveResponse directory filename response
 
+data EntryData = EntryData {
+  entryDataType     :: Text
+  , entryDataStream :: Text
+  , entryDataBody   :: Maybe LByteString}
+  deriving Show
+
+toEntryData :: Response LByteString -> EntryData
+toEntryData r =
+  let
+    body = view responseBody r
+  in fromJust $ do
+    jsonValue <- maybeResult . parse json $ body
+    streamId <- preview (key "streamId" . _String) jsonValue
+    eventType <- preview (key "eventType" . _String) jsonValue
+    let dataBody = (toLazyByteString . encodeToBuilder) <$> preview (key "content" . key "data") jsonValue
+    return EntryData {
+      entryDataType = eventType
+      , entryDataStream = streamId
+      , entryDataBody = dataBody
+    }
+
 start :: Config -> IO ()
 start Config { configCommand = DownloadGlobalStream DownloadGlobalStreamConfig{..}} = do
   responses <- followPrevious downloadGlobalStreamStartUrl
@@ -113,7 +152,13 @@ start Config { configCommand = DownloadGlobalStream DownloadGlobalStreamConfig{.
   let numberedEntries = zip [0..] entryBodies
   void $ sequence $ outputResponse downloadGlobalStreamOutputDirectory "previous" <$> numberedResponses
   void $ sequence $ outputEntry downloadGlobalStreamOutputDirectory "previous" <$> numberedEntries
-start Config { configCommand = CopyGlobalStream } = return () -- todo
+start Config { configCommand = CopyGlobalStream CopyGlobalStreamConfig{..} } = do
+  responses <- followPrevious copyGlobalStreamConfigStartUrl
+  entryBodies <- sequence $ getEntry <$> join (fst <$> responses)
+  let entryData = toEntryData <$> entryBodies
+  sequence_ $ print <$> entryData
+  return ()
+
 main :: IO ()
 main = Opt.execParser opts >>= start
   where
