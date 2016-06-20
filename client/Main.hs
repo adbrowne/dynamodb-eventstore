@@ -137,7 +137,11 @@ toEntryData r =
     jsonValue <- maybeResult . parse json $ body
     streamId <- preview (key "streamId" . _String) jsonValue
     eventType <- preview (key "eventType" . _String) jsonValue
-    let dataBody = (toLazyByteString . encodeToBuilder) <$> preview (key "content" . key "data") jsonValue
+    let dataBody = preview (
+          key "content"
+          . key "data"
+          . to (toLazyByteString . encodeToBuilder)
+          ) jsonValue
     return EntryData {
       entryDataType = eventType
       , entryDataStream = streamId
