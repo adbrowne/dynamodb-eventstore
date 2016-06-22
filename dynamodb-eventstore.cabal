@@ -109,6 +109,7 @@ executable client
                        attoparsec,
                        lens-aeson,
                        aeson,
+                       uuid,
                        bytestring,
                        system-filepath,
                        lens

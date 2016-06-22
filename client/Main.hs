@@ -13,11 +13,14 @@ import           Data.Attoparsec.ByteString.Lazy
 import           Data.ByteString.Builder
 import           Data.Maybe
 import qualified Data.Text                       as T
+import qualified Data.Text.Encoding              as T
 import           Data.Text.Encoding.Error        (lenientDecode)
 import qualified Data.Text.Lazy                  as TL
 import           Data.Text.Lazy.Encoding         (decodeUtf8With)
+import qualified Data.UUID                       (UUID)
 import           Network.Wreq
 import qualified Options.Applicative             as Opt
+import           System.Random
 import           Text.Taggy.Lens
 import           Turtle.Prelude
 
@@ -37,13 +40,24 @@ getEntry url = do
         & auth ?~ basicAuth "admin" "changeit"
   getWith opts (T.unpack url <> "?embed=tryharder")
 
+getRelLinks :: Text -> LText -> [Text]
+getRelLinks relName =
+  catMaybes . toListOf
+    (html
+    . allNamed (only "link")
+    . attributed (ix "rel" . only relName)
+    . attr "href")
+
+getBodyAsText :: Response LByteString -> LText
+getBodyAsText r = r ^. (responseBody . to (decodeUtf8With lenientDecode))
+
 extractPrevious :: Text -> IO ([Text], [Text], Response LByteString)
 extractPrevious url = do
   r <- getFeedPage url
-  let bodyText = r ^. (responseBody . to (decodeUtf8With lenientDecode))
-  let feedLinks = (toListOf $ html . allNamed (only "link") . attributed (ix "rel" . only "previous") . attr "href") bodyText
-  let feedEntries = (toListOf $ html . allNamed (only "link") . attributed (ix "rel" . only "edit") . attr "href") bodyText
-  return (catMaybes feedLinks, catMaybes feedEntries, r)
+  let bodyText = getBodyAsText r
+  let feedLinks = getRelLinks "previous" bodyText
+  let feedEntries = getRelLinks "edit" bodyText
+  return (feedLinks, feedEntries, r)
 
 followPrevious :: Text -> IO [([Text],Response LByteString)]
 followPrevious startUrl = go [startUrl]
@@ -148,10 +162,22 @@ toEntryData r =
       , entryDataBody = dataBody
     }
 
+putEntry :: Text -> EntryData -> IO()
+putEntry destinationBaseUrl EntryData{..} = do
+  let url = T.unpack $ destinationBaseUrl <> "/streams/" <> entryDataStream
+  let body = fromMaybe (fromString "") entryDataBody
+  (eventId :: Data.UUID.UUID) <- randomIO
+  let opts = defaults
+        & header "ES-EventType" .~ [T.encodeUtf8 entryDataType]
+        & header "ES-EventId" .~ [T.encodeUtf8 $ show eventId]
+        & header "Accept" .~ ["application/vnd.eventstore.atom+json"]
+  _ <- postWith opts url body
+  return ()
+
 start :: Config -> IO ()
 start Config { configCommand = DownloadGlobalStream DownloadGlobalStreamConfig{..}} = do
   responses <- followPrevious downloadGlobalStreamStartUrl
-  let numberedResponses = zip [0..]  responses
+  let numberedResponses = zip [0..] responses
   entryBodies <- sequence $ getEntry <$> join (fst <$> responses)
   let numberedEntries = zip [0..] entryBodies
   void $ sequence $ outputResponse downloadGlobalStreamOutputDirectory "previous" <$> numberedResponses
@@ -160,7 +186,7 @@ start Config { configCommand = CopyGlobalStream CopyGlobalStreamConfig{..} } = d
   responses <- followPrevious copyGlobalStreamConfigStartUrl
   entryBodies <- sequence $ getEntry <$> join (fst <$> responses)
   let entryData = toEntryData <$> entryBodies
-  sequence_ $ print <$> entryData
+  sequence_ $ putEntry copyGlobalStreamConfigDestination <$> entryData
   return ()
 
 main :: IO ()

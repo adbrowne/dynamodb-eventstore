@@ -144,7 +144,7 @@ recordedEventToFeedEntry baseUri recordedEvent =
     streamId = recordedEventStreamId recordedEvent
     eventNumber = (show . recordedEventNumber) recordedEvent
     eventCreated = recordedEventCreated recordedEvent
-    eventUri = baseUri <> "/" <> streamId <> "/" <> eventNumber
+    eventUri = baseUri <> "/streams/" <> streamId <> "/" <> eventNumber
     title = eventNumber <>  "@" <> streamId
     updated = eventCreated
     summary = recordedEventType recordedEvent
@@ -162,7 +162,7 @@ recordedEventToFeedEntry baseUri recordedEvent =
               }
     links = [
         Link { linkHref = eventUri, linkRel = "edit" }
-      , Link { linkHref = eventUri, linkRel = "alternatvie" }
+      , Link { linkHref = eventUri, linkRel = "alternate" }
       ]
   in Entry {
       entryId = eventUri
