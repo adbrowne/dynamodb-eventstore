@@ -38,7 +38,7 @@ import           DynamoDbEventStore.EventStoreActions
 import           DynamoDbEventStore.EventStoreCommands
 import           DynamoDbEventStore.Feed
 import           Network.HTTP.Types.Status
-import           Text.Taggy.Renderer
+import           Text.Blaze.Renderer.Text
 
 data ExpectedVersion = ExpectedVersion Int
   deriving (Show)
@@ -139,15 +139,37 @@ eventStorePostResultToText _ (PostEventResult r) = (raw . TL.encodeUtf8 . TL.fro
 notFoundResponse :: (MonadIO m, ScottyError e) => ActionT e m ()
 notFoundResponse = status (mkStatus 404 (toByteString "Not Found")) >> raw "{}"
 
+knownJsonKeyOrder :: [Text]
+knownJsonKeyOrder = [
+  "title"
+  , "id"
+  , "updated"
+  , "author"
+  , "summary"
+  , "content"
+  , "links"
+  , "eventStreamId"
+  , "eventNumber"
+  , "eventType"
+  , "eventId"
+  , "data"
+  , "metadata"
+                    ]
+
+encodeJson :: ToJSON a => a -> LByteString
+encodeJson = encodePretty' defConfig {
+  confIndent = 2
+  , confCompare = keyOrder knownJsonKeyOrder }
+
 eventStoreReadEventResultToText :: (MonadIO m, ScottyError e) => Text -> ResponseEncoding -> ReadEventResult -> ActionT e m ()
 eventStoreReadEventResultToText _ _ (ReadEventResult (Left err)) = (error500 . TL.fromStrict . show) err
-eventStoreReadEventResultToText baseUri AtomJsonEncoding (ReadEventResult (Right (Just r))) = (raw . encodePretty . readEventResultJsonValue baseUri) r
-eventStoreReadEventResultToText baseUri AtomXmlEncoding (ReadEventResult (Right (Just r))) = (raw . encodePretty . readEventResultJsonValue baseUri) r -- todo this isn't right
+eventStoreReadEventResultToText baseUri AtomJsonEncoding (ReadEventResult (Right (Just r))) = (raw . encodeJson . readEventResultJsonValue baseUri) r
+eventStoreReadEventResultToText baseUri AtomXmlEncoding (ReadEventResult (Right (Just r))) = (raw . encodeJson . readEventResultJsonValue baseUri) r -- todo this isn't right
 eventStoreReadEventResultToText _ _ (ReadEventResult (Right Nothing)) = notFoundResponse
 
 encodeFeed :: (MonadIO m, ScottyError e) => ResponseEncoding -> Feed -> ActionT e m ()
-encodeFeed AtomJsonEncoding = raw . encodePretty . jsonFeed
-encodeFeed AtomXmlEncoding  = raw . TL.encodeUtf8 . ("<?xml version=\"1.0\" encoding=\"UTF-8\"?>" <>) . render . xmlFeed
+encodeFeed AtomJsonEncoding = raw . encodeJson . jsonFeed
+encodeFeed AtomXmlEncoding  = raw . TL.encodeUtf8 . ("<?xml version=\"1.0\" encoding=\"UTF-8\"?>" <>) . renderMarkup . xmlFeed
 
 eventStoreReadStreamResultToText :: (MonadIO m, ScottyError e) => Text -> StreamId -> ResponseEncoding -> ReadStreamResult -> ActionT e m ()
 eventStoreReadStreamResultToText _ _ _ (ReadStreamResult (Left err)) = (error500 . TL.fromStrict . show) err

@@ -5,6 +5,7 @@
 module Main where
 
 import           BasicPrelude
+import           Control.Concurrent
 import           Control.Lens                    hiding (children, element)
 import           Data.Aeson
 import           Data.Aeson.Encode
@@ -32,13 +33,16 @@ getFeedPage url = do
         & auth ?~ basicAuth "admin" "changeit"
   getWith opts (T.unpack url)
 
-getEntry :: Text -> IO (Response LByteString)
-getEntry url = do
+getEntry :: Bool -> Text -> IO (Response LByteString)
+getEntry isEmbedTryHarder url = do
   let opts =
         defaults
         & header "Accept" .~ ["application/vnd.eventstore.atom+json"]
         & auth ?~ basicAuth "admin" "changeit"
-  getWith opts (T.unpack url <> "?embed=tryharder")
+  let getUrl = if isEmbedTryHarder then
+                 T.unpack url <> "?embed=tryharder"
+               else T.unpack url
+  getWith opts getUrl
 
 getRelLinks :: Text -> LText -> [Text]
 getRelLinks relName =
@@ -164,9 +168,11 @@ toEntryData r =
 
 putEntry :: Text -> EntryData -> IO()
 putEntry destinationBaseUrl EntryData{..} = do
+  threadDelay 1000000
   let url = T.unpack $ destinationBaseUrl <> "/streams/" <> entryDataStream
   let body = fromMaybe (fromString "") entryDataBody
   (eventId :: Data.UUID.UUID) <- randomIO
+  print $ "Entry: " <> entryDataStream <> " " <> entryDataType
   let opts = defaults
         & header "ES-EventType" .~ [T.encodeUtf8 entryDataType]
         & header "ES-EventId" .~ [T.encodeUtf8 $ show eventId]
@@ -178,14 +184,14 @@ start :: Config -> IO ()
 start Config { configCommand = DownloadGlobalStream DownloadGlobalStreamConfig{..}} = do
   responses <- followPrevious downloadGlobalStreamStartUrl
   let numberedResponses = zip [0..] responses
-  entryBodies <- sequence $ getEntry <$> join (fst <$> responses)
+  entryBodies <- sequence $ getEntry False <$> join (fst <$> responses)
   let numberedEntries = zip [0..] entryBodies
   void $ sequence $ outputResponse downloadGlobalStreamOutputDirectory "previous" <$> numberedResponses
   void $ sequence $ outputEntry downloadGlobalStreamOutputDirectory "previous" <$> numberedEntries
 start Config { configCommand = CopyGlobalStream CopyGlobalStreamConfig{..} } = do
   responses <- followPrevious copyGlobalStreamConfigStartUrl
-  entryBodies <- sequence $ getEntry <$> join (fst <$> responses)
-  let entryData = toEntryData <$> entryBodies
+  entryBodies <- sequence $ getEntry True <$> join (fst <$> responses)
+  let entryData = reverse $ toEntryData <$> entryBodies
   sequence_ $ putEntry copyGlobalStreamConfigDestination <$> entryData
   return ()
 

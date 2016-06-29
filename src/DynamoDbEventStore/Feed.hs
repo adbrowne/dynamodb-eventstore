@@ -2,6 +2,7 @@
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
+
 module DynamoDbEventStore.Feed (
   xmlFeed,
   jsonFeed,
@@ -15,14 +16,17 @@ module DynamoDbEventStore.Feed (
 import           BasicPrelude
 import           Data.Aeson
 import qualified Data.Attoparsec.ByteString            as APBS
-import           Data.HashMap.Strict                   as HM
 import qualified Data.Text                             as T
 import           Data.Time.Clock
 import           Data.Time.Format
+import qualified Data.UUID
 import qualified Data.Vector                           as V
 import           DynamoDbEventStore.EventStoreActions
 import           DynamoDbEventStore.EventStoreCommands
-import           Text.Taggy.DOM
+import           Network.HTTP.Base
+import           Text.Blaze
+import           Text.Blaze.Internal                   (customLeaf,
+                                                        customParent)
 
 data Feed
  = Feed
@@ -59,6 +63,7 @@ data EntryContent
      { entryContentEventStreamId :: Text
      , entryContentEventNumber   :: Int64
      , entryContentEventType     :: Text
+     , entryContentEventId       :: EventId
      , entryContentData          :: Maybe Value
      }
      deriving (Show)
@@ -95,6 +100,9 @@ buildGlobalStreamLink streamUri rel (direction, position, maxItems)=
 
   in Link { linkHref = href, linkRel = rel }
 
+genericAuthor :: Author
+genericAuthor = Author { authorName = "EventStore" }
+
 buildFeed :: Text -> Text -> StreamId -> Text -> UTCTime -> [RecordedEvent] -> [Link] -> Feed
 buildFeed baseUri title (StreamId streamId) selfuri updated events links =
   Feed {
@@ -103,7 +111,7 @@ buildFeed baseUri title (StreamId streamId) selfuri updated events links =
     , feedUpdated = updated
     , feedSelfUrl = selfuri
     , feedStreamId = streamId
-    , feedAuthor = Author { authorName = "EventStore" }
+    , feedAuthor = genericAuthor
     , feedLinks = links
     , feedEntries = recordedEventToFeedEntry baseUri <$> events
    }
@@ -111,14 +119,14 @@ buildFeed baseUri title (StreamId streamId) selfuri updated events links =
 streamResultsToFeed :: Text -> StreamId -> UTCTime -> StreamResult -> Feed
 streamResultsToFeed baseUri (StreamId streamId) updated StreamResult{..} =
   let
-    selfuri = baseUri <> "/streams/" <> streamId
+    selfuri = baseUri <> "/streams/" <> urlEncode' streamId
     buildStreamLink' = buildStreamLink selfuri
     links = catMaybes [
-              buildStreamLink' "first" <$> streamResultFirst
+              Just Link { linkHref = selfuri, linkRel = "self" }
+            , buildStreamLink' "first" <$> streamResultFirst
             , buildStreamLink' "last" <$> streamResultLast
             , buildStreamLink' "previous" <$> streamResultPrevious
             , buildStreamLink' "next" <$> streamResultNext
-            , Just Link { linkHref = selfuri, linkRel = "self" }
          ]
     title = "EventStream '" <> streamId <> "'"
   in buildFeed baseUri title (StreamId streamId) selfuri updated streamResultEvents links
@@ -129,11 +137,11 @@ globalStreamResultsToFeed baseUri streamId updated GlobalStreamResult{..} =
     selfuri = baseUri <> "/streams/%24all"
     buildStreamLink' = buildGlobalStreamLink selfuri
     links = catMaybes [
-              buildStreamLink' "first" <$> globalStreamResultFirst
+              Just Link { linkHref = selfuri, linkRel = "self" }
+            , buildStreamLink' "first" <$> globalStreamResultFirst
             , buildStreamLink' "last" <$> globalStreamResultLast
             , buildStreamLink' "previous" <$> globalStreamResultPrevious
             , buildStreamLink' "next" <$> globalStreamResultNext
-            , Just Link { linkHref = selfuri, linkRel = "self" }
          ]
   in buildFeed baseUri "All events" streamId selfuri updated globalStreamResultEvents links
 
@@ -144,7 +152,7 @@ recordedEventToFeedEntry baseUri recordedEvent =
     streamId = recordedEventStreamId recordedEvent
     eventNumber = (show . recordedEventNumber) recordedEvent
     eventCreated = recordedEventCreated recordedEvent
-    eventUri = baseUri <> "/streams/" <> streamId <> "/" <> eventNumber
+    eventUri = baseUri <> "/streams/" <> urlEncode' streamId <> "/" <> eventNumber
     title = eventNumber <>  "@" <> streamId
     updated = eventCreated
     summary = recordedEventType recordedEvent
@@ -158,6 +166,7 @@ recordedEventToFeedEntry baseUri recordedEvent =
                   entryContentEventStreamId =  recordedEventStreamId recordedEvent
                 , entryContentEventNumber = recordedEventNumber recordedEvent
                 , entryContentEventType = recordedEventType recordedEvent
+                , entryContentEventId = recordedEventId recordedEvent
                 , entryContentData = dataField
               }
     links = [
@@ -165,28 +174,28 @@ recordedEventToFeedEntry baseUri recordedEvent =
       , Link { linkHref = eventUri, linkRel = "alternate" }
       ]
   in Entry {
-      entryId = eventUri
-      , entryTitle = title
+      entryTitle = title
+      , entryId = eventUri
       , entryUpdated = updated
       , entrySummary = summary
       , entryContent = content
       , entryLinks = links
      }
 
+urlEncode' :: Text -> Text
+urlEncode' = T.pack . urlEncode . T.unpack
+
 jsonLink :: Link -> Value
 jsonLink Link {..} =
   object [ "relation" .= linkRel, "uri" .= linkHref ]
 
-xmlLink :: Link -> Node
+xmlLink :: Link -> Markup
 xmlLink Link {..} =
-  let
-    attrs = [
-        ("rel", linkRel)
-      , ("href", linkHref)
-            ]
-  in NodeElement Element { eltName = "link", eltAttrs = HM.fromList attrs, eltChildren = [] }
+  customLeaf "link" True
+    ! customAttribute "href" (textValue linkHref)
+    ! customAttribute "rel" (textValue linkRel)
 
-xmlEntry :: Entry -> Node
+xmlEntry :: Entry -> Markup
 xmlEntry Entry{..} =
   let
     entryid = simpleXmlNode "id" entryId
@@ -194,13 +203,13 @@ xmlEntry Entry{..} =
     updated = simpleXmlNode "updated" $ formatJsonTime entryUpdated
     summary = simpleXmlNode "summary" entrySummary
     links = xmlLink <$> entryLinks
-    children = [
+  in customParent "entry" $ do
+      title
       entryid
-      , title
-      , updated
-      , summary
-               ] ++ links
-  in NodeElement Element { eltName = "entry", eltAttrs = mempty, eltChildren = children }
+      updated
+      xmlAuthor genericAuthor
+      summary
+      forM_ links id
 
 jsonEntryContent :: EntryContent -> Value
 jsonEntryContent EntryContent{..} =
@@ -210,6 +219,7 @@ jsonEntryContent EntryContent{..} =
     standardFields = [
         "eventStreamId" .= entryContentEventStreamId
       , "eventNumber" .= entryContentEventNumber
+      , "eventId" .= Data.UUID.toText (unEventId entryContentEventId)
       , "eventType" .= entryContentEventType]
   in object $ addDataField entryContentData standardFields
 
@@ -217,41 +227,31 @@ jsonAuthor :: Author -> Value
 jsonAuthor Author {..} =
   object [ "name" .= authorName ]
 
-simpleXmlNode :: Text -> Text -> Node
+simpleXmlNode :: Tag -> Text -> Markup
 simpleXmlNode tagName tagContent =
-  NodeElement Element { eltName = tagName, eltAttrs = mempty, eltChildren = [NodeContent tagContent]}
+  customParent tagName $ text tagContent
 
-xmlAuthor :: Author -> Node
+xmlAuthor :: Author -> Markup
 xmlAuthor Author {..} =
-  NodeElement Element { eltName = "author", eltAttrs = mempty, eltChildren = [simpleXmlNode "name" authorName]}
+  customParent "author" $ simpleXmlNode "name" authorName
 
-xmlFeed :: Feed -> Node
+xmlFeed :: Feed -> Markup
 xmlFeed Feed {..} =
   let
+    feed = customParent "feed" ! customAttribute "xmlns" "http://www.w3.org/2005/Atom"
     title = simpleXmlNode "title" feedTitle
     feedid = simpleXmlNode "id" feedId
-    headofstream = simpleXmlNode "headOfStream" "True"
     updated = simpleXmlNode "updated" $ formatJsonTime feedUpdated
-    selfurl = simpleXmlNode "selfUrl" feedSelfUrl
-    streamid = simpleXmlNode "streamId" feedStreamId
-    etag = simpleXmlNode "etag" ( "todo" :: Text)
     author = xmlAuthor feedAuthor
     links = xmlLink <$> feedLinks
     entries = xmlEntry <$> feedEntries
-    children = [
-      title
-      , feedid
-      , headofstream
-      , updated
-      , selfurl
-      , streamid
-      , etag
-      , author
-     ] ++ links ++ entries
-  in NodeElement Element {
-    eltName = "feed"
-    , eltAttrs = HM.singleton "xmlns" "http://www.w3.org/2005/Atom"
-    , eltChildren = children }
+  in feed $ do
+    title
+    feedid
+    updated
+    author
+    forM_ links id
+    forM_ entries id
 
 jsonFeed :: Feed -> Value
 jsonFeed Feed {..} =
@@ -276,8 +276,9 @@ jsonEntry Entry{..} =
   let
     entryid = "id" .= entryId
     title = "title" .= entryTitle
+    author = "author" .= (jsonAuthor genericAuthor)
     updated = "updated" .= formatJsonTime entryUpdated
     summary = "summary" .= entrySummary
     content = "content" .= jsonEntryContent entryContent
     links = "links" .= (Array . V.fromList) (jsonLink <$> entryLinks)
-  in object [entryid, title, summary, content, links, updated]
+  in object [entryid, author, title, summary, content, links, updated]

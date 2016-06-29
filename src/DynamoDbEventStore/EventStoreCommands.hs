@@ -66,7 +66,7 @@ instance Show PageKey where
 
 data PageStatus = Version Int | Full | Verified deriving (Eq, Show, Generic)
 
-newtype EventId = EventId UUID.UUID deriving (Show, Eq, Ord, Generic)
+newtype EventId = EventId { unEventId :: UUID.UUID } deriving (Show, Eq, Ord, Generic)
 
 instance QC.Arbitrary PageKey where
   arbitrary =
