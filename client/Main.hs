@@ -12,6 +12,7 @@ import           Data.Aeson.Encode
 import           Data.Aeson.Lens
 import           Data.Attoparsec.ByteString.Lazy
 import           Data.ByteString.Builder
+import qualified Data.HashMap.Strict             as HM
 import           Data.Maybe
 import qualified Data.Text                       as T
 import qualified Data.Text.Encoding              as T
@@ -22,7 +23,10 @@ import qualified Data.UUID                       (UUID)
 import           Network.Wreq
 import qualified Options.Applicative             as Opt
 import           System.Random
+import           Text.Blaze.Renderer.Pretty
+import           Text.Taggy.DOM
 import           Text.Taggy.Lens
+import           Text.Taggy.Renderer
 import           Turtle.Prelude
 
 getFeedPage :: Text -> IO (Response LByteString)
@@ -80,6 +84,7 @@ data Config = Config
 data Command
   = DownloadGlobalStream DownloadGlobalStreamConfig
     | CopyGlobalStream CopyGlobalStreamConfig
+    | CompareDownload CompareDownloadConfig
 
 data DownloadGlobalStreamConfig = DownloadGlobalStreamConfig {
   downloadGlobalStreamOutputDirectory :: Text,
@@ -89,12 +94,18 @@ data CopyGlobalStreamConfig = CopyGlobalStreamConfig {
   copyGlobalStreamConfigStartUrl    :: Text,
   copyGlobalStreamConfigDestination :: Text }
 
+data CompareDownloadConfig = CompareDownloadConfig {
+  compareDownloadConfigLeftDirectory  :: String,
+  compareDownloadConfigRightDirectory :: String }
+
 config :: Opt.Parser Config
 config = Config
    <$> Opt.subparser
          (Opt.command "downloadGlobalStream" (Opt.info downloadGlobalStreamOptions (Opt.progDesc "Download global stream moving forward in time") )
          <>
           Opt.command "copyGlobalStream" (Opt.info copyGlobalStreamOptions (Opt.progDesc "Copy global stream"))
+         <>
+          Opt.command "compareDownload" (Opt.info compareDownloadOptions (Opt.progDesc "Compare downloaded streams"))
          )
    where
      downloadGlobalStreamOptions :: Opt.Parser Command
@@ -116,6 +127,16 @@ config = Config
         <*> (T.pack <$> Opt.strOption (Opt.long "destination"
             <> Opt.metavar "destination"
             <> Opt.help "destination event store - base url"))
+       )
+     compareDownloadOptions :: Opt.Parser Command
+     compareDownloadOptions = CompareDownload <$>
+       (CompareDownloadConfig
+        <$> Opt.strOption (Opt.long "referenceDirectory"
+            <> Opt.metavar "REFERENCE_DIRECTORY"
+            <> Opt.help "reference directory")
+        <*> Opt.strOption (Opt.long "testDirectory"
+            <> Opt.metavar "TEST_DIRECTORY"
+            <> Opt.help "test directory")
        )
 
 saveResponse :: Text -> Text -> Response LByteString -> IO ()
@@ -180,6 +201,46 @@ putEntry destinationBaseUrl EntryData{..} = do
   _ <- postWith opts url body
   return ()
 
+readXmlFile :: String -> String -> IO Node
+readXmlFile directory subPath = do
+  let filePath = directory <> subPath
+  fileContents <- readTextFile (fromString filePath)
+  return $ head $ parseDOM False (TL.fromStrict  fileContents)
+
+normalizeDom :: Node -> Maybe Node
+normalizeDom n@(NodeContent _) = Just n
+normalizeDom (NodeElement el@Element{eltName = "link", ..}) =
+  let
+    eltAttrs' = HM.adjust (const "normalized") "href" eltAttrs
+    relValue = HM.lookup "rel" eltAttrs
+  in
+    if relValue == Just "metadata" || relValue == Just "last" then
+      Nothing
+    else
+      Just $ NodeElement el { eltAttrs = eltAttrs', eltChildren = catMaybes $ normalizeDom <$> eltChildren}
+normalizeDom (NodeElement el@Element{eltName = "updated", ..}) =
+  Just $ NodeElement el { eltChildren = [] }
+normalizeDom (NodeElement el@Element{..}) =
+  Just $ NodeElement el { eltChildren = catMaybes $ normalizeDom <$> eltChildren }
+
+renderNode :: Node -> Text
+renderNode node =
+  T.pack $ renderMarkup $ toMarkup True node
+
+compareFeedFiles :: CompareDownloadConfig -> String -> IO Bool
+compareFeedFiles CompareDownloadConfig{..} filePath = do
+  domLeft <- normalizeDom <$> readXmlFile compareDownloadConfigLeftDirectory filePath
+  domRight <- normalizeDom <$> readXmlFile compareDownloadConfigRightDirectory filePath
+  let areEqual = domLeft == domRight
+  print areEqual
+  unless areEqual $ do
+    putStrLn ("Left DOM:" :: Text)
+    putStrLn $ domToText domLeft
+    putStrLn ("Right DOM:" :: Text)
+    putStrLn $ domToText domRight
+  return areEqual
+  where domToText n = fromMaybe "" $ renderNode <$> n
+
 start :: Config -> IO ()
 start Config { configCommand = DownloadGlobalStream DownloadGlobalStreamConfig{..}} = do
   responses <- followPrevious downloadGlobalStreamStartUrl
@@ -193,6 +254,10 @@ start Config { configCommand = CopyGlobalStream CopyGlobalStreamConfig{..} } = d
   entryBodies <- sequence $ getEntry True <$> join (fst <$> responses)
   let entryData = reverse $ toEntryData <$> entryBodies
   sequence_ $ putEntry copyGlobalStreamConfigDestination <$> entryData
+  return ()
+start Config { configCommand = CompareDownload compareDownloadConfig } = do
+  void $ compareFeedFiles compareDownloadConfig "previous/0"
+  void $ compareFeedFiles compareDownloadConfig "previous/1"
   return ()
 
 main :: IO ()
