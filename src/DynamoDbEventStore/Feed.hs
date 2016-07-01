@@ -269,7 +269,11 @@ jsonFeed Feed {..} =
   in object [ title, feedid, updated, streamid, author, headofstream, selfurl, etag, links, entries]
 
 formatJsonTime :: UTCTime -> Text
-formatJsonTime = T.pack . formatTime defaultTimeLocale (iso8601DateFormat (Just "%H:%M:%SZ"))
+formatJsonTime utcTime =
+  let
+    microseconds = take 6 $ formatTime defaultTimeLocale "%q" utcTime
+    dateAndTime = formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%S" utcTime
+  in T.pack $ dateAndTime <> "." <> microseconds <> "Z"
 
 jsonEntry :: Entry -> Value
 jsonEntry Entry{..} =

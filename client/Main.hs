@@ -8,10 +8,13 @@ import           BasicPrelude
 import           Control.Concurrent
 import           Control.Lens                    hiding (children, element)
 import           Data.Aeson
+import           Data.Aeson.Diff
 import           Data.Aeson.Encode
 import           Data.Aeson.Lens
 import           Data.Attoparsec.ByteString.Lazy
+import qualified Data.ByteString                 as B
 import           Data.ByteString.Builder
+import           Data.Char                       (isAlphaNum)
 import qualified Data.HashMap.Strict             as HM
 import           Data.Maybe
 import qualified Data.Text                       as T
@@ -204,8 +207,14 @@ putEntry destinationBaseUrl EntryData{..} = do
 readXmlFile :: String -> String -> IO Node
 readXmlFile directory subPath = do
   let filePath = directory <> subPath
-  fileContents <- readTextFile (fromString filePath)
-  return $ head $ parseDOM False (TL.fromStrict  fileContents)
+  fileContents <- T.strip <$> readTextFile (fromString filePath)
+  return $ head $ parseDOM False (TL.fromStrict fileContents)
+
+readJsonFile :: String -> String -> IO Value
+readJsonFile directory subPath = do
+  let filePath = directory <> subPath
+  fileContents <- B.readFile (fromString filePath)
+  return $ fromJust $ fileContents ^? _Value
 
 normalizeDom :: Node -> Maybe Node
 normalizeDom n@(NodeContent _) = Just n
@@ -225,7 +234,7 @@ normalizeDom (NodeElement el@Element{..}) =
 
 renderNode :: Node -> Text
 renderNode node =
-  T.pack $ renderMarkup $ toMarkup True node
+  T.pack $ renderMarkup $ toMarkup False node
 
 compareFeedFiles :: CompareDownloadConfig -> String -> IO Bool
 compareFeedFiles CompareDownloadConfig{..} filePath = do
@@ -240,6 +249,34 @@ compareFeedFiles CompareDownloadConfig{..} filePath = do
     putStrLn $ domToText domRight
   return areEqual
   where domToText n = fromMaybe "" $ renderNode <$> n
+
+normalizeJson :: Value -> Value
+normalizeJson =
+  let
+    removeMetadata = over (key "content" . _Object) (HM.delete "metadata")
+    replaceDigitWithZero :: Char -> Char
+    replaceDigitWithZero a | isAlphaNum a = '0'
+    replaceDigitWithZero a = a
+    zeroOutAlphaNum myPrism = over myPrism (T.map replaceDigitWithZero)
+  in
+    removeMetadata
+    . zeroOutAlphaNum (key "content" . key "eventId" . _String)
+    . zeroOutAlphaNum (key "updated" . _String)
+
+compareEntryFile :: CompareDownloadConfig -> String -> IO Bool
+compareEntryFile CompareDownloadConfig{..} filePath = do
+  domLeft <- normalizeJson <$> readJsonFile compareDownloadConfigLeftDirectory filePath
+  domRight <- normalizeJson <$> readJsonFile compareDownloadConfigRightDirectory filePath
+  let areEqual = domLeft == domRight
+  print areEqual
+  unless areEqual $ do
+    putStrLn ("Left DOM:" :: Text)
+    print domLeft
+    putStrLn ("Right DOM:" :: Text)
+    print domRight
+    putStrLn "Diff:"
+    print $ diff domLeft domRight
+  return areEqual
 
 start :: Config -> IO ()
 start Config { configCommand = DownloadGlobalStream DownloadGlobalStreamConfig{..}} = do
@@ -258,6 +295,7 @@ start Config { configCommand = CopyGlobalStream CopyGlobalStreamConfig{..} } = d
 start Config { configCommand = CompareDownload compareDownloadConfig } = do
   void $ compareFeedFiles compareDownloadConfig "previous/0"
   void $ compareFeedFiles compareDownloadConfig "previous/1"
+  void $ compareEntryFile compareDownloadConfig "previous/entries/0"
   return ()
 
 main :: IO ()

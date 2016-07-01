@@ -1,4 +1,6 @@
 flags: {}
 packages:
-- '.'
+ - '.'
 resolver: lts-6.5
+extra-deps:
+ - aeson-diff-1.0.0.0
