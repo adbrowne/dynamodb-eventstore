@@ -16,6 +16,7 @@ import qualified Data.ByteString                 as B
 import           Data.ByteString.Builder
 import           Data.Char                       (isAlphaNum)
 import qualified Data.HashMap.Strict             as HM
+import           Data.List.Utils                 (replace)
 import           Data.Maybe
 import qualified Data.Text                       as T
 import qualified Data.Text.Encoding              as T
@@ -25,6 +26,9 @@ import           Data.Text.Lazy.Encoding         (decodeUtf8With)
 import qualified Data.UUID                       (UUID)
 import           Network.Wreq
 import qualified Options.Applicative             as Opt
+import           Safe
+import           System.Directory
+import           System.FilePath.Posix
 import           System.Random
 import           Text.Blaze.Renderer.Pretty
 import           Text.Taggy.DOM
@@ -156,13 +160,13 @@ saveResponse directory filename response = do
 outputResponse :: Text -> Text -> (Int, ([Text],Response LByteString)) -> IO ()
 outputResponse baseDir responseType (sequenceNumber, (_editLinks, response)) = do
   let directory = baseDir <> "/" <> responseType <> "/"
-  let filename = directory <> show sequenceNumber
+  let filename = directory <> show sequenceNumber <> ".xml"
   saveResponse directory filename response
 
 outputEntry :: Text -> Text -> (Int, Response LByteString) -> IO ()
 outputEntry baseDir responseType (sequenceNumber, response) = do
   let directory = baseDir <> "/" <> responseType <> "/entries/"
-  let filename = directory <> show sequenceNumber
+  let filename = directory <> show sequenceNumber <> ".json"
   saveResponse directory filename response
 
 data EntryData = EntryData {
@@ -204,15 +208,13 @@ putEntry destinationBaseUrl EntryData{..} = do
   _ <- postWith opts url body
   return ()
 
-readXmlFile :: String -> String -> IO Node
-readXmlFile directory subPath = do
-  let filePath = directory <> subPath
+readXmlFile :: String -> IO Node
+readXmlFile filePath = do
   fileContents <- T.strip <$> readTextFile (fromString filePath)
   return $ head $ parseDOM False (TL.fromStrict fileContents)
 
-readJsonFile :: String -> String -> IO Value
-readJsonFile directory subPath = do
-  let filePath = directory <> subPath
+readJsonFile :: String -> IO Value
+readJsonFile filePath = do
   fileContents <- B.readFile (fromString filePath)
   return $ fromJust $ fileContents ^? _Value
 
@@ -229,6 +231,9 @@ normalizeDom (NodeElement el@Element{eltName = "link", ..}) =
       Just $ NodeElement el { eltAttrs = eltAttrs', eltChildren = catMaybes $ normalizeDom <$> eltChildren}
 normalizeDom (NodeElement el@Element{eltName = "updated", ..}) =
   Just $ NodeElement el { eltChildren = [] }
+normalizeDom (NodeElement el@Element{eltName = "xml", ..}) =
+  Just $ NodeElement el { eltChildren = catMaybes $ normalizeDom <$> eltChildren,
+                          eltAttrs = HM.adjust T.toLower "encoding" eltAttrs }
 normalizeDom (NodeElement el@Element{..}) =
   Just $ NodeElement el { eltChildren = catMaybes $ normalizeDom <$> eltChildren }
 
@@ -236,10 +241,10 @@ renderNode :: Node -> Text
 renderNode node =
   T.pack $ renderMarkup $ toMarkup False node
 
-compareFeedFiles :: CompareDownloadConfig -> String -> IO Bool
-compareFeedFiles CompareDownloadConfig{..} filePath = do
-  domLeft <- normalizeDom <$> readXmlFile compareDownloadConfigLeftDirectory filePath
-  domRight <- normalizeDom <$> readXmlFile compareDownloadConfigRightDirectory filePath
+compareFeedFiles :: String -> String -> IO Bool
+compareFeedFiles leftFilePath rightFilePath = do
+  domLeft <- normalizeDom <$> readXmlFile leftFilePath
+  domRight <- normalizeDom <$> readXmlFile rightFilePath
   let areEqual = domLeft == domRight
   print areEqual
   unless areEqual $ do
@@ -263,10 +268,10 @@ normalizeJson =
     . zeroOutAlphaNum (key "content" . key "eventId" . _String)
     . zeroOutAlphaNum (key "updated" . _String)
 
-compareEntryFile :: CompareDownloadConfig -> String -> IO Bool
-compareEntryFile CompareDownloadConfig{..} filePath = do
-  domLeft <- normalizeJson <$> readJsonFile compareDownloadConfigLeftDirectory filePath
-  domRight <- normalizeJson <$> readJsonFile compareDownloadConfigRightDirectory filePath
+compareEntryFile :: String -> String -> IO Bool
+compareEntryFile leftFilePath rightFilePath = do
+  domLeft <- normalizeJson <$> readJsonFile leftFilePath
+  domRight <- normalizeJson <$> readJsonFile rightFilePath
   let areEqual = domLeft == domRight
   print areEqual
   unless areEqual $ do
@@ -277,6 +282,30 @@ compareEntryFile CompareDownloadConfig{..} filePath = do
     putStrLn "Diff:"
     print $ diff domLeft domRight
   return areEqual
+
+listDirectoryTree :: FilePath -> IO [FilePath]
+listDirectoryTree path = do
+  let prependPath = combine path
+  directoryChildren <-
+    filterSpecialEntries
+    <$> getDirectoryContents path
+  childrenWithIsDir <- mapM (\a -> doesDirectoryExist (prependPath a) >>= (\isDir -> return (isDir, a))) directoryChildren
+  let (files', directories') = partition ((==False) . fst) childrenWithIsDir
+  let files = prependPath . snd <$> files'
+  let directories = snd <$> directories'
+  subFiles <- sequence $ listDirectoryTree . prependPath <$> directories
+  return $ files ++ join subFiles
+  where
+    filterSpecialEntries :: [FilePath] -> [FilePath]
+    filterSpecialEntries = filter ((/= Just '.') . headMay)
+
+compareFile :: CompareDownloadConfig -> FilePath -> IO Bool
+compareFile CompareDownloadConfig{..} leftFilePath = do
+  let rightFilePath = replace compareDownloadConfigLeftDirectory compareDownloadConfigRightDirectory leftFilePath
+  let extension = takeExtension leftFilePath
+  case extension of ".json" -> compareEntryFile leftFilePath rightFilePath
+                    ".xml"  -> compareFeedFiles leftFilePath rightFilePath
+                    _       -> error $ "compareFile with unkown extension" <> extension
 
 start :: Config -> IO ()
 start Config { configCommand = DownloadGlobalStream DownloadGlobalStreamConfig{..}} = do
@@ -293,10 +322,8 @@ start Config { configCommand = CopyGlobalStream CopyGlobalStreamConfig{..} } = d
   sequence_ $ putEntry copyGlobalStreamConfigDestination <$> entryData
   return ()
 start Config { configCommand = CompareDownload compareDownloadConfig } = do
-  void $ compareFeedFiles compareDownloadConfig "previous/0"
-  void $ compareFeedFiles compareDownloadConfig "previous/1"
-  void $ compareEntryFile compareDownloadConfig "previous/entries/0"
-  return ()
+  files <- listDirectoryTree $ fromString $ compareDownloadConfigLeftDirectory compareDownloadConfig
+  sequence_ $ compareFile compareDownloadConfig <$> files
 
 main :: IO ()
 main = Opt.execParser opts >>= start
