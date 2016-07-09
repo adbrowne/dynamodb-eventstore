@@ -337,8 +337,8 @@ start Config { configCommand = DownloadGlobalStream DownloadGlobalStreamConfig{.
   let numberedResponses = zip [0..] responses
   entryBodies <- sequence $ getEntry False <$> join (fst <$> responses)
   let numberedEntries = reverse $ drop 7 $ reverse $ zip [0..] entryBodies -- ignore the initial entries
-  void $ sequence $ outputResponse downloadGlobalStreamOutputDirectory "previous" <$> numberedResponses
-  void $ sequence $ outputEntry downloadGlobalStreamOutputDirectory "previous" <$> numberedEntries
+  void $ sequence $ outputResponse downloadGlobalStreamOutputDirectory "next" <$> numberedResponses
+  void $ sequence $ outputEntry downloadGlobalStreamOutputDirectory "next" <$> numberedEntries
 start Config { configCommand = CopyGlobalStream CopyGlobalStreamConfig{..} } = do
   responses <- followNext copyGlobalStreamConfigStartUrl
   entryBodies <- sequence $ getEntry True <$> join (fst <$> responses)
