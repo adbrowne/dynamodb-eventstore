@@ -11,6 +11,8 @@ import           Data.Aeson
 import           Data.Aeson.Diff
 import           Data.Aeson.Encode
 import           Data.Aeson.Lens
+import           Data.Algorithm.Diff
+import           Data.Algorithm.DiffOutput
 import           Data.Attoparsec.ByteString.Lazy
 import qualified Data.ByteString                 as B
 import           Data.ByteString.Builder
@@ -26,6 +28,7 @@ import           Data.Text.Lazy.Encoding         as TL
 import qualified Data.UUID                       (UUID)
 import           Network.Wreq
 import qualified Options.Applicative             as Opt
+import qualified Prelude                         as P
 import           Safe
 import           System.Directory
 import           System.FilePath.Posix
@@ -90,9 +93,14 @@ data Config = Config
 
 data Command
   = DownloadGlobalStream DownloadGlobalStreamConfig
+    | DownloadFeed DownloadFeedConfig
     | CopyGlobalStream CopyGlobalStreamConfig
     | CompareDownload CompareDownloadConfig
     | InsertData InsertDataConfig
+
+data DownloadFeedConfig = DownloadFeedConfig {
+  downloadFeedConfigOutputDirectory :: Text,
+  downloadFeedConfigStartUrl        :: Text }
 
 data DownloadGlobalStreamConfig = DownloadGlobalStreamConfig {
   downloadGlobalStreamOutputDirectory :: Text,
@@ -112,7 +120,9 @@ data CompareDownloadConfig = CompareDownloadConfig {
 config :: Opt.Parser Config
 config = Config
    <$> Opt.subparser
-         (Opt.command "downloadGlobalStream" (Opt.info downloadGlobalStreamOptions (Opt.progDesc "Download global stream moving forward in time") )
+         (Opt.command "downloadGlobalStream" (Opt.info downloadGlobalStreamOptions (Opt.progDesc "Download global feed moving backward in time") )
+         <>
+          Opt.command "download-feed" (Opt.info downloadFeedOptions (Opt.progDesc "Download feed moving backward in time") )
          <>
           Opt.command "copyGlobalStream" (Opt.info copyGlobalStreamOptions (Opt.progDesc "Copy global stream"))
          <>
@@ -124,6 +134,16 @@ config = Config
      downloadGlobalStreamOptions :: Opt.Parser Command
      downloadGlobalStreamOptions = DownloadGlobalStream <$>
        (DownloadGlobalStreamConfig
+        <$> (T.pack <$> Opt.strOption (Opt.long "outputDirectory"
+            <> Opt.metavar "OUTPUTDIRECTORY"
+            <> Opt.help "ouput directory for responses"))
+        <*> (T.pack <$> Opt.strOption (Opt.long "startUrl"
+            <> Opt.metavar "STARTURL"
+            <> Opt.help "starting url"))
+       )
+     downloadFeedOptions :: Opt.Parser Command
+     downloadFeedOptions = DownloadFeed <$>
+       (DownloadFeedConfig
         <$> (T.pack <$> Opt.strOption (Opt.long "outputDirectory"
             <> Opt.metavar "OUTPUTDIRECTORY"
             <> Opt.help "ouput directory for responses"))
@@ -263,12 +283,11 @@ compareFeedFiles leftFilePath rightFilePath = do
   print areEqual
   unless areEqual $ do
     putStrLn ("Left: " <> T.pack leftFilePath <> " Right: " <> T.pack rightFilePath)
-    putStrLn ("Left DOM:" :: Text)
-    putStrLn $ domToText domLeft
-    putStrLn ("Right DOM:" :: Text)
-    putStrLn $ domToText domRight
+    let theDiff = getGroupedDiff (domToTextLines domLeft) (domToTextLines domRight)
+    let diffOut = ppDiff theDiff
+    putStr $ T.pack diffOut
   return areEqual
-  where domToText n = fromMaybe "" $ renderNode <$> n
+  where domToTextLines n = P.lines . T.unpack . fromMaybe "" $ renderNode <$> n
 
 normalizeJson :: Value -> Value
 normalizeJson =
@@ -339,6 +358,10 @@ start Config { configCommand = DownloadGlobalStream DownloadGlobalStreamConfig{.
   let numberedEntries = reverse $ drop 7 $ reverse $ zip [0..] entryBodies -- ignore the initial entries
   void $ sequence $ outputResponse downloadGlobalStreamOutputDirectory "next" <$> numberedResponses
   void $ sequence $ outputEntry downloadGlobalStreamOutputDirectory "next" <$> numberedEntries
+start Config { configCommand = DownloadFeed DownloadFeedConfig{..}} = do
+  responses <- followNext downloadFeedConfigStartUrl
+  let numberedResponses = zip [0..] responses
+  void $ sequence $ outputResponse downloadFeedConfigOutputDirectory "next" <$> numberedResponses
 start Config { configCommand = CopyGlobalStream CopyGlobalStreamConfig{..} } = do
   responses <- followNext copyGlobalStreamConfigStartUrl
   entryBodies <- sequence $ getEntry True <$> join (fst <$> responses)

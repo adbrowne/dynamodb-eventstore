@@ -116,6 +116,19 @@ buildFeed baseUri title (StreamId streamId) selfuri updated events links =
     , feedEntries = recordedEventToFeedEntry baseUri <$> events
    }
 
+-- adapted from: http://hackage.haskell.org/package/blaze-html-0.3.2.1/docs/src/Text-Blaze-Renderer-Text.html
+escapeHtmlEntities :: Text     -- ^ Text to escape
+                   -> Text     -- ^ Resulting text builder
+escapeHtmlEntities = T.foldr escape mempty
+  where
+    escape :: Char -> Text -> Text
+    escape '<'  b = "&lt;"   `mappend` b
+    escape '>'  b = "&gt;"   `mappend` b
+    escape '&'  b = "&amp;"  `mappend` b
+    escape '"'  b = "&quot;" `mappend` b
+    escape '\'' b = "&#39;"  `mappend` b
+    escape x    b = T.singleton x       `mappend` b
+
 streamResultsToFeed :: Text -> StreamId -> UTCTime -> StreamResult -> Feed
 streamResultsToFeed baseUri (StreamId streamId) updated StreamResult{..} =
   let
@@ -128,7 +141,7 @@ streamResultsToFeed baseUri (StreamId streamId) updated StreamResult{..} =
             , buildStreamLink' "next" <$> streamResultNext
             , buildStreamLink' "previous" <$> streamResultPrevious
          ]
-    title = "EventStream '" <> streamId <> "'"
+    title = "Event stream '" <> escapeHtmlEntities streamId <> "'"
   in buildFeed baseUri title (StreamId streamId) selfuri updated streamResultEvents links
 
 globalStreamResultsToFeed :: Text -> StreamId -> UTCTime -> GlobalStreamResult -> Feed
@@ -239,7 +252,7 @@ xmlFeed :: Feed -> Markup
 xmlFeed Feed {..} =
   let
     feed = customParent "feed" ! customAttribute "xmlns" "http://www.w3.org/2005/Atom"
-    title = simpleXmlNode "title" feedTitle
+    title = customParent "title" (preEscapedText feedTitle)
     feedid = simpleXmlNode "id" feedId
     updated = simpleXmlNode "updated" $ formatJsonTime feedUpdated
     author = xmlAuthor feedAuthor
