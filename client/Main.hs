@@ -239,7 +239,7 @@ normalizeDom (NodeElement el@Element{eltName = "link", ..}) =
     eltAttrs' = HM.adjust (const "normalized") "href" eltAttrs
     relValue = HM.lookup "rel" eltAttrs
   in
-    if relValue == Just "metadata" || relValue == Just "last" then
+    if relValue == Just "metadata" then
       Nothing
     else
       Just $ NodeElement el { eltAttrs = eltAttrs', eltChildren = catMaybes $ normalizeDom <$> eltChildren}

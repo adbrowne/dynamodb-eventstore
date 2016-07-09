@@ -533,7 +533,7 @@ getReadAllRequestProgram ReadAllRequest
     globalStreamResultNext = (\pos -> (FeedDirectionBackward, GlobalStartPosition pos, readAllRequestMaxItems)) <$> nextEvent,
     globalStreamResultPrevious = (\pos -> (FeedDirectionForward, GlobalStartPosition pos, readAllRequestMaxItems)) <$> previousEventPosition,
     globalStreamResultFirst = Just (FeedDirectionBackward, GlobalStartHead, readAllRequestMaxItems),
-    globalStreamResultLast = Just (FeedDirectionForward, GlobalStartHead, readAllRequestMaxItems)
+    globalStreamResultLast = const (FeedDirectionForward, GlobalStartHead, readAllRequestMaxItems) <$> nextEvent -- only show last if there is a next
   }
   where
     filterFirstEvent Nothing = P.filter (const True)
@@ -558,7 +558,7 @@ getReadAllRequestProgram ReadAllRequest
     globalStreamResultNext = (\pos -> (FeedDirectionBackward, GlobalStartPosition pos, readAllRequestMaxItems)) <$> nextEventBackwardPosition,
     globalStreamResultPrevious = (\pos -> (FeedDirectionForward, GlobalStartPosition pos, readAllRequestMaxItems)) <$> previousEventPosition,
     globalStreamResultFirst = Just (FeedDirectionBackward, GlobalStartHead, readAllRequestMaxItems),
-    globalStreamResultLast = Just (FeedDirectionForward, GlobalStartHead, readAllRequestMaxItems)
+    globalStreamResultLast = const (FeedDirectionForward, GlobalStartHead, readAllRequestMaxItems) <$> nextEventBackwardPosition -- only show last if there is a next
   }
   where
     filterLastEvent Nothing = P.filter (const True)

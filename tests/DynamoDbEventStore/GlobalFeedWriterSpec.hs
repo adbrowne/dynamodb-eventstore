@@ -462,11 +462,11 @@ globalStreamLinkTests =
     , linkAssert middleOfFeedBackward streamResultNext' (Just (FeedDirectionBackward, toStartPosition 3 1, 20))
     , linkAssert middleOfFeedBackward streamResultPrevious' (Just (FeedDirectionForward, toStartPosition 6 5, 20))
     , linkAssert startOfFeedBackward streamResultFirst' (Just (FeedDirectionBackward, GlobalStartHead, 20))
-    , linkAssert startOfFeedBackward streamResultLast' (Just (FeedDirectionForward, GlobalStartHead, 20))
+    , linkAssert startOfFeedBackward streamResultLast' Nothing
     , linkAssert startOfFeedBackward streamResultNext' Nothing
     , linkAssert startOfFeedBackward streamResultPrevious' (Just (FeedDirectionForward, toStartPosition 1 0, 20))
     , linkAssert startOfFeedForward streamResultFirst' (Just (FeedDirectionBackward, GlobalStartHead, 20))
-    , linkAssert startOfFeedForward streamResultLast' (Just (FeedDirectionForward, GlobalStartHead, 20))
+    , linkAssert startOfFeedForward streamResultLast' Nothing
     , linkAssert startOfFeedForward streamResultNext' Nothing
     , linkAssert startOfFeedForward streamResultPrevious' (Just (FeedDirectionForward, toStartPosition 5 7, 20))
     , linkAssert middleOfFeedForward streamResultFirst' (Just (FeedDirectionBackward, GlobalStartHead, 20))
