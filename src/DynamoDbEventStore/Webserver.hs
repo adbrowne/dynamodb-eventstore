@@ -108,6 +108,13 @@ uuidParser = do
   case UUID.fromText t of Nothing  -> fail "Could not parse UUID"
                           (Just v) -> return v
 
+acceptHeaderToIsJsonParser :: Parser Bool
+acceptHeaderToIsJsonParser =
+  let
+    jsonParser = asciiCI "application/json" >> return True
+    binaryParser = asciiCI "application/octet-stream" >> return False
+  in jsonParser <|> binaryParser <|> fail "unrecognized content type"
+
 positiveIntParser :: Parser Int
 positiveIntParser =
   filterInt =<< positiveIntegerParser
@@ -313,26 +320,29 @@ readStreamHandler process streamIdAction startEventParameter eventCountParameter
             <*> (fromMaybe 20 <$> eventCount)
             <*> Right feedDirection))
 
+postEventHandler :: (MonadIO m, MonadHasTime m, ScottyError e) => Process -> ActionT e m ()
+postEventHandler process = do
+  streamId <- param "streamId"
+  expectedVersion <- parseOptionalHeader "ES-ExpectedVersion" (positiveInt64Parser <* endOfInput)
+  eventType <- parseMandatoryHeader "ES-EventType" textParser
+  eventData <- body
+  eventTime <- lift getCurrentTime
+  eventId <- parseMandatoryHeader "ES-EventId" uuidParser
+  isJson <- parseMandatoryHeader "Content-Type" acceptHeaderToIsJsonParser
+  let eventEntries =
+        EventEntry
+        <$> pure eventData
+        <*> (EventType <$> eventType)
+        <*> (EventId <$> eventId)
+        <*> pure (EventTime eventTime)
+        <*> isJson
+  toResult' process (PostEvent <$> (PostEventRequest
+        <$> pure streamId
+        <*> expectedVersion
+        <*> ((\x -> x:|[]) <$> eventEntries)))
 app :: (MonadIO m, MonadHasTime m, ScottyError e) => Process -> ScottyT e m ()
 app process = do
-  post "/streams/:streamId" $ do
-    streamId <- param "streamId"
-    expectedVersion <- parseOptionalHeader "ES-ExpectedVersion" (positiveInt64Parser <* endOfInput)
-    eventType <- parseMandatoryHeader "ES-EventType" textParser
-    eventData <- body
-    eventTime <- lift getCurrentTime
-    eventId <- parseMandatoryHeader "ES-EventId" uuidParser
-    let eventEntries =
-          EventEntry
-          <$> pure eventData
-          <*> (EventType <$> eventType)
-          <*> (EventId <$> eventId)
-          <*> pure (EventTime eventTime)
-          <*> pure True
-    toResult' process (PostEvent <$> (PostEventRequest
-          <$> pure streamId
-          <*> expectedVersion
-          <*> ((\x -> x:|[]) <$> eventEntries)))
+  post "/streams/:streamId" $ postEventHandler process
   get "/streams/:streamId/:eventNumber" $ do
     streamId <- param "streamId"
     eventNumber <- param "eventNumber"

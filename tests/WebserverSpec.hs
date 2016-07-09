@@ -40,7 +40,10 @@ app = do
 
 postEventSpec :: Spec
 postEventSpec = do
-  let baseHeaders = [(etHeader, "MyEventType"),(eventIdHeader, "12f44004-f5dd-41f1-8225-72dd65a0332e")]
+  let baseHeaders = [
+        (etHeader, "MyEventType"),
+        (eventIdHeader, "12f44004-f5dd-41f1-8225-72dd65a0332e"),
+        ("Content-Type", "application/json")]
   let requestWithExpectedVersion = addEventPost $ (evHeader, "1"):baseHeaders
   let requestWithoutExpectedVersion = addEventPost baseHeaders
   let requestWithoutBadExpectedVersion = addEventPost $ (evHeader, "NotAnInt"):baseHeaders
