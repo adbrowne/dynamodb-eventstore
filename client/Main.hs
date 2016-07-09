@@ -22,7 +22,7 @@ import qualified Data.Text                       as T
 import qualified Data.Text.Encoding              as T
 import           Data.Text.Encoding.Error        (lenientDecode)
 import qualified Data.Text.Lazy                  as TL
-import           Data.Text.Lazy.Encoding         (decodeUtf8With)
+import           Data.Text.Lazy.Encoding         as TL
 import qualified Data.UUID                       (UUID)
 import           Network.Wreq
 import qualified Options.Applicative             as Opt
@@ -64,22 +64,22 @@ getRelLinks relName =
     . attr "href")
 
 getBodyAsText :: Response LByteString -> LText
-getBodyAsText r = r ^. (responseBody . to (decodeUtf8With lenientDecode))
+getBodyAsText r = r ^. (responseBody . to (TL.decodeUtf8With lenientDecode))
 
-extractPrevious :: Text -> IO ([Text], [Text], Response LByteString)
-extractPrevious url = do
+extractNext :: Text -> IO ([Text], [Text], Response LByteString)
+extractNext url = do
   r <- getFeedPage url
   let bodyText = getBodyAsText r
-  let feedLinks = getRelLinks "previous" bodyText
+  let feedLinks = getRelLinks "next" bodyText
   let feedEntries = getRelLinks "edit" bodyText
   return (feedLinks, feedEntries, r)
 
-followPrevious :: Text -> IO [([Text],Response LByteString)]
-followPrevious startUrl = go [startUrl]
+followNext :: Text -> IO [([Text],Response LByteString)]
+followNext startUrl = go [startUrl]
   where
     go [] = return []
     go urls = do
-      results <- sequence $ extractPrevious <$> urls
+      results <- sequence $ extractNext <$> urls
       let nextUrls = join $ (\(a,_b,_c) -> a) <$> results
       let responses = (\(_a,b,c) -> (b,c)) <$> results
       nextResponses <- go nextUrls
@@ -92,10 +92,14 @@ data Command
   = DownloadGlobalStream DownloadGlobalStreamConfig
     | CopyGlobalStream CopyGlobalStreamConfig
     | CompareDownload CompareDownloadConfig
+    | InsertData InsertDataConfig
 
 data DownloadGlobalStreamConfig = DownloadGlobalStreamConfig {
   downloadGlobalStreamOutputDirectory :: Text,
   downloadGlobalStreamStartUrl        :: Text }
+
+data InsertDataConfig = InsertDataConfig {
+  insertDataConfigDestination :: Text }
 
 data CopyGlobalStreamConfig = CopyGlobalStreamConfig {
   copyGlobalStreamConfigStartUrl    :: Text,
@@ -113,6 +117,8 @@ config = Config
           Opt.command "copyGlobalStream" (Opt.info copyGlobalStreamOptions (Opt.progDesc "Copy global stream"))
          <>
           Opt.command "compareDownload" (Opt.info compareDownloadOptions (Opt.progDesc "Compare downloaded streams"))
+         <>
+          Opt.command "insertData" (Opt.info insertDataOptions (Opt.progDesc "Insert data into event store"))
          )
    where
      downloadGlobalStreamOptions :: Opt.Parser Command
@@ -132,6 +138,13 @@ config = Config
             <> Opt.metavar "STARTURL"
             <> Opt.help "starting url"))
         <*> (T.pack <$> Opt.strOption (Opt.long "destination"
+            <> Opt.metavar "destination"
+            <> Opt.help "destination event store - base url"))
+       )
+     insertDataOptions :: Opt.Parser Command
+     insertDataOptions = InsertData <$>
+       (InsertDataConfig
+        <$> (T.pack <$> Opt.strOption (Opt.long "destination"
             <> Opt.metavar "destination"
             <> Opt.help "destination event store - base url"))
        )
@@ -204,6 +217,7 @@ putEntry destinationBaseUrl EntryData{..} = do
   let opts = defaults
         & header "ES-EventType" .~ [T.encodeUtf8 entryDataType]
         & header "ES-EventId" .~ [T.encodeUtf8 $ show eventId]
+        & header "Content-Type" .~ ["application/json"]
         & header "Accept" .~ ["application/vnd.eventstore.atom+json"]
   _ <- postWith opts url body
   return ()
@@ -248,6 +262,7 @@ compareFeedFiles leftFilePath rightFilePath = do
   let areEqual = domLeft == domRight
   print areEqual
   unless areEqual $ do
+    putStrLn ("Left: " <> T.pack leftFilePath <> " Right: " <> T.pack rightFilePath)
     putStrLn ("Left DOM:" :: Text)
     putStrLn $ domToText domLeft
     putStrLn ("Right DOM:" :: Text)
@@ -263,10 +278,11 @@ normalizeJson =
     replaceDigitWithZero a | isAlphaNum a = '0'
     replaceDigitWithZero a = a
     zeroOutAlphaNum myPrism = over myPrism (T.map replaceDigitWithZero)
+    replaceWithString myPrism = set myPrism "normalized"
   in
     removeMetadata
     . zeroOutAlphaNum (key "content" . key "eventId" . _String)
-    . zeroOutAlphaNum (key "updated" . _String)
+    . replaceWithString (key "updated" . _String)
 
 compareEntryFile :: String -> String -> IO Bool
 compareEntryFile leftFilePath rightFilePath = do
@@ -275,6 +291,7 @@ compareEntryFile leftFilePath rightFilePath = do
   let areEqual = domLeft == domRight
   print areEqual
   unless areEqual $ do
+    putStrLn ("Left: " <> T.pack leftFilePath <> " Right: " <> T.pack rightFilePath)
     putStrLn ("Left DOM:" :: Text)
     print domLeft
     putStrLn ("Right DOM:" :: Text)
@@ -307,20 +324,31 @@ compareFile CompareDownloadConfig{..} leftFilePath = do
                     ".xml"  -> compareFeedFiles leftFilePath rightFilePath
                     _       -> error $ "compareFile with unkown extension" <> extension
 
+makeTestEntry :: Int -> EntryData
+makeTestEntry n =
+  EntryData {
+    entryDataType = "MyEntryType" <> show n
+    , entryDataStream = "mystream"
+    , entryDataBody = Just . TL.encodeUtf8 . TL.fromStrict $ "{ \"a\":" <> show n <> "}"}
+
 start :: Config -> IO ()
 start Config { configCommand = DownloadGlobalStream DownloadGlobalStreamConfig{..}} = do
-  responses <- followPrevious downloadGlobalStreamStartUrl
+  responses <- followNext downloadGlobalStreamStartUrl
   let numberedResponses = zip [0..] responses
   entryBodies <- sequence $ getEntry False <$> join (fst <$> responses)
-  let numberedEntries = zip [0..] entryBodies
+  let numberedEntries = reverse $ drop 7 $ reverse $ zip [0..] entryBodies -- ignore the initial entries
   void $ sequence $ outputResponse downloadGlobalStreamOutputDirectory "previous" <$> numberedResponses
   void $ sequence $ outputEntry downloadGlobalStreamOutputDirectory "previous" <$> numberedEntries
 start Config { configCommand = CopyGlobalStream CopyGlobalStreamConfig{..} } = do
-  responses <- followPrevious copyGlobalStreamConfigStartUrl
+  responses <- followNext copyGlobalStreamConfigStartUrl
   entryBodies <- sequence $ getEntry True <$> join (fst <$> responses)
   let entryData = reverse $ toEntryData <$> entryBodies
   sequence_ $ putEntry copyGlobalStreamConfigDestination <$> entryData
   return ()
+start Config { configCommand = InsertData InsertDataConfig{..}} = do
+  let testEntries = makeTestEntry <$> [0..100]
+  sequence_ $ putEntry insertDataConfigDestination <$> testEntries
+  return()
 start Config { configCommand = CompareDownload compareDownloadConfig } = do
   files <- listDirectoryTree $ fromString $ compareDownloadConfigLeftDirectory compareDownloadConfig
   sequence_ $ compareFile compareDownloadConfig <$> files

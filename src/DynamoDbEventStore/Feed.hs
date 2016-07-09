@@ -125,8 +125,8 @@ streamResultsToFeed baseUri (StreamId streamId) updated StreamResult{..} =
               Just Link { linkHref = selfuri, linkRel = "self" }
             , buildStreamLink' "first" <$> streamResultFirst
             , buildStreamLink' "last" <$> streamResultLast
-            , buildStreamLink' "previous" <$> streamResultPrevious
             , buildStreamLink' "next" <$> streamResultNext
+            , buildStreamLink' "previous" <$> streamResultPrevious
          ]
     title = "EventStream '" <> streamId <> "'"
   in buildFeed baseUri title (StreamId streamId) selfuri updated streamResultEvents links
@@ -140,8 +140,8 @@ globalStreamResultsToFeed baseUri streamId updated GlobalStreamResult{..} =
               Just Link { linkHref = selfuri, linkRel = "self" }
             , buildStreamLink' "first" <$> globalStreamResultFirst
             , buildStreamLink' "last" <$> globalStreamResultLast
-            , buildStreamLink' "previous" <$> globalStreamResultPrevious
             , buildStreamLink' "next" <$> globalStreamResultNext
+            , buildStreamLink' "previous" <$> globalStreamResultPrevious
          ]
   in buildFeed baseUri "All events" streamId selfuri updated globalStreamResultEvents links
 
