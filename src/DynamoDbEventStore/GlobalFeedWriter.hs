@@ -10,6 +10,7 @@ module DynamoDbEventStore.GlobalFeedWriter (
   entryEventCount,
   writePage,
   getPageDynamoKey,
+  emptyGlobalFeedWriterState,
   GlobalFeedPosition(..),
   EventStoreActionError(..)) where
 
@@ -188,7 +189,9 @@ emptyFeedPage pageNumber = FeedPage { feedPageNumber = pageNumber, feedPageEntri
 
 getCurrentPage :: GlobalFeedWriterStack FeedPage
 getCurrentPage = do
-  mostRecentPage <- getMostRecentPage 0
+  mostRecentKnownPage <- gets globalFeedWriterStateCurrentPage
+  mostRecentPage <- getMostRecentPage $ fromMaybe 0 mostRecentKnownPage
+  modify (\s -> s { globalFeedWriterStateCurrentPage = feedPageNumber <$> mostRecentPage})
   let mostRecentPageNumber = maybe (PageKey (-1)) feedPageNumber mostRecentPage
   let startNewPage = maybe True (\page -> (length . feedPageEntries) page >= 10) mostRecentPage
   if startNewPage then do
@@ -261,7 +264,7 @@ updateGlobalFeed itemKey@DynamoKey { dynamoKeyKey = itemHashKey, dynamoKeyEventN
     onPageResult pageNumber DynamoWriteFailure = throwError $ EventStoreActionErrorOnWritingPage pageNumber
 
 data GlobalFeedWriterState = GlobalFeedWriterState {
-  globalFeedWriterStateCurrentPage :: Maybe Int64 -- we don't always know the current page
+  globalFeedWriterStateCurrentPage :: Maybe PageKey -- we don't always know the current page
 }
 
 emptyGlobalFeedWriterState :: GlobalFeedWriterState

@@ -367,7 +367,7 @@ testStateItems itemCount =
     feedEntries = (\x -> GlobalFeedWriter.FeedEntry { feedEntryCount = 1, feedEntryNumber = fromIntegral x, feedEntryStream = StreamId streamId}) <$> [0..itemCount-1]
     pages = zip  [0..] (Seq.fromList <$> groupByFibs feedEntries)
     writePage' (pageNumber, pageEntries) = GlobalFeedWriter.writePage pageNumber pageEntries 0
-    writePagesProgram = runExceptT $ forM_ pages writePage'
+    writePagesProgram = runExceptT $ evalStateT (forM_ pages writePage') GlobalFeedWriter.emptyGlobalFeedWriterState
     globalFeedCreatedState = execProgram "writeGlobalFeed" writePagesProgram (view testState writeState)
   in view testState globalFeedCreatedState
 
@@ -577,7 +577,7 @@ whenIndexing1000ItemsIopsIsMinimal =
     afterIndexState = execProgramUntilIdle "indexer" GlobalFeedWriter.main (testStateItems 1000)
     expectedWriteState = Map.fromList [
       ((UnpagedRead,IopsScanUnpaged,"indexer"),1000)
-     ,((TableRead,IopsGetItem,"indexer"),135318)
+     ,((TableRead,IopsGetItem,"indexer"),8245)
      ,((TableRead,IopsQuery,"indexer"),985)
      ,((TableRead,IopsQuery,"writeEvents"),999)
      ,((TableWrite,IopsWrite,"indexer"),3065)
