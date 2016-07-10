@@ -7,6 +7,7 @@ import qualified DynamoCmdAmazonkaTests
 import qualified DynamoDbEventStore.AmazonkaInterpreter  as Ai
 import qualified DynamoDbEventStore.DynamoCmdInterpreter as TestInterpreter
 import           DynamoDbEventStore.EventStoreCommands
+import           DynamoDbEventStore.FeedOutputSpec       as FeedOutputSpec
 import           DynamoDbEventStore.GlobalFeedWriterSpec as GlobalFeedWriterSpec
 
 import           Test.Tasty
@@ -30,6 +31,7 @@ main = do
       [ testGroup "DynamoCmd Tests against Dynamo - Amazonka" (DynamoCmdAmazonkaTests.tests Ai.evalProgram),
         testGroup "DynamoCmd Tests against Test Interpreter" (DynamoCmdAmazonkaTests.tests testInterpreter),
         testGroup "Global Feed Writer" GlobalFeedWriterSpec.tests,
+        testGroup "Feed Output" FeedOutputSpec.tests,
         postEventSpec',
         getStreamSpec',
         getEventSpec',
