@@ -395,6 +395,46 @@ groupByFibs as =
     acc (x:xs, ys) = Just (take x ys, (xs, drop x ys))
   in unfoldr acc (fibs,as)
 
+readStreamProgram :: Text -> Natural -> FeedDirection -> DynamoCmdM [Int64]
+readStreamProgram streamId pageSize direction =
+  let
+    streamResultLink =
+      case direction of FeedDirectionBackward -> streamResultNext
+                        FeedDirectionForward  -> streamResultPrevious
+    request startEventNumber = ReadStreamRequest {
+      rsrStreamId = StreamId streamId
+    , rsrMaxItems = pageSize
+    , rsrStartEventNumber = startEventNumber
+    , rsrDirection = direction }
+    positionToRequest EventStartHead = request Nothing
+    positionToRequest (EventStartPosition p) = request $ Just p
+    getResultEventNumbers :: StreamResult -> ([Int64], Maybe StreamOffset)
+    getResultEventNumbers streamResult@StreamResult{..} =
+      (recordedEventNumber <$> streamResultEvents, streamResultLink streamResult)
+    start :: Maybe StreamOffset
+    start = Just $ (FeedDirectionBackward, EventStartHead, pageSize)
+    acc :: Maybe StreamOffset -> DynamoCmdM (Maybe ([Int64], Maybe StreamOffset))
+    acc Nothing = return Nothing
+    acc (Just (_, position, _)) =
+      either (const Nothing) (fmap getResultEventNumbers) <$> getReadStreamRequestProgram (positionToRequest position)
+  in
+    join <$> unfoldrM acc start
+
+prop_all_items_are_in_stream_when_paged_through :: QC.Positive Natural -> QC.Positive Int -> FeedDirection -> QC.Property
+prop_all_items_are_in_stream_when_paged_through (QC.Positive pageSize) (QC.Positive streamLength) direction =
+  let
+    startState = testStateItems streamLength
+    program = readStreamProgram "MyStream" pageSize direction
+    programResult =
+      evalProgram "readStream" program startState
+    maxEventNumber = fromIntegral $ streamLength - 1
+    expectedResult =
+      case direction of FeedDirectionForward  -> [0..maxEventNumber]
+                        FeedDirectionBackward -> [maxEventNumber, maxEventNumber - 1..0]
+
+  in
+    programResult === expectedResult
+
 {-
 globalStreamPages:
 0: 0 (1)
@@ -609,6 +649,7 @@ tests = [
       testProperty "Scan unpaged should be empty" prop_ScanUnpagedShouldBeEmpty,
       testProperty "Can read any section of a stream forward" prop_CanReadAnySectionOfAStreamForward,
       testProperty "Can read any section of a stream backward" prop_CanReadAnySectionOfAStreamBackward,
+      testProperty "All items are in the stream when paged through" prop_all_items_are_in_stream_when_paged_through,
       --testProperty "The result of multiple writers matches what they see" todo,
       --testProperty "Get stream items contains event lists without duplicates or gaps" todo,
       testCase "Unit - Subsequent write with same event id returns success" subsequentWriteWithSameEventIdReturnsSuccess,

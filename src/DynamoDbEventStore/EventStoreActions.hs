@@ -175,6 +175,9 @@ instance QC.Arbitrary PostEventRequest where
 data FeedDirection = FeedDirectionForward | FeedDirectionBackward
   deriving (Eq, Show)
 
+instance QC.Arbitrary FeedDirection where
+  arbitrary = QC.elements [FeedDirectionForward, FeedDirectionBackward]
+
 data ReadStreamRequest = ReadStreamRequest {
    rsrStreamId         :: StreamId,
    rsrStartEventNumber :: Maybe Int64,
@@ -356,7 +359,7 @@ buildStreamResult FeedDirectionBackward (Just lastEvent) events requestedStartEv
     streamResultEvents = events,
     streamResultFirst = Just (FeedDirectionBackward, EventStartHead, maxItems),
     streamResultNext =
-      if nextEventNumber > 0 then
+      if nextEventNumber >= 0 then
         Just (FeedDirectionBackward, EventStartPosition nextEventNumber, maxItems)
       else Nothing,
     streamResultPrevious = Just (FeedDirectionForward, EventStartPosition (min (startEventNumber + 1) (lastEvent + 1)), maxItems),
