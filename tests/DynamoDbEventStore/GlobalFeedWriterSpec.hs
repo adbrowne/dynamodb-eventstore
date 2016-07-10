@@ -650,6 +650,8 @@ tests = [
       testProperty "Can read any section of a stream forward" prop_CanReadAnySectionOfAStreamForward,
       testProperty "Can read any section of a stream backward" prop_CanReadAnySectionOfAStreamBackward,
       testProperty "All items are in the stream when paged through" prop_all_items_are_in_stream_when_paged_through,
+      --testProperty "Moving next then previous returns the initial page in reverse order" todo,
+      --testProperty "Moving previous then next returns the initial page in reverse order" todo,
       --testProperty "The result of multiple writers matches what they see" todo,
       --testProperty "Get stream items contains event lists without duplicates or gaps" todo,
       testCase "Unit - Subsequent write with same event id returns success" subsequentWriteWithSameEventIdReturnsSuccess,
