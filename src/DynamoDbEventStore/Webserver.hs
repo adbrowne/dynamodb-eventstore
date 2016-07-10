@@ -14,6 +14,7 @@ module DynamoDbEventStore.Webserver(
   , EventStoreActionRunner(..)
   , parseGlobalFeedPosition
   , globalFeedPositionToText
+  , knownJsonKeyOrder
   ) where
 
 import           BasicPrelude

@@ -146,6 +146,7 @@ Test-Suite tasty
                        random,
                        containers >= 0.5,
                        aeson,
+                       aeson-pretty,
                        semigroups,
                        unordered-containers,
                        hashable,
