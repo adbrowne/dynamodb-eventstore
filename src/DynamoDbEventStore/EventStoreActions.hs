@@ -364,7 +364,7 @@ buildStreamResult FeedDirectionBackward (Just lastEvent) events requestedStartEv
       else Nothing,
     streamResultPrevious = Just (FeedDirectionForward, EventStartPosition (min (startEventNumber + 1) (lastEvent + 1)), maxItems),
     streamResultLast =
-      if nextEventNumber > 0 then
+      if nextEventNumber >= 0 then
         Just (FeedDirectionForward, EventStartPosition 0, maxItems)
       else Nothing
   }
@@ -378,7 +378,7 @@ buildStreamResult FeedDirectionForward (Just _lastEvent) events requestedStartEv
     streamResultEvents = events,
     streamResultFirst = Just (FeedDirectionBackward, EventStartHead, maxItems),
     streamResultNext =
-      if nextEventNumber > 0 then
+        if nextEventNumber >= 0 then
         Just (FeedDirectionBackward, EventStartPosition nextEventNumber, maxItems)
       else Nothing,
     streamResultPrevious = (\eventNumber -> (FeedDirectionForward, EventStartPosition eventNumber, maxItems)) <$> previousEventNumber,
