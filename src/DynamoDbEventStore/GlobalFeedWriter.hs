@@ -16,6 +16,7 @@ module DynamoDbEventStore.GlobalFeedWriter (
 import           BasicPrelude
 import           Control.Lens
 import           Control.Monad.Except
+import           Control.Monad.State
 import qualified Data.Aeson                            as Aeson
 import qualified Data.ByteString                       as BS
 import qualified Data.ByteString.Lazy                  as BL
@@ -152,7 +153,7 @@ setPageEntryPageNumber pageNumber feedEntry = do
   let dynamoKey = toDynamoKey streamId  (feedEntryNumber feedEntry)
   eventEntry <- readFromDynamoMustExist dynamoKey
   let newValue = (HM.delete Constants.needsPagingKey . HM.insert Constants.eventPageNumberKey (stringAttributeValue (show pageNumber)) . dynamoReadResultValue) eventEntry
-  void $ dynamoWriteWithRetry dynamoKey newValue (nextVersion eventEntry)
+  lift . void $ dynamoWriteWithRetry dynamoKey newValue (nextVersion eventEntry)
 
 stringAttributeValue :: Text -> AttributeValue
 stringAttributeValue t = set avS (Just t) attributeValue
@@ -170,7 +171,7 @@ verifyPage pageNumber = do
     log' Debug ("setPageEntry for " <> show entries)
     void $ traverse (setPageEntryPageNumber pageNumber) entries
     let newValues = HM.insert Constants.pageIsVerifiedKey (stringAttributeValue "Verified") pageValues
-    void $ dynamoWriteWithRetry pageDynamoKey newValues (pageVersion + 1)
+    lift . void $ dynamoWriteWithRetry pageDynamoKey newValues (pageVersion + 1)
 
 logIf :: Bool -> LogLevel -> Text -> GlobalFeedWriterStack ()
 logIf True logLevel t = lift $ log' logLevel t
@@ -202,7 +203,7 @@ setEventEntryPage key (PageKey pageNumber) = do
     let values = dynamoReadResultValue eventEntry
     let version = dynamoReadResultVersion eventEntry
     let values' = (HM.delete Constants.needsPagingKey . HM.insert Constants.eventPageNumberKey (set avS (Just (show pageNumber)) attributeValue)) values
-    dynamoWriteWithRetry key values' (version + 1)
+    lift $ dynamoWriteWithRetry key values' (version + 1)
 
 itemToJsonByteString :: Aeson.ToJSON a => a -> BS.ByteString
 itemToJsonByteString = BL.toStrict . Aeson.encode . Aeson.toJSON
@@ -224,7 +225,7 @@ writePage pageNumber entries version = do
   let feedEntry = itemToJsonByteString entries
   let dynamoKey = getPageDynamoKey pageNumber
   let body = HM.singleton Constants.pageBodyKey (set avB (Just feedEntry) attributeValue)
-  dynamoWriteWithRetry dynamoKey body version
+  lift $ dynamoWriteWithRetry dynamoKey body version
 
 updateGlobalFeed :: DynamoKey -> GlobalFeedWriterStack ()
 updateGlobalFeed itemKey@DynamoKey { dynamoKeyKey = itemHashKey, dynamoKeyEventNumber = itemEventNumber } = do
@@ -259,7 +260,16 @@ updateGlobalFeed itemKey@DynamoKey { dynamoKeyKey = itemHashKey, dynamoKeyEventN
       void $ setEventEntryPage itemKey pageNumber
     onPageResult pageNumber DynamoWriteFailure = throwError $ EventStoreActionErrorOnWritingPage pageNumber
 
-type GlobalFeedWriterStack = ExceptT EventStoreActionError DynamoCmdM
+data GlobalFeedWriterState = GlobalFeedWriterState {
+  globalFeedWriterStateCurrentPage :: Maybe Int64 -- we don't always know the current page
+}
+
+emptyGlobalFeedWriterState :: GlobalFeedWriterState
+emptyGlobalFeedWriterState = GlobalFeedWriterState {
+  globalFeedWriterStateCurrentPage = Nothing
+                                                   }
+
+type GlobalFeedWriterStack = StateT GlobalFeedWriterState (ExceptT EventStoreActionError DynamoCmdM)
 
 runLoop :: GlobalFeedWriterStack ()
 runLoop = do
@@ -270,6 +280,6 @@ runLoop = do
                                        _  -> True
 main :: DynamoCmdM (Either EventStoreActionError ())
 main = do
-  result <- runExceptT runLoop
+  result <- runExceptT $ evalStateT runLoop emptyGlobalFeedWriterState
   case result of (Left errMsg) -> return $ Left errMsg
                  (Right ())    -> main
