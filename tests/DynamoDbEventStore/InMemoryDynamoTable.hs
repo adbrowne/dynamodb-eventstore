@@ -17,6 +17,7 @@ import qualified Data.HashMap.Strict                   as HM
 import qualified Data.Map.Strict                       as Map
 import           Data.Set                              (Set)
 import qualified Data.Set                              as Set
+import qualified Data.Text                             as T
 import qualified DynamoDbEventStore.Constants          as Constants
 import           DynamoDbEventStore.EventStoreCommands
 import           GHC.Natural
@@ -24,7 +25,7 @@ import           GHC.Natural
 data InMemoryDynamoTable = InMemoryDynamoTable {
   _inMemoryDynamoTableTable         :: HM.HashMap Text (Map Int64 (Int, DynamoValues))
   , _inMemoryDynamoTableNeedsPaging :: Set DynamoKey }
-  deriving (Show)
+  deriving (Eq, Show)
 
 $(makeLenses ''InMemoryDynamoTable)
 
@@ -93,7 +94,7 @@ queryDb direction streamId maxEvents startEvent db =
       (QueryDirectionBackward, Nothing) -> Map.toDescList rangeItems
       (QueryDirectionBackward, Just startEventNumber) ->
         rangeItems
-        & Map.split (startEventNumber + 1)
+        & Map.split startEventNumber
         & fst
         & Map.toDescList
     itemsCutOff = take (fromIntegral maxEvents) items

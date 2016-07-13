@@ -13,23 +13,25 @@ module DynamoDbEventStore.DynamoCmdInterpreter(TestState(..), runPrograms, runPr
 
 import           BasicPrelude
 import           Control.Lens
-import qualified Control.Monad.Free                    as Free
-import qualified Control.Monad.Free.Church             as Church
+import qualified Control.Monad.Free                     as Free
+import qualified Control.Monad.Free.Church              as Church
 import           Control.Monad.Reader
 import           Control.Monad.State
-import           Data.Functor                          (($>))
-import qualified Data.HashMap.Lazy                     as HM
-import qualified Data.Map.Strict                       as Map
+import           Data.Functor                           (($>))
+import qualified Data.HashMap.Lazy                      as HM
+import qualified Data.Map.Strict                        as Map
+import qualified Data.Text                              as T
+import qualified DynamoDbEventStore.InMemoryDynamoTable as MemDb
 import           GHC.Natural
-import qualified Prelude                               as P
-import qualified Test.Tasty.QuickCheck                 as QC
+import qualified Prelude                                as P
+import qualified Test.Tasty.QuickCheck                  as QC
 
-import qualified DynamoDbEventStore.Constants          as Constants
+import qualified DynamoDbEventStore.Constants           as Constants
 import           DynamoDbEventStore.EventStoreCommands
 
 type DynamoCmdMFree = Free.Free DynamoCmd
 
-type TestDynamoTable = Map DynamoKey (Int, DynamoValues)
+--type TestDynamoTable = Map DynamoKey (Int, DynamoValues)
 
 data RunningProgramState r = RunningProgramState {
   runningProgramStateNext    :: DynamoCmdMFree r,
@@ -57,7 +59,7 @@ data IopsOperation = IopsScanUnpaged | IopsGetItem | IopsQuery | IopsWrite deriv
 type IopsTable = Map (IopsCategory, IopsOperation, ProgramId) Int
 
 data TestState = TestState {
-  _testStateDynamo    :: TestDynamoTable,
+  _testStateDynamo    :: MemDb.InMemoryDynamoTable,
   _testStateLog       :: Seq Text,
   _testStateIopCounts :: IopsTable
 } deriving (Eq)
@@ -80,7 +82,7 @@ addIops category operation i = do
   iopCounts %= Map.insertWith (+) (category, operation, programId) i
 
 emptyTestState :: TestState
-emptyTestState = TestState mempty mempty mempty
+emptyTestState = TestState MemDb.emptyDynamoTable mempty mempty
 
 type InterpreterApp m a r = RandomFailure m => (StateT (LoopState a) m) r
 
@@ -135,35 +137,18 @@ writeToDynamo key values version next =
       addLog "Random write failure" $> next DynamoWriteFailure
     onSuccess = do
       addIops TableWrite IopsWrite 1
-      currentEntry <- Map.lookup key <$> use (loopStateTestState . testStateDynamo)
-      let currentVersion = fst <$> currentEntry
-      writeVersion version currentVersion
-    writeVersion 0 Nothing = performWrite 0
-    writeVersion newVersion Nothing = versionFailure newVersion Nothing
-    writeVersion v (Just cv)
-      | cv == v - 1 = performWrite v
-      | otherwise = versionFailure v (Just cv)
-    versionFailure newVersion currentVersion = do
-       _ <- addLog $ "Wrong version writing: " ++ show newVersion ++ " current: " ++ show currentVersion
-       return $ next DynamoWriteWrongVersion
-    performWrite newVersion = do
-       _ <- addLog $ "Performing write: " ++ show key ++ " " ++ show values ++ " " ++ show version
-       _ <- loopStateTestState . testStateDynamo %= Map.insert key (newVersion, values)
-       return $ next DynamoWriteSuccess
+      (result, newDb) <- MemDb.writeDb key values version <$> use (loopStateTestState . testStateDynamo)
+      case result of DynamoWriteWrongVersion -> addLog $ "Wrong version writing: " ++ show version
+                     DynamoWriteSuccess -> addLog $ "Performing write: " ++ show key ++ " " ++ show values ++ " " ++ show version
+                     DynamoWriteFailure -> addLog $ "Write failure: " ++ show key ++ " " ++ show values ++ " " ++ show version
+      (loopStateTestState . testStateDynamo) .= newDb
+      return $ next result
 
 getReadResult :: DynamoKey -> (Maybe DynamoReadResult -> n) -> InterpreterOperationStack m a n
 getReadResult key n = do
   addIops TableRead IopsGetItem 1
-  entry <- uses (testState . testStateDynamo) $ Map.lookup key
-  return $ n $ uncurry (DynamoReadResult key) <$> entry
-
-getUptoItem :: (a -> Bool) -> [a] -> [a]
-getUptoItem p =
-  unfoldr f
-    where f [] = Nothing
-          f (x:xs)
-            | p x = Nothing
-            | otherwise = Just (x, xs)
+  db <- use (testState . testStateDynamo)
+  return $ n $ MemDb.readDb key db
 
 queryTable :: QueryDirection -> Text -> Natural -> Maybe Int64 -> ([DynamoReadResult] -> n) -> InterpreterOperationStack m a n
 queryTable direction streamId maxEvents startEvent r =  do
@@ -171,30 +156,13 @@ queryTable direction streamId maxEvents startEvent r =  do
   addIops TableRead IopsQuery $ length results
   return $ r results
   where
-    runQuery table = take (fromIntegral maxEvents) $ eventStream direction table
-    dynamoReadResultToEventNumber (DynamoReadResult (DynamoKey _key eventNumber) _version _values) = eventNumber
-    eventStream QueryDirectionBackward table = reverse $ eventsBeforeStart startEvent table
-    eventStream QueryDirectionForward  table = eventsAfter startEvent table
-    eventsAfter Nothing table = allEvents table
-    eventsAfter (Just start) table = dropWhile (\a -> dynamoReadResultToEventNumber a <= start) (allEvents table)
-    eventsBeforeStart Nothing table = allEvents table
-    eventsBeforeStart (Just start) table = getUptoItem (\a -> dynamoReadResultToEventNumber a >= start) (allEvents table)
-    allEvents table =
-      let
-        filteredMap = Map.filterWithKey (\(DynamoKey hashKey _rangeKey) _value -> hashKey == streamId) table
-        eventList = (sortOn fst . Map.toList) filteredMap
-      in (\(key, (version, values)) -> DynamoReadResult key version values) <$> eventList
+    runQuery = MemDb.queryDb direction streamId maxEvents startEvent
 
 scanNeedsPaging :: ([DynamoKey] -> n) -> InterpreterOperationStack m a n
 scanNeedsPaging n = do
-   results <- uses (testState . testStateDynamo) getEntries
+   results <- uses (testState . testStateDynamo) MemDb.scanNeedsPagingDb
    addIops UnpagedRead IopsScanUnpaged $ length results
    return $ n results
-   where
-     getEntries =
-       let
-         entryNeedsPaging = HM.member Constants.needsPagingKey . snd
-       in Map.keys . Map.filter entryNeedsPaging
 
 setPulseStatus :: Bool -> InterpreterOperationStack m a ()
 setPulseStatus isActive = do

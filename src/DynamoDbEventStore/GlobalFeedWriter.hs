@@ -24,7 +24,6 @@ import qualified Data.ByteString.Lazy                  as BL
 import qualified Data.HashMap.Lazy                     as HM
 import qualified Data.Sequence                         as Seq
 import qualified Data.Text                             as T
-import           Debug.Trace
 import qualified DynamoDbEventStore.Constants          as Constants
 import           DynamoDbEventStore.EventStoreCommands
 import           Network.AWS.DynamoDB
@@ -233,7 +232,6 @@ writePage pageNumber entries version = do
 
 updateGlobalFeed :: DynamoKey -> GlobalFeedWriterStack ()
 updateGlobalFeed itemKey@DynamoKey { dynamoKeyKey = itemHashKey, dynamoKeyEventNumber = itemEventNumber } = do
-  traceM . T.unpack $ "updateGlobalFeed" <> show itemKey
   lift $ log' Debug ("updateGlobalFeed " <> show itemKey)
   let streamId = StreamId $ T.drop (T.length Constants.streamDynamoKeyPrefix) itemHashKey
   currentPage <- getCurrentPage
@@ -279,7 +277,6 @@ type GlobalFeedWriterStack = StateT GlobalFeedWriterState (ExceptT EventStoreAct
 runLoop :: GlobalFeedWriterStack ()
 runLoop = do
   scanResult <- lift scanNeedsPaging'
-  traceM (T.unpack $ "got results" <>  (show . length $ scanResult))
   forM_ scanResult updateGlobalFeed
   when (null scanResult) (wait' 1000)
   setPulseStatus' $ case scanResult of [] -> False
