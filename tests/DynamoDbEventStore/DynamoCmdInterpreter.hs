@@ -18,15 +18,12 @@ import qualified Control.Monad.Free.Church              as Church
 import           Control.Monad.Reader
 import           Control.Monad.State
 import           Data.Functor                           (($>))
-import qualified Data.HashMap.Lazy                      as HM
 import qualified Data.Map.Strict                        as Map
-import qualified Data.Text                              as T
 import qualified DynamoDbEventStore.InMemoryDynamoTable as MemDb
 import           GHC.Natural
 import qualified Prelude                                as P
 import qualified Test.Tasty.QuickCheck                  as QC
 
-import qualified DynamoDbEventStore.Constants           as Constants
 import           DynamoDbEventStore.EventStoreCommands
 
 type DynamoCmdMFree = Free.Free DynamoCmd

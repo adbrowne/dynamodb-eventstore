@@ -12,12 +12,9 @@ module DynamoDbEventStore.InMemoryDynamoTable
 
 import           BasicPrelude
 import           Control.Lens
-import           Control.Lens.TH
 import qualified Data.HashMap.Strict                   as HM
 import qualified Data.Map.Strict                       as Map
-import           Data.Set                              (Set)
 import qualified Data.Set                              as Set
-import qualified Data.Text                             as T
 import qualified DynamoDbEventStore.Constants          as Constants
 import           DynamoDbEventStore.EventStoreCommands
 import           GHC.Natural
