@@ -88,7 +88,8 @@ instance QC.Arbitrary UploadList where
         mapM (\_ -> (:|) <$> QC.arbitrary <*> cappedList 9) p
 
 writeEvent :: (Text, Int64, NonEmpty EventEntry) -> DynamoCmdM (Either EventStoreActionError EventWriteResult)
-writeEvent (stream, eventNumber, eventEntries) =
+writeEvent (stream, eventNumber, eventEntries) = do
+  log' Debug "Writing Item"
   postEventRequestProgram (PostEventRequest stream (Just eventNumber) eventEntries)
 
 publisher :: [(Text, Int64, NonEmpty EventEntry)] -> DynamoCmdM (Either EventStoreActionError ())
@@ -125,6 +126,20 @@ prop_EventShouldAppearInGlobalFeedInStreamOrder (UploadList uploadList) =
   in QC.forAll (runPrograms programs) check
      where
        check (_, testRunState) = QC.forAll (runReadAllProgram testRunState) (\feedItems -> (globalStreamResultToMap <$> feedItems) === (Right $ globalFeedFromUploadList uploadList))
+       runReadAllProgram = runProgramGenerator "readAllRequestProgram" (getReadAllRequestProgram ReadAllRequest { readAllRequestStartPosition = Nothing, readAllRequestMaxItems = 2000, readAllRequestDirection = FeedDirectionForward })
+
+prop_SingleEventIsIndexedCorrectly :: QC.Property
+prop_SingleEventIsIndexedCorrectly =
+  let
+    uploadList = [("MyStream",-1, sampleEventEntry :| [])]
+    programs = Map.fromList [
+      ("Publisher", (publisher uploadList,100))
+      , ("GlobalFeedWriter1", (GlobalFeedWriter.main, 100))
+      -- , ("GlobalFeedWriter2", (GlobalFeedWriter.main, 100))
+      ]
+  in QC.forAll (runPrograms programs) (check uploadList)
+     where
+       check uploadList (_, testRunState) = QC.forAll (runReadAllProgram testRunState) (\feedItems -> (globalStreamResultToMap <$> feedItems) === (Right $ globalFeedFromUploadList uploadList))
        runReadAllProgram = runProgramGenerator "readAllRequestProgram" (getReadAllRequestProgram ReadAllRequest { readAllRequestStartPosition = Nothing, readAllRequestMaxItems = 2000, readAllRequestDirection = FeedDirectionForward })
 
 unpositive :: QC.Positive Int -> Int
@@ -641,6 +656,7 @@ subsequentWriteWithSameEventIdAcceptedIfExpectedVersionIsCorrect =
 tests :: [TestTree]
 tests = [
       testProperty "Can round trip FeedEntry via JSON" (\(a :: FeedEntry) -> (Aeson.decode . Aeson.encode) a === Just a),
+      testProperty "Single event is indexed correctly" prop_SingleEventIsIndexedCorrectly,
       testProperty "Global Feed preserves stream order" prop_EventShouldAppearInGlobalFeedInStreamOrder,
       testProperty "Each event appears in it's correct stream" prop_EventsShouldAppearInTheirSteamsInOrder,
       testProperty "No Write Request can cause a fatal error in global feed writer" prop_NoWriteRequestCanCausesAFatalErrorInGlobalFeedWriter,

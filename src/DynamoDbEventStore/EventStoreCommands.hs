@@ -51,7 +51,7 @@ import           TextShow.TH
 
 import           Network.AWS.DynamoDB
 
-newtype StreamId = StreamId Text deriving (Ord, Eq, Show, Hashable)
+newtype StreamId = StreamId { unStreamId :: Text } deriving (Ord, Eq, Show, Hashable)
 deriveTextShow ''StreamId
 
 instance QC.Arbitrary StreamId where

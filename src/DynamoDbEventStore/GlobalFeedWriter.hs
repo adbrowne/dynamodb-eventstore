@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
 
 module DynamoDbEventStore.GlobalFeedWriter (
@@ -21,8 +22,10 @@ import           Control.Monad.State
 import qualified Data.Aeson                            as Aeson
 import qualified Data.ByteString                       as BS
 import qualified Data.ByteString.Lazy                  as BL
+import           Data.Foldable
 import qualified Data.HashMap.Lazy                     as HM
 import qualified Data.Sequence                         as Seq
+import qualified Data.Set                              as Set
 import qualified Data.Text                             as T
 import qualified DynamoDbEventStore.Constants          as Constants
 import           DynamoDbEventStore.EventStoreCommands
@@ -38,6 +41,7 @@ data EventStoreActionError =
   EventStoreActionErrorBodyDecode DynamoKey String |
   EventStoreActionErrorEventDoesNotExist DynamoKey |
   EventStoreActionErrorOnWritingPage PageKey |
+  EventstoreActionErrorCouldNotFindPreviousEntry DynamoKey |
   EventStoreActionErrorCouldNotFindEvent EventKey |
   EventStoreActionErrorInvalidGlobalFeedPosition GlobalFeedPosition |
   EventStoreActionErrorInvalidGlobalFeedPage PageKey
@@ -148,6 +152,9 @@ nextVersion readResult = dynamoReadResultVersion readResult + 1
 toDynamoKey :: StreamId -> Int64 -> DynamoKey
 toDynamoKey (StreamId streamId) = DynamoKey (Constants.streamDynamoKeyPrefix <> streamId)
 
+eventKeyToDynamoKey :: EventKey -> DynamoKey
+eventKeyToDynamoKey (EventKey(streamId, eventNumber)) = toDynamoKey streamId eventNumber
+
 setPageEntryPageNumber :: PageKey -> FeedEntry -> GlobalFeedWriterStack ()
 setPageEntryPageNumber pageNumber feedEntry = do
   let streamId = feedEntryStream feedEntry
@@ -202,7 +209,9 @@ getCurrentPage = do
 
 setEventEntryPage :: DynamoKey -> PageKey -> GlobalFeedWriterStack DynamoWriteResult
 setEventEntryPage key (PageKey pageNumber) = do
+    lift $ log' Debug "about to read in order to set page"
     eventEntry <- readFromDynamoMustExist key
+    lift $ log' Debug "have set page"
     let values = dynamoReadResultValue eventEntry
     let version = dynamoReadResultVersion eventEntry
     let values' = (HM.delete Constants.needsPagingKey . HM.insert Constants.eventPageNumberKey (set avS (Just (show pageNumber)) attributeValue)) values
@@ -210,6 +219,15 @@ setEventEntryPage key (PageKey pageNumber) = do
 
 itemToJsonByteString :: Aeson.ToJSON a => a -> BS.ByteString
 itemToJsonByteString = BL.toStrict . Aeson.encode . Aeson.toJSON
+
+readResultToEventNumber :: DynamoReadResult -> Int64
+readResultToEventNumber DynamoReadResult {dynamoReadResultKey = DynamoKey{..}} = dynamoKeyEventNumber
+
+readResultToDynamoKey :: DynamoReadResult -> DynamoKey
+readResultToDynamoKey DynamoReadResult {..} = dynamoReadResultKey
+
+readResultToEventKey :: DynamoReadResult -> EventKey
+readResultToEventKey = dynamoKeyToEventKey . readResultToDynamoKey
 
 getPreviousEntryEventNumber :: DynamoKey -> GlobalFeedWriterStack Int64
 getPreviousEntryEventNumber (DynamoKey _streamId (0)) = return (-1)
@@ -229,6 +247,75 @@ writePage pageNumber entries version = do
   let dynamoKey = getPageDynamoKey pageNumber
   let body = HM.singleton Constants.pageBodyKey (set avB (Just feedEntry) attributeValue)
   lift $ dynamoWriteWithRetry dynamoKey body version
+
+readItems :: [EventKey] -> GlobalFeedWriterStack [DynamoReadResult]
+readItems keys =
+  sequence $ readFromDynamoMustExist . eventKeyToDynamoKey <$> keys
+
+feedEntryToDynamoKey :: FeedEntry -> DynamoKey
+feedEntryToDynamoKey FeedEntry{..} = DynamoKey {
+  dynamoKeyKey = unStreamId feedEntryStream,
+  dynamoKeyEventNumber = feedEntryNumber }
+
+feedEntryToEventKey :: FeedEntry -> EventKey
+feedEntryToEventKey FeedEntry{..} = EventKey (feedEntryStream, feedEntryNumber )
+
+getUnpagedPreviousEntries :: [EventKey] -> GlobalFeedWriterStack [EventKey]
+getUnpagedPreviousEntries keys =
+  join <$> sequence (getPreviousEntryIfUnpaged <$> keys)
+  where
+    getPreviousEntryIfUnpaged :: EventKey -> GlobalFeedWriterStack [EventKey]
+    getPreviousEntryIfUnpaged (EventKey (_, 0)) = return []
+    getPreviousEntryIfUnpaged eventKey = do
+      let key = eventKeyToDynamoKey eventKey
+      let DynamoKey{..} = key
+      result <- lift $ queryTable' QueryDirectionBackward dynamoKeyKey 1 (Just dynamoKeyEventNumber)
+      case result of [] -> throwError $ EventstoreActionErrorCouldNotFindPreviousEntry key
+                     (x:_xs) -> if entryIsPaged x then return [] else return [readResultToEventKey x]
+
+collectItemsToPage :: Set EventKey -> Set EventKey -> Set EventKey -> GlobalFeedWriterStack (Set EventKey)
+collectItemsToPage _ acc newItems | null newItems = return acc
+collectItemsToPage currentPage acc newItems = do
+  let itemsNotInCurrentPage = Set.difference newItems currentPage
+  previousUnpaged <- Set.fromList <$> getUnpagedPreviousEntries (toList itemsNotInCurrentPage)
+  let previousUnpageNotInCurrentPage = Set.difference previousUnpaged acc
+  collectItemsToPage currentPage (Set.union previousUnpageNotInCurrentPage acc) previousUnpageNotInCurrentPage
+
+dynamoKeyToEventKey :: DynamoKey -> EventKey
+dynamoKeyToEventKey DynamoKey{..} =
+  let
+    streamId = StreamId $ T.drop (T.length Constants.streamDynamoKeyPrefix) dynamoKeyKey
+  in EventKey (streamId, dynamoKeyEventNumber)
+
+addItemsToGlobalFeed :: [DynamoKey] -> GlobalFeedWriterStack ()
+addItemsToGlobalFeed [] = return ()
+addItemsToGlobalFeed dynamoItemKeys = do
+  currentPage <- getCurrentPage
+  let currentPageFeedEntries = feedPageEntries currentPage
+  let currentPageEventKeys = Set.fromList . toList $ feedEntryToEventKey <$> currentPageFeedEntries
+  let itemKeysSet = Set.fromList $ dynamoKeyToEventKey <$> dynamoItemKeys
+  itemsToPage <- collectItemsToPage currentPageEventKeys itemKeysSet itemKeysSet
+  items <- readItems . sort . toList $ itemsToPage
+  newFeedEntries <- Seq.fromList <$> sequence (readResultToFeedEntry <$> items)
+  let version = feedPageVersion currentPage + 1
+  let newEntrySequence = currentPageFeedEntries <> newFeedEntries
+  let pageNumber = feedPageNumber currentPage
+  pageResult <- writePage pageNumber newEntrySequence version
+  onPageResult pageNumber pageResult itemsToPage
+  return ()
+  where
+    readResultToFeedEntry :: DynamoReadResult -> GlobalFeedWriterStack FeedEntry
+    readResultToFeedEntry readResult@DynamoReadResult{dynamoReadResultKey=DynamoKey{..}} = do
+      itemEventCount <- entryEventCount readResult
+      let (EventKey(streamId, eventNumber)) = readResultToEventKey readResult
+      return $ FeedEntry streamId eventNumber itemEventCount
+    onPageResult :: PageKey -> DynamoWriteResult -> Set EventKey -> GlobalFeedWriterStack ()
+    onPageResult _ DynamoWriteWrongVersion _ = do
+      log' Debug "Got wrong version writing page"
+      addItemsToGlobalFeed dynamoItemKeys
+    onPageResult pageNumber DynamoWriteSuccess itemsToPage =
+      sequence_ $ (`setEventEntryPage` pageNumber) . eventKeyToDynamoKey <$> Set.toList itemsToPage
+    onPageResult pageNumber DynamoWriteFailure _ = throwError $ EventStoreActionErrorOnWritingPage pageNumber
 
 updateGlobalFeed :: DynamoKey -> GlobalFeedWriterStack ()
 updateGlobalFeed itemKey@DynamoKey { dynamoKeyKey = itemHashKey, dynamoKeyEventNumber = itemEventNumber } = do
@@ -253,7 +340,6 @@ updateGlobalFeed itemKey@DynamoKey { dynamoKeyKey = itemHashKey, dynamoKeyEventN
       pageResult <- writePage pageNumber newEntrySequence version
       onPageResult pageNumber pageResult
       return ()
-  return ()
   where
     onPageResult :: PageKey -> DynamoWriteResult -> GlobalFeedWriterStack ()
     onPageResult _ DynamoWriteWrongVersion = do
@@ -277,7 +363,8 @@ type GlobalFeedWriterStack = StateT GlobalFeedWriterState (ExceptT EventStoreAct
 runLoop :: GlobalFeedWriterStack ()
 runLoop = do
   scanResult <- lift scanNeedsPaging'
-  forM_ scanResult updateGlobalFeed
+  addItemsToGlobalFeed scanResult
+  -- forM_ scanResult updateGlobalFeed
   when (null scanResult) (wait' 1000)
   setPulseStatus' $ case scanResult of [] -> False
                                        _  -> True
