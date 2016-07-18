@@ -3,6 +3,7 @@
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies        #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module DynamoDbEventStore.GlobalFeedWriterSpec (tests) where
 
@@ -10,6 +11,7 @@ import           BasicPrelude
 import           Control.Lens
 import           Control.Monad.Except
 import           Control.Monad.Loops
+import           Control.Monad.Random
 import           Control.Monad.State
 import qualified Data.Aeson                              as Aeson
 import qualified Data.ByteString.Lazy                    as BL
@@ -66,6 +68,63 @@ cappedList maxLength = QC.listOf1 QC.arbitrary `QC.suchThat` ((< maxLength) . le
 uniqueList :: Ord a => [a] -> [a]
 uniqueList = Set.toList . Set.fromList
 
+data NewUploadList = NewUploadList { uploadListEvents :: [NonEmpty (NonEmpty EventEntry)], uploadListGenSeed :: Int }
+  deriving (Show)
+
+instance QC.Arbitrary NewUploadList where
+  arbitrary =
+    NewUploadList <$> QC.arbitrary <*> QC.arbitrary
+  shrink NewUploadList{..} =
+    (\xs -> NewUploadList xs uploadListGenSeed) <$> QC.shrink uploadListEvents
+
+instance QC.Arbitrary a => QC.Arbitrary (NonEmpty a) where
+  arbitrary = do
+    headEntry <- QC.arbitrary
+    tailEntries <- QC.arbitrary
+    return $ headEntry :| tailEntries
+  shrink (x :| xs) =
+    let
+      shrunkHeads = (:| xs) <$> QC.shrink x
+      shrunkTails = (x :|) <$> QC.shrink xs
+    in shrunkHeads ++ shrunkTails
+
+getRandomMapEntry :: MonadRandom m => Map a b -> m (a, b)
+getRandomMapEntry m = do
+  let myEntries = Map.assocs m
+  entryIndex <- getRandomR (0, length myEntries - 1)
+  return $ myEntries !! entryIndex
+
+type EventInsertSet = NonEmpty EventEntry
+
+buildUploadListItems :: NewUploadList -> [UploadItem]
+buildUploadListItems NewUploadList{..} =
+  let
+    (streamsWithEvents :: Map Text [(Int64, NonEmpty EventEntry)]) = Map.fromList $ zip streamIds (numberTestStreamEvents . NonEmpty.toList <$> uploadListEvents)
+    selectRandomItems :: MonadRandom m => Map Text [(Int64, EventInsertSet)] -> m [UploadItem]
+    selectRandomItems fullMap = reverse <$> go [] fullMap
+      where
+        go :: MonadRandom m => [UploadItem] -> Map Text [(Int64, EventInsertSet)] -> m [UploadItem]
+        go a m | Map.null m = return a
+        go a m = do
+          (streamId, (eventNumber, entries):xs) <- getRandomMapEntry m
+          let a' = (streamId, eventNumber, entries):a
+          let m' =
+                if null xs then
+                  Map.delete streamId m
+                else
+                  Map.insert streamId xs m
+          go a' m'
+  in runIdentity . (evalRandT (selectRandomItems streamsWithEvents)) $ (mkStdGen uploadListGenSeed)
+  where
+    streamIds = (\x -> T.pack $ "testStream-" <> [x]) <$> ['a'..'z']
+    numberTestStreamEvents :: [NonEmpty EventEntry] -> [(Int64, EventInsertSet)]
+    numberTestStreamEvents xs = reverse $ evalState (foldM acc [] xs) (-1)
+    acc :: [(Int64, EventInsertSet)] -> EventInsertSet -> State Int64 [(Int64, EventInsertSet)]
+    acc xs x = do
+      (eventNumber :: Int64) <- get
+      put (eventNumber + (fromIntegral . length) x)
+      return $ (eventNumber, x):xs
+
 instance QC.Arbitrary UploadList where
   arbitrary = do
     (streams :: [StreamId]) <- uniqueList <$> cappedList 5
@@ -115,17 +174,18 @@ globalStreamResultToMap GlobalStreamResult{..} =
       let newValue = maybe (Seq.singleton recordedEventNumber) (Seq.|> recordedEventNumber) $ Map.lookup recordedEventStreamId s
       in Map.insert recordedEventStreamId newValue s
 
-prop_EventShouldAppearInGlobalFeedInStreamOrder :: UploadList -> QC.Property
-prop_EventShouldAppearInGlobalFeedInStreamOrder (UploadList uploadList) =
+prop_EventShouldAppearInGlobalFeedInStreamOrder :: NewUploadList -> QC.Property
+prop_EventShouldAppearInGlobalFeedInStreamOrder newUploadList =
   let
+    uploadList = buildUploadListItems newUploadList
     programs = Map.fromList [
       ("Publisher", (publisher uploadList,100))
       , ("GlobalFeedWriter1", (GlobalFeedWriter.main, 100))
       , ("GlobalFeedWriter2", (GlobalFeedWriter.main, 100))
       ]
-  in QC.forAll (runPrograms programs) check
+  in QC.forAll (runPrograms programs) (check uploadList)
      where
-       check (_, testRunState) = QC.forAll (runReadAllProgram testRunState) (\feedItems -> (globalStreamResultToMap <$> feedItems) === (Right $ globalFeedFromUploadList uploadList))
+       check uploadList (_, testRunState) = QC.forAll (runReadAllProgram testRunState) (\feedItems -> (globalStreamResultToMap <$> feedItems) === (Right $ globalFeedFromUploadList uploadList))
        runReadAllProgram = runProgramGenerator "readAllRequestProgram" (getReadAllRequestProgram ReadAllRequest { readAllRequestStartPosition = Nothing, readAllRequestMaxItems = 2000, readAllRequestDirection = FeedDirectionForward })
 
 prop_SingleEventIsIndexedCorrectly :: QC.Property
@@ -135,7 +195,7 @@ prop_SingleEventIsIndexedCorrectly =
     programs = Map.fromList [
       ("Publisher", (publisher uploadList,100))
       , ("GlobalFeedWriter1", (GlobalFeedWriter.main, 100))
-      -- , ("GlobalFeedWriter2", (GlobalFeedWriter.main, 100))
+      , ("GlobalFeedWriter2", (GlobalFeedWriter.main, 100))
       ]
   in QC.forAll (runPrograms programs) (check uploadList)
      where
