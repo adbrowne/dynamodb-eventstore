@@ -146,23 +146,26 @@ readPageBody :: DynamoValues -> Seq.Seq FeedEntry
 readPageBody values = -- todo don't ignore errors
   fromMaybe Seq.empty $ view (ix Constants.pageBodyKey . avB) values >>= Aeson.decodeStrict
 
-nextVersion :: DynamoReadResult -> Int
-nextVersion readResult = dynamoReadResultVersion readResult + 1
-
 toDynamoKey :: StreamId -> Int64 -> DynamoKey
 toDynamoKey (StreamId streamId) = DynamoKey (Constants.streamDynamoKeyPrefix <> streamId)
 
 eventKeyToDynamoKey :: EventKey -> DynamoKey
 eventKeyToDynamoKey (EventKey(streamId, eventNumber)) = toDynamoKey streamId eventNumber
 
+setEventEntryPage :: DynamoKey -> PageKey -> GlobalFeedWriterStack DynamoWriteResult
+setEventEntryPage key (PageKey pageNumber) = do
+    eventEntry <- readFromDynamoMustExist key
+    lift $ log' Debug ("have set page to " <> show pageNumber <> " for " <> show key)
+    let values = dynamoReadResultValue eventEntry
+    let version = dynamoReadResultVersion eventEntry
+    let values' = (HM.delete Constants.needsPagingKey . HM.insert Constants.eventPageNumberKey (set avS (Just (show pageNumber)) attributeValue)) values
+    lift $ dynamoWriteWithRetry key values' (version + 1)
+
 setPageEntryPageNumber :: PageKey -> FeedEntry -> GlobalFeedWriterStack ()
 setPageEntryPageNumber pageNumber feedEntry = do
   let streamId = feedEntryStream feedEntry
   let dynamoKey = toDynamoKey streamId  (feedEntryNumber feedEntry)
-  eventEntry <- readFromDynamoMustExist dynamoKey
-  let newValue = (HM.delete Constants.needsPagingKey . HM.insert Constants.eventPageNumberKey (stringAttributeValue (show pageNumber)) . dynamoReadResultValue) eventEntry
-  lift $ log' Debug "About to update page for "
-  lift . void $ dynamoWriteWithRetry dynamoKey newValue (nextVersion eventEntry)
+  void $ setEventEntryPage dynamoKey pageNumber
 
 stringAttributeValue :: Text -> AttributeValue
 stringAttributeValue t = set avS (Just t) attributeValue
@@ -206,15 +209,6 @@ getCurrentPage = do
     return $ emptyFeedPage (mostRecentPageNumber + 1)
   else
     return $ fromMaybe (emptyFeedPage (mostRecentPageNumber + 1)) mostRecentPage
-
-setEventEntryPage :: DynamoKey -> PageKey -> GlobalFeedWriterStack DynamoWriteResult
-setEventEntryPage key (PageKey pageNumber) = do
-    eventEntry <- readFromDynamoMustExist key
-    lift $ log' Debug ("have set page to " <> show pageNumber <> " for " <> show key)
-    let values = dynamoReadResultValue eventEntry
-    let version = dynamoReadResultVersion eventEntry
-    let values' = (HM.delete Constants.needsPagingKey . HM.insert Constants.eventPageNumberKey (set avS (Just (show pageNumber)) attributeValue)) values
-    lift $ dynamoWriteWithRetry key values' (version + 1)
 
 itemToJsonByteString :: Aeson.ToJSON a => a -> BS.ByteString
 itemToJsonByteString = BL.toStrict . Aeson.encode . Aeson.toJSON
