@@ -652,10 +652,10 @@ whenIndexing1000ItemsIopsIsMinimal =
     afterIndexState = execProgramUntilIdle "indexer" GlobalFeedWriter.main (testStateItems 1000)
     expectedWriteState = Map.fromList [
       ((UnpagedRead,IopsScanUnpaged,"indexer"),1000)
-     ,((TableRead,IopsGetItem,"indexer"),8245)
-     ,((TableRead,IopsQuery,"indexer"),985)
+     ,((TableRead,IopsGetItem,"indexer"),2017)
+     ,((TableRead,IopsQuery,"indexer"),1984)
      ,((TableRead,IopsQuery,"writeEvents"),999)
-     ,((TableWrite,IopsWrite,"indexer"),3065)
+     ,((TableWrite,IopsWrite,"indexer"),1002)
      ,((TableWrite,IopsWrite,"writeGlobalFeed"),15)
      ,((TableWrite,IopsWrite,"writeEvents"),1000)]
   in assertEqual "Should be small iops" expectedWriteState (view iopCounts afterIndexState)
