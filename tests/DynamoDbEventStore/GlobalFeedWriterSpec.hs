@@ -73,7 +73,7 @@ data NewUploadList = NewUploadList { uploadListEvents :: [NonEmpty (NonEmpty Eve
 
 instance QC.Arbitrary NewUploadList where
   arbitrary =
-    NewUploadList <$> QC.arbitrary <*> QC.arbitrary
+    NewUploadList <$> QC.resize 10 QC.arbitrary <*> QC.arbitrary
   shrink NewUploadList{..} =
     (\xs -> NewUploadList xs uploadListGenSeed) <$> QC.shrink uploadListEvents
 
@@ -86,7 +86,7 @@ instance QC.Arbitrary a => QC.Arbitrary (NonEmpty a) where
     let
       shrunkHeads = (:| xs) <$> QC.shrink x
       shrunkTails = (x :|) <$> QC.shrink xs
-    in shrunkHeads ++ shrunkTails
+    in shrunkTails ++ shrunkHeads -- do this in reverse as shrinking the tails is a bigger change
 
 getRandomMapEntry :: MonadRandom m => Map a b -> m (a, b)
 getRandomMapEntry m = do
@@ -186,7 +186,7 @@ prop_EventShouldAppearInGlobalFeedInStreamOrder newUploadList =
   in QC.forAll (runPrograms programs) (check uploadList)
      where
        check uploadList (_, testRunState) = QC.forAll (runReadAllProgram testRunState) (\feedItems -> (globalStreamResultToMap <$> feedItems) === (Right $ globalFeedFromUploadList uploadList))
-       runReadAllProgram = runProgramGenerator "readAllRequestProgram" (getReadAllRequestProgram ReadAllRequest { readAllRequestStartPosition = Nothing, readAllRequestMaxItems = 2000, readAllRequestDirection = FeedDirectionForward })
+       runReadAllProgram = runProgramGenerator "readAllRequestProgram" (getReadAllRequestProgram ReadAllRequest { readAllRequestStartPosition = Nothing, readAllRequestMaxItems = 10000, readAllRequestDirection = FeedDirectionForward })
 
 prop_SingleEventIsIndexedCorrectly :: QC.Property
 prop_SingleEventIsIndexedCorrectly =

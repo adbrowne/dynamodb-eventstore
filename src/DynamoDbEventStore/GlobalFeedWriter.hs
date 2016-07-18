@@ -195,13 +195,16 @@ readFromDynamoMustExist key = do
 emptyFeedPage :: PageKey -> FeedPage
 emptyFeedPage pageNumber = FeedPage { feedPageNumber = pageNumber, feedPageEntries = Seq.empty, feedPageIsVerified = False, feedPageVersion = -1 }
 
+pageSizeCutoff :: Int
+pageSizeCutoff = 10
+
 getCurrentPage :: GlobalFeedWriterStack FeedPage
 getCurrentPage = do
   mostRecentKnownPage <- gets globalFeedWriterStateCurrentPage
   mostRecentPage <- getMostRecentPage $ fromMaybe 0 mostRecentKnownPage
   modify (\s -> s { globalFeedWriterStateCurrentPage = feedPageNumber <$> mostRecentPage})
   let mostRecentPageNumber = maybe (PageKey (-1)) feedPageNumber mostRecentPage
-  let startNewPage = maybe True (\page -> (length . feedPageEntries) page >= 10) mostRecentPage
+  let startNewPage = maybe True (\page -> (length . feedPageEntries) page >= pageSizeCutoff) mostRecentPage
   if startNewPage then do
     verifyPage mostRecentPageNumber
     return $ emptyFeedPage (mostRecentPageNumber + 1)
@@ -210,9 +213,8 @@ getCurrentPage = do
 
 setEventEntryPage :: DynamoKey -> PageKey -> GlobalFeedWriterStack DynamoWriteResult
 setEventEntryPage key (PageKey pageNumber) = do
-    lift $ log' Debug "about to read in order to set page"
     eventEntry <- readFromDynamoMustExist key
-    lift $ log' Debug "have set page"
+    lift $ log' Debug ("have set page to " <> show pageNumber <> " for " <> show key)
     let values = dynamoReadResultValue eventEntry
     let version = dynamoReadResultVersion eventEntry
     let values' = (HM.delete Constants.needsPagingKey . HM.insert Constants.eventPageNumberKey (set avS (Just (show pageNumber)) attributeValue)) values
@@ -303,7 +305,8 @@ addItemsToGlobalFeed dynamoItemKeys = do
   let itemKeysSet = Set.fromList $ dynamoKeyToEventKey <$> dynamoItemKeys
   itemsToPage <- collectItemsToPage currentPageEventKeys Set.empty itemKeysSet
   items <- readItems . sort . toList $ itemsToPage
-  newFeedEntries <- Seq.fromList <$> sequence (readResultToFeedEntry <$> items)
+  let unpagedItems = filter (not . entryIsPaged) items
+  newFeedEntries <- Seq.fromList <$> sequence (readResultToFeedEntry <$> unpagedItems)
   let version = feedPageVersion currentPage + 1
   let pageNumber = feedPageNumber currentPage
   log' Debug ("writing to page: " <> show pageNumber <> " - currentFeedPageEntries: " <> show currentPageFeedEntries <> " newFeedEntries: " <> show newFeedEntries)
