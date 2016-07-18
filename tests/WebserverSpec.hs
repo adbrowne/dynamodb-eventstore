@@ -101,7 +101,7 @@ getStreamSpec = do
   assertSuccess
     "stream simple"
     ["streams","myStreamId"]
-    "ReadStream (ReadStreamRequest {rsrStreamId = StreamId \"myStreamId\", rsrStartEventNumber = Nothing, rsrMaxItems = 20, rsrDirection = FeedDirectionBackward})"
+    "ReadStream (ReadStreamRequest {rsrStreamId = StreamId {unStreamId = \"myStreamId\"}, rsrStartEventNumber = Nothing, rsrMaxItems = 20, rsrDirection = FeedDirectionBackward})"
 
   assertSuccess
     "stream $all simple"
@@ -111,7 +111,7 @@ getStreamSpec = do
   assertSuccess
     "stream with start event and limit"
     ["streams","myStreamId","3","5"]
-    "ReadStream (ReadStreamRequest {rsrStreamId = StreamId \"myStreamId\", rsrStartEventNumber = Just 3, rsrMaxItems = 5, rsrDirection = FeedDirectionBackward})"
+    "ReadStream (ReadStreamRequest {rsrStreamId = StreamId {unStreamId = \"myStreamId\"}, rsrStartEventNumber = Just 3, rsrMaxItems = 5, rsrDirection = FeedDirectionBackward})"
 
   assertSuccess
     "stream $all with start event and limit"
@@ -121,7 +121,7 @@ getStreamSpec = do
   assertSuccess
     "stream with start and limit, backward"
     ["streams","myStreamId","3","backward","5"]
-    "ReadStream (ReadStreamRequest {rsrStreamId = StreamId \"myStreamId\", rsrStartEventNumber = Just 3, rsrMaxItems = 5, rsrDirection = FeedDirectionBackward})"
+    "ReadStream (ReadStreamRequest {rsrStreamId = StreamId {unStreamId = \"myStreamId\"}, rsrStartEventNumber = Just 3, rsrMaxItems = 5, rsrDirection = FeedDirectionBackward})"
 
   assertSuccess
     "stream $all with start and limit, backward"
@@ -131,7 +131,7 @@ getStreamSpec = do
   assertSuccess
     "stream backward from head"
     ["streams","myStreamId","head","backward","5"]
-    "ReadStream (ReadStreamRequest {rsrStreamId = StreamId \"myStreamId\", rsrStartEventNumber = Nothing, rsrMaxItems = 5, rsrDirection = FeedDirectionBackward})"
+    "ReadStream (ReadStreamRequest {rsrStreamId = StreamId {unStreamId = \"myStreamId\"}, rsrStartEventNumber = Nothing, rsrMaxItems = 5, rsrDirection = FeedDirectionBackward})"
 
   assertSuccess
     "stream $all backward from head"
@@ -141,7 +141,7 @@ getStreamSpec = do
   assertSuccess
     "stream with start and limit, forward"
     ["streams","myStreamId","3","forward","5"]
-    "ReadStream (ReadStreamRequest {rsrStreamId = StreamId \"myStreamId\", rsrStartEventNumber = Just 3, rsrMaxItems = 5, rsrDirection = FeedDirectionForward})"
+    "ReadStream (ReadStreamRequest {rsrStreamId = StreamId {unStreamId = \"myStreamId\"}, rsrStartEventNumber = Just 3, rsrMaxItems = 5, rsrDirection = FeedDirectionForward})"
 
   assertSuccess
     "stream $all with start and limit, forward"
