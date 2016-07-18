@@ -161,6 +161,7 @@ setPageEntryPageNumber pageNumber feedEntry = do
   let dynamoKey = toDynamoKey streamId  (feedEntryNumber feedEntry)
   eventEntry <- readFromDynamoMustExist dynamoKey
   let newValue = (HM.delete Constants.needsPagingKey . HM.insert Constants.eventPageNumberKey (stringAttributeValue (show pageNumber)) . dynamoReadResultValue) eventEntry
+  lift $ log' Debug "About to update page for "
   lift . void $ dynamoWriteWithRetry dynamoKey newValue (nextVersion eventEntry)
 
 stringAttributeValue :: Text -> AttributeValue
@@ -253,9 +254,7 @@ readItems keys =
   sequence $ readFromDynamoMustExist . eventKeyToDynamoKey <$> keys
 
 feedEntryToDynamoKey :: FeedEntry -> DynamoKey
-feedEntryToDynamoKey FeedEntry{..} = DynamoKey {
-  dynamoKeyKey = unStreamId feedEntryStream,
-  dynamoKeyEventNumber = feedEntryNumber }
+feedEntryToDynamoKey = eventKeyToDynamoKey . feedEntryToEventKey
 
 feedEntryToEventKey :: FeedEntry -> EventKey
 feedEntryToEventKey FeedEntry{..} = EventKey (feedEntryStream, feedEntryNumber )
@@ -277,9 +276,10 @@ collectItemsToPage :: Set EventKey -> Set EventKey -> Set EventKey -> GlobalFeed
 collectItemsToPage _ acc newItems | null newItems = return acc
 collectItemsToPage currentPage acc newItems = do
   let itemsNotInCurrentPage = Set.difference newItems currentPage
+  lift $ log' Debug ("acc:" <> show acc <> "currentPage: " <> show currentPage <> " newItems: " <> show newItems <> " itemsNotInCurrentPage: " <> show itemsNotInCurrentPage)
   previousUnpaged <- Set.fromList <$> getUnpagedPreviousEntries (toList itemsNotInCurrentPage)
   let previousUnpageNotInCurrentPage = Set.difference previousUnpaged acc
-  collectItemsToPage currentPage (Set.union previousUnpageNotInCurrentPage acc) previousUnpageNotInCurrentPage
+  collectItemsToPage currentPage (Set.union itemsNotInCurrentPage acc) previousUnpageNotInCurrentPage
 
 dynamoKeyToEventKey :: DynamoKey -> EventKey
 dynamoKeyToEventKey DynamoKey{..} =
@@ -287,34 +287,39 @@ dynamoKeyToEventKey DynamoKey{..} =
     streamId = StreamId $ T.drop (T.length Constants.streamDynamoKeyPrefix) dynamoKeyKey
   in EventKey (streamId, dynamoKeyEventNumber)
 
+readResultToFeedEntry :: DynamoReadResult -> GlobalFeedWriterStack FeedEntry
+readResultToFeedEntry readResult@DynamoReadResult{dynamoReadResultKey=DynamoKey{..}} = do
+  itemEventCount <- entryEventCount readResult
+  let (EventKey(streamId, eventNumber)) = readResultToEventKey readResult
+  return $ FeedEntry streamId eventNumber itemEventCount
+
 addItemsToGlobalFeed :: [DynamoKey] -> GlobalFeedWriterStack ()
 addItemsToGlobalFeed [] = return ()
 addItemsToGlobalFeed dynamoItemKeys = do
+  log' Debug ("addItemsToGlobalFeed: " <> show dynamoItemKeys)
   currentPage <- getCurrentPage
   let currentPageFeedEntries = feedPageEntries currentPage
   let currentPageEventKeys = Set.fromList . toList $ feedEntryToEventKey <$> currentPageFeedEntries
   let itemKeysSet = Set.fromList $ dynamoKeyToEventKey <$> dynamoItemKeys
-  itemsToPage <- collectItemsToPage currentPageEventKeys itemKeysSet itemKeysSet
+  itemsToPage <- collectItemsToPage currentPageEventKeys Set.empty itemKeysSet
   items <- readItems . sort . toList $ itemsToPage
   newFeedEntries <- Seq.fromList <$> sequence (readResultToFeedEntry <$> items)
   let version = feedPageVersion currentPage + 1
-  let newEntrySequence = currentPageFeedEntries <> newFeedEntries
   let pageNumber = feedPageNumber currentPage
+  log' Debug ("writing to page: " <> show pageNumber <> " - currentFeedPageEntries: " <> show currentPageFeedEntries <> " newFeedEntries: " <> show newFeedEntries)
+  let newEntrySequence = currentPageFeedEntries <> newFeedEntries
   pageResult <- writePage pageNumber newEntrySequence version
-  onPageResult pageNumber pageResult itemsToPage
+  onPageResult pageNumber pageResult newEntrySequence
   return ()
   where
-    readResultToFeedEntry :: DynamoReadResult -> GlobalFeedWriterStack FeedEntry
-    readResultToFeedEntry readResult@DynamoReadResult{dynamoReadResultKey=DynamoKey{..}} = do
-      itemEventCount <- entryEventCount readResult
-      let (EventKey(streamId, eventNumber)) = readResultToEventKey readResult
-      return $ FeedEntry streamId eventNumber itemEventCount
-    onPageResult :: PageKey -> DynamoWriteResult -> Set EventKey -> GlobalFeedWriterStack ()
+    onPageResult :: PageKey -> DynamoWriteResult -> Seq FeedEntry -> GlobalFeedWriterStack ()
     onPageResult _ DynamoWriteWrongVersion _ = do
       log' Debug "Got wrong version writing page"
       addItemsToGlobalFeed dynamoItemKeys
-    onPageResult pageNumber DynamoWriteSuccess itemsToPage =
-      sequence_ $ (`setEventEntryPage` pageNumber) . eventKeyToDynamoKey <$> Set.toList itemsToPage
+    onPageResult pageNumber DynamoWriteSuccess newEntrySequence =
+      let
+        toMarkAsPaged = feedEntryToDynamoKey <$> toList newEntrySequence
+      in sequence_ $ (`setEventEntryPage` pageNumber) <$> toMarkAsPaged
     onPageResult pageNumber DynamoWriteFailure _ = throwError $ EventStoreActionErrorOnWritingPage pageNumber
 
 updateGlobalFeed :: DynamoKey -> GlobalFeedWriterStack ()
@@ -371,5 +376,7 @@ runLoop = do
 main :: DynamoCmdM (Either EventStoreActionError ())
 main = do
   result <- runExceptT $ evalStateT runLoop emptyGlobalFeedWriterState
-  case result of (Left errMsg) -> return $ Left errMsg
+  case result of (Left errMsg) -> do
+                                   log' Debug ("Terminating with error: " <> show errMsg)
+                                   return $ Left errMsg
                  (Right ())    -> main
