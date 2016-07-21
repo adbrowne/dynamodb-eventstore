@@ -92,43 +92,58 @@ data ApplicationError =
   ApplicationErrorGlobalFeedWriter EventStoreActionError
   deriving Show
 
+type AwsRunner = (forall a. MyAwsStack a -> ExceptT InterpreterError IO a)
+
+{-
+forkAndSupervise :: IO () -> IO ()
+forkAndSupervise f = undefined
+-}
+
+printError :: (Show a) => a -> IO ()
+printError err = putStrLn $ "Error: " <> show err
+
+forkGlobalFeedWriter :: (forall a. DynamoCmdM a -> ExceptT InterpreterError IO a) -> IO ()
+forkGlobalFeedWriter runner = do
+  _ <- forkIO $ do
+    result <- runExceptT $ runner GlobalFeedWriter.main
+    case result of (Left err)         -> printError (ApplicationErrorInterpreter err)
+                   (Right (Left err)) -> printError (ApplicationErrorGlobalFeedWriter err)
+                   _                  -> return ()
+  return ()
+
+startWebServer :: (forall a. DynamoCmdM a -> ExceptT InterpreterError IO a) -> Config -> IO ()
+startWebServer runner parsedConfig = do
+  let httpPort = configPort parsedConfig
+  let warpSettings = setPort httpPort $ setHost (fromString httpHost) defaultSettings
+  let baseUri = "http://" <> fromString httpHost <> ":" <> show httpPort
+  putStrLn $ "Server listenting on: " <> baseUri
+  void $ scottyApp (app (printEvent >=> realRunner baseUri (buildActionRunner runner))) >>= runSettings warpSettings
+
 start :: Config -> ExceptT ApplicationError IO ()
 start parsedConfig = do
   let tableName = (T.pack . configTableName) parsedConfig
   logger <- liftIO $ newLogger AWS.Error stdout
-  env <- (set envLogger logger) <$> newEnv Sydney Discover
+  env <- set envLogger logger <$> newEnv Sydney Discover
   let interperter = (if configLocalDynamoDB parsedConfig then runDynamoLocal else runDynamoCloud) env
   let runner = toExceptT interperter
-  tableAlreadyExists <- (toApplicationError interperter) $ doesTableExist tableName
+  tableAlreadyExists <- toApplicationError interperter $ doesTableExist tableName
   let shouldCreateTable = configCreateTable parsedConfig
   when (not tableAlreadyExists && shouldCreateTable)
-    (putStrLn "Creating table..." >> (toApplicationError interperter) (buildTable tableName) >> putStrLn "Table created")
+    (putStrLn "Creating table..." >> toApplicationError interperter (buildTable tableName) >> putStrLn "Table created")
   if tableAlreadyExists || shouldCreateTable then runApp runner tableName else failNoTable
   where
    runApp :: (forall a. MyAwsStack a -> ExceptT InterpreterError IO a) -> Text -> ExceptT ApplicationError IO ()
    runApp runner tableName = do
      let runner' = runMyAws runner tableName
-     exitMVar <- lift newEmptyMVar
-     _ <- lift $ forkIO $ do
-       result <- runExceptT $ runner' GlobalFeedWriter.main
-       putMVar exitMVar result
-     let httpPort = (configPort parsedConfig)
-     let warpSettings = setPort httpPort $ setHost (fromString httpHost) defaultSettings
-     let baseUri = "http://" <> fromString httpHost <> ":" <> show httpPort
-     putStrLn $ "Server listenting on: " <> baseUri
-     _ <- lift $ forkIO $ void $ scottyApp (app (printEvent >=> realRunner baseUri (buildActionRunner runner'))) >>= runSettings warpSettings
-     programResult <- liftIO $ takeMVar exitMVar
-     print programResult
-     case programResult of (Left err)         -> throwError $ ApplicationErrorInterpreter err
-                           (Right (Left err)) -> throwError $ ApplicationErrorGlobalFeedWriter err
-                           _                  -> return ()
+     liftIO $ forkGlobalFeedWriter runner'
+     liftIO $ startWebServer runner' parsedConfig
    failNoTable = putStrLn "Table does not exist"
 
 checkForFailureOnExit :: ExceptT ApplicationError IO () -> IO ()
 checkForFailureOnExit a = do
   result <- runExceptT a
   case result of Left m -> do
-                             putStrLn $ "Error: " <> show m
+                             printError m
                              exitWith $ ExitFailure 1
                  Right () -> return ()
 main :: IO ()

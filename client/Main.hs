@@ -229,7 +229,7 @@ toEntryData r =
 
 putEntry :: Text -> EntryData -> IO()
 putEntry destinationBaseUrl EntryData{..} = do
-  threadDelay 1000000
+  -- threadDelay 1000000
   let url = T.unpack $ destinationBaseUrl <> "/streams/" <> entryDataStream
   let body = fromMaybe (fromString "") entryDataBody
   (eventId :: Data.UUID.UUID) <- randomIO
