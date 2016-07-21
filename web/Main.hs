@@ -94,22 +94,26 @@ data ApplicationError =
 
 type AwsRunner = (forall a. MyAwsStack a -> ExceptT InterpreterError IO a)
 
-{-
-forkAndSupervise :: IO () -> IO ()
-forkAndSupervise f = undefined
--}
+forkAndSupervise :: Text -> IO () -> IO ()
+forkAndSupervise processName =
+  void . forkIO . handle onError
+  where
+    onError :: SomeException -> IO ()
+    onError e = do
+      putStrLn $ "Exception in " <> processName
+      putStrLn . T.pack $ displayException e
+      threadDelay 10000000 -- 10 seconds
 
 printError :: (Show a) => a -> IO ()
 printError err = putStrLn $ "Error: " <> show err
 
 forkGlobalFeedWriter :: (forall a. DynamoCmdM a -> ExceptT InterpreterError IO a) -> IO ()
-forkGlobalFeedWriter runner = do
-  _ <- forkIO $ do
+forkGlobalFeedWriter runner =
+  forkAndSupervise "GlobalFeedWriter" $ do
     result <- runExceptT $ runner GlobalFeedWriter.main
     case result of (Left err)         -> printError (ApplicationErrorInterpreter err)
                    (Right (Left err)) -> printError (ApplicationErrorGlobalFeedWriter err)
                    _                  -> return ()
-  return ()
 
 startWebServer :: (forall a. DynamoCmdM a -> ExceptT InterpreterError IO a) -> Config -> IO ()
 startWebServer runner parsedConfig = do
