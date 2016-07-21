@@ -5,7 +5,6 @@
 module Main where
 
 import           BasicPrelude
-import           Control.Concurrent
 import           Control.Lens                    hiding (children, element)
 import           Data.Aeson
 import           Data.Aeson.Diff
