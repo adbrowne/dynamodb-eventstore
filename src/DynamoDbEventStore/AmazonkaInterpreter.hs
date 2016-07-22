@@ -142,17 +142,30 @@ runCmd tn (UpdateItem' DynamoKey { dynamoKeyKey = streamId, dynamoKeyEventNumber
     getSetAttributeValues _key ValueUpdateDelete xs = xs
     getSetAttributeValues key (ValueUpdateSet value) xs =
       HM.insert (":" <> key) value xs
+    getRemoveExpressions x ValueUpdateDelete xs = x:xs
+    getRemoveExpressions _key (ValueUpdateSet _value) xs = xs
     go = do
         let key = HM.fromList [
                   itemAttribute fieldStreamId avS streamId,
                   itemAttribute fieldEventNumber avN (showt eventNumber) ]
-        let updateExpression = "SET " ++ (T.intercalate ", " $ HM.foldrWithKey getSetExpressions [] values)
+        let setExpressions = HM.foldrWithKey getSetExpressions [] values
+        let setExpression =
+              if null setExpressions then []
+              else ["SET " ++ (T.intercalate ", " setExpressions)]
         let expressionAttributeValues = HM.foldrWithKey getSetAttributeValues HM.empty values
+        let removeKeys = HM.foldrWithKey getRemoveExpressions [] values
+        let removeExpression =
+              if null removeKeys then []
+              else ["REMOVE " ++ (T.intercalate ", " removeKeys)]
+        let updateExpression = T.intercalate " " (setExpression ++ removeExpression)
         let req0 =
               updateItem tn
               & set uiKey key
               & set uiUpdateExpression (Just updateExpression)
-              & set uiExpressionAttributeValues expressionAttributeValues
+              & if (not . HM.null) expressionAttributeValues then
+                 set uiExpressionAttributeValues expressionAttributeValues
+                else
+                 id
         _ <- send req0
         n True
 runCmd tn (WriteToDynamo' DynamoKey { dynamoKeyKey = streamId, dynamoKeyEventNumber = eventNumber } values version n) =

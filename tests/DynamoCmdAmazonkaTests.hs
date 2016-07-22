@@ -53,18 +53,29 @@ tests evalProgram =
         in do
           r <- writeResult
           assertEqual "Second write has error" (Right DynamoWriteWrongVersion) r
-    , testCase "Write add field adds the field" $
+    , testCase "Update set field adds the field" $
         let
           myKeyValue = set avS (Just "testValue") attributeValue
           actions = do
             _ <- testWrite sampleValuesNoPaging 0
-            updateItem' testKey (HM.singleton "MyKey" (ValueUpdateSet myKeyValue))
+            _ <- updateItem' testKey (HM.singleton "MyKey" (ValueUpdateSet myKeyValue))
             sampleRead
           readResult = evalProgram actions
         in do
           r <- readResult
           let myKey = (HM.lookup "MyKey" . dynamoReadResultValue <$>) <$> r
           assertEqual "MyKey as value: testValue" (Right . Just . Just $ myKeyValue) myKey
+    , testCase "Delete field removes the field" $
+        let
+          actions = do
+            _ <- testWrite sampleValuesNeedsPaging 0
+            _ <- updateItem' testKey (HM.singleton Constants.needsPagingKey ValueUpdateDelete)
+            sampleRead
+          readResult = evalProgram actions
+        in do
+          r <- readResult
+          let needsPagingKey = (HM.lookup Constants.needsPagingKey . dynamoReadResultValue <$>) <$> r
+          assertEqual "NeedsPaging has been deleted" (Right . Just $ Nothing) needsPagingKey
     , testCase "With correct version you can write a subsequent event" $
         let
           actions = do
