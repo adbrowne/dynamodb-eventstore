@@ -53,6 +53,18 @@ tests evalProgram =
         in do
           r <- writeResult
           assertEqual "Second write has error" (Right DynamoWriteWrongVersion) r
+    , testCase "Write add field adds the field" $
+        let
+          myKeyValue = set avS (Just "testValue") attributeValue
+          actions = do
+            _ <- testWrite sampleValuesNoPaging 0
+            updateItem' testKey (HM.singleton "MyKey" (ValueUpdateAdd myKeyValue))
+            sampleRead
+          readResult = evalProgram actions
+        in do
+          r <- readResult
+          let myKey = (HM.lookup "MyKey" . dynamoReadResultValue <$>) <$> r
+          assertEqual "MyKey as value: testValue" (Right . Just . Just $ myKeyValue) myKey
     , testCase "With correct version you can write a subsequent event" $
         let
           actions = do

@@ -17,6 +17,7 @@ module DynamoDbEventStore.EventStoreCommands(
   wait',
   scanNeedsPaging',
   queryTable',
+  updateItem',
   setPulseStatus',
   readField,
   DynamoCmdM,
@@ -30,6 +31,7 @@ module DynamoDbEventStore.EventStoreCommands(
   DynamoWriteResult(..),
   DynamoReadResult(..),
   DynamoValues,
+  ValueUpdate(..),
   PageKey(..)
   ) where
 import           BasicPrelude
@@ -162,6 +164,10 @@ data LogLevel =
   Warn |
   Error
 
+data ValueUpdate =
+  ValueUpdateAdd AttributeValue
+  | ValueUpdateDelete
+
 data QueryDirection =
   QueryDirectionForward
   | QueryDirectionBackward
@@ -182,6 +188,10 @@ data DynamoCmd next =
     Natural -- max events to retrieve
     (Maybe Int64) -- starting event, Nothing means start at head
     ([DynamoReadResult] -> next) |
+  UpdateItem'
+    DynamoKey
+    (HashMap Text ValueUpdate)
+    (Bool -> next) |
   ScanNeedsPaging'
     ([DynamoKey] -> next) |
   Wait'
