@@ -58,7 +58,7 @@ tests evalProgram =
           myKeyValue = set avS (Just "testValue") attributeValue
           actions = do
             _ <- testWrite sampleValuesNoPaging 0
-            updateItem' testKey (HM.singleton "MyKey" (ValueUpdateAdd myKeyValue))
+            updateItem' testKey (HM.singleton "MyKey" (ValueUpdateSet myKeyValue))
             sampleRead
           readResult = evalProgram actions
         in do

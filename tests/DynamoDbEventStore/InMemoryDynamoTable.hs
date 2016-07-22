@@ -6,6 +6,7 @@ module DynamoDbEventStore.InMemoryDynamoTable
   , emptyDynamoTable
   , readDb
   , writeDb
+  , updateDb
   , queryDb
   , scanNeedsPagingDb
   ) where
@@ -44,6 +45,23 @@ readDb key@DynamoKey{..} db =
     , dynamoReadResultVersion = version
     , dynamoReadResultValue = value }
  in buildReadResult <$> entry
+
+updateDb :: DynamoKey -> HashMap Text ValueUpdate -> InMemoryDynamoTable -> InMemoryDynamoTable
+updateDb DynamoKey{..} updates db =
+  let
+    entryLocation =
+      inMemoryDynamoTableTable
+      . at dynamoKeyKey . non mempty
+      . at dynamoKeyEventNumber
+      . _Just
+      . _2
+  in over entryLocation setValues db
+  where
+    setValues :: DynamoValues -> DynamoValues
+    setValues initialValues = HM.foldrWithKey applyUpdate initialValues updates
+    applyUpdate :: Text -> ValueUpdate -> DynamoValues -> DynamoValues
+    applyUpdate key (ValueUpdateSet attribute) = HM.insert key attribute
+    applyUpdate key ValueUpdateDelete = HM.delete key
 
 writeDb :: DynamoKey -> DynamoValues -> DynamoVersion -> InMemoryDynamoTable -> (DynamoWriteResult, InMemoryDynamoTable)
 writeDb key@DynamoKey{..} values version db =

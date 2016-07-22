@@ -165,7 +165,7 @@ data LogLevel =
   Error
 
 data ValueUpdate =
-  ValueUpdateAdd AttributeValue
+  ValueUpdateSet AttributeValue
   | ValueUpdateDelete
 
 data QueryDirection =

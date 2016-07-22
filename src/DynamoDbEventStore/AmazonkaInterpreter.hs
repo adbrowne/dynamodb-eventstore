@@ -18,6 +18,7 @@ import           Control.Monad.Representable.Reader
 import           Control.Monad.Trans.Resource
 import qualified Data.HashMap.Strict                   as HM
 import           Data.List.NonEmpty                    (NonEmpty (..))
+import qualified Data.Text                             as T
 import qualified DynamoDbEventStore.Constants          as Constants
 import           DynamoDbEventStore.EventStoreCommands hiding (readField)
 import qualified DynamoDbEventStore.EventStoreCommands as EventStoreCommands
@@ -129,6 +130,31 @@ runCmd tn (QueryTable' direction streamId limit exclusiveStartKey n) =
         let items :: [HM.HashMap Text AttributeValue] = view qrsItems resp
         let parsedItems = fmap toDynamoReadResult items
         allErrors parsedItems >>= n
+runCmd tn (UpdateItem' DynamoKey { dynamoKeyKey = streamId, dynamoKeyEventNumber = eventNumber } values n) =
+  go
+  where
+    getSetExpressions :: Text -> ValueUpdate -> [Text] -> [Text]
+    getSetExpressions _key ValueUpdateDelete xs = xs
+    getSetExpressions key (ValueUpdateSet _value) xs =
+      let x = key <> "= :" <> key
+      in x:xs
+    getSetAttributeValues :: Text -> ValueUpdate -> HashMap Text AttributeValue -> HashMap Text AttributeValue
+    getSetAttributeValues _key ValueUpdateDelete xs = xs
+    getSetAttributeValues key (ValueUpdateSet value) xs =
+      HM.insert (":" <> key) value xs
+    go = do
+        let key = HM.fromList [
+                  itemAttribute fieldStreamId avS streamId,
+                  itemAttribute fieldEventNumber avN (showt eventNumber) ]
+        let updateExpression = "SET " ++ (T.intercalate ", " $ HM.foldrWithKey getSetExpressions [] values)
+        let expressionAttributeValues = HM.foldrWithKey getSetAttributeValues HM.empty values
+        let req0 =
+              updateItem tn
+              & set uiKey key
+              & set uiUpdateExpression (Just updateExpression)
+              & set uiExpressionAttributeValues expressionAttributeValues
+        _ <- send req0
+        n True
 runCmd tn (WriteToDynamo' DynamoKey { dynamoKeyKey = streamId, dynamoKeyEventNumber = eventNumber } values version n) =
   catches writeItem [handler _ConditionalCheckFailedException (\_ -> n DynamoWriteWrongVersion)]
   where

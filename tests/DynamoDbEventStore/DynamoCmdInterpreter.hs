@@ -126,6 +126,13 @@ potentialFailure failurePercent onFailure onSuccess = do
      then onFailure
      else onSuccess
 
+updateItem :: DynamoKey -> (HashMap Text ValueUpdate) -> (Bool -> n) -> InterpreterOperationStack m a n
+updateItem key values next = do
+  addIops TableWrite IopsWrite 1
+  newDb <- MemDb.updateDb key values <$> use (loopStateTestState . testStateDynamo)
+  (loopStateTestState . testStateDynamo) .= newDb
+  return $ next True -- todo, simulate failure
+
 writeToDynamo :: DynamoKey -> DynamoValues -> DynamoVersion -> (DynamoWriteResult -> n) -> InterpreterOperationStack m a n
 writeToDynamo key values version next =
   potentialFailure 25 onFailure onSuccess
@@ -183,6 +190,7 @@ runCmd (Free.Pure r) = return $ Left r
 runCmd (Free.Free (Wait' _ r)) = Right <$> return r
 runCmd (Free.Free (QueryTable' direction key maxEvents start r)) = Right <$> queryTable direction key maxEvents start r
 runCmd (Free.Free (WriteToDynamo' key values version r)) = Right <$> writeToDynamo key values version r
+runCmd (Free.Free (UpdateItem' key values r)) = Right <$> updateItem key values r
 runCmd (Free.Free (ReadFromDynamo' key r)) = Right <$> getReadResult key r
 runCmd (Free.Free (Log' _ msg r)) = Right <$> (addLog msg >> return r)
 runCmd (Free.Free (SetPulseStatus' isActive r)) = Right <$> (setPulseStatus isActive >> return r)
