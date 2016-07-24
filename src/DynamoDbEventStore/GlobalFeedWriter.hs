@@ -87,13 +87,17 @@ data FeedPage = FeedPage {
   feedPageVersion    :: Int
 }
 
-dynamoWriteWithRetry :: DynamoKey -> DynamoValues -> Int -> ExceptT e DynamoCmdM DynamoWriteResult
-dynamoWriteWithRetry key value version = loop 0 DynamoWriteFailure
+loopUntilSuccess :: Monad m => Integer -> (a -> Bool) -> m a -> m a
+loopUntilSuccess maxTries f action =
+  action >>= loop (maxTries - 1)
   where
-    loop :: Int -> DynamoWriteResult -> ExceptT e DynamoCmdM DynamoWriteResult
-    loop 100 previousResult = return previousResult
-    loop count DynamoWriteFailure = lift (writeToDynamo' key value version) >>= loop (count  + 1)
-    loop _ previousResult = return previousResult
+    loop 0 lastResult = return lastResult
+    loop _ lastResult | f lastResult = return lastResult
+    loop triesRemaining _ = action >>= loop (triesRemaining - 1)
+
+dynamoWriteWithRetry :: DynamoKey -> DynamoValues -> Int -> ExceptT e DynamoCmdM DynamoWriteResult
+dynamoWriteWithRetry key value version =
+  loopUntilSuccess 100 (/= DynamoWriteFailure) (lift (writeToDynamo' key value version))
 
 getPageDynamoKey :: PageKey -> DynamoKey
 getPageDynamoKey (PageKey pageNumber) =
@@ -159,7 +163,7 @@ setEventEntryPage key (PageKey pageNumber) = do
            (Constants.needsPagingKey, ValueUpdateDelete)
            , (Constants.eventPageNumberKey, ValueUpdateSet (set avS (Just (show pageNumber)) attributeValue))
                       ]
-    lift $ updateItem' key updates
+    loopUntilSuccess 100 id (lift $ updateItem' key updates)
 
 setPageEntryPageNumber :: PageKey -> FeedEntry -> GlobalFeedWriterStack ()
 setPageEntryPageNumber pageNumber feedEntry = do

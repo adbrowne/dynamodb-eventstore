@@ -28,8 +28,6 @@ import           DynamoDbEventStore.EventStoreCommands
 
 type DynamoCmdMFree = Free.Free DynamoCmd
 
---type TestDynamoTable = Map DynamoKey (Int, DynamoValues)
-
 data RunningProgramState r = RunningProgramState {
   runningProgramStateNext    :: DynamoCmdMFree r,
   runningProgramStateMaxIdle :: Int
@@ -126,12 +124,17 @@ potentialFailure failurePercent onFailure onSuccess = do
      then onFailure
      else onSuccess
 
-updateItem :: DynamoKey -> (HashMap Text ValueUpdate) -> (Bool -> n) -> InterpreterOperationStack m a n
-updateItem key values next = do
-  addIops TableWrite IopsWrite 1
-  newDb <- MemDb.updateDb key values <$> use (loopStateTestState . testStateDynamo)
-  (loopStateTestState . testStateDynamo) .= newDb
-  return $ next True -- todo, simulate failure
+updateItem :: DynamoKey -> HashMap Text ValueUpdate -> (Bool -> n) -> InterpreterOperationStack m a n
+updateItem key values next =
+  potentialFailure 25 onFailure onSuccess
+  where
+    onFailure =
+      addLog "Random updateItem failure" $> next False
+    onSuccess = do
+      addIops TableWrite IopsWrite 1
+      newDb <- MemDb.updateDb key values <$> use (loopStateTestState . testStateDynamo)
+      (loopStateTestState . testStateDynamo) .= newDb
+      return $ next True
 
 writeToDynamo :: DynamoKey -> DynamoValues -> DynamoVersion -> (DynamoWriteResult -> n) -> InterpreterOperationStack m a n
 writeToDynamo key values version next =
