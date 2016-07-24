@@ -652,7 +652,7 @@ whenIndexing1000ItemsIopsIsMinimal =
     afterIndexState = execProgramUntilIdle "indexer" GlobalFeedWriter.main (testStateItems 1000)
     expectedWriteState = Map.fromList [
       ((UnpagedRead,IopsScanUnpaged,"indexer"),1000)
-     ,((TableRead,IopsGetItem,"indexer"),2017)
+     ,((TableRead,IopsGetItem,"indexer"),1017)
      ,((TableRead,IopsQuery,"indexer"),1984)
      ,((TableRead,IopsQuery,"writeEvents"),999)
      ,((TableWrite,IopsWrite,"indexer"),1002)

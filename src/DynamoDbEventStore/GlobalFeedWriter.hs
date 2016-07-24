@@ -152,14 +152,14 @@ toDynamoKey (StreamId streamId) = DynamoKey (Constants.streamDynamoKeyPrefix <> 
 eventKeyToDynamoKey :: EventKey -> DynamoKey
 eventKeyToDynamoKey (EventKey(streamId, eventNumber)) = toDynamoKey streamId eventNumber
 
-setEventEntryPage :: DynamoKey -> PageKey -> GlobalFeedWriterStack DynamoWriteResult
+setEventEntryPage :: DynamoKey -> PageKey -> GlobalFeedWriterStack Bool
 setEventEntryPage key (PageKey pageNumber) = do
-    eventEntry <- readFromDynamoMustExist key
-    lift $ log' Debug ("have set page to " <> show pageNumber <> " for " <> show key)
-    let values = dynamoReadResultValue eventEntry
-    let version = dynamoReadResultVersion eventEntry
-    let values' = (HM.delete Constants.needsPagingKey . HM.insert Constants.eventPageNumberKey (set avS (Just (show pageNumber)) attributeValue)) values
-    lift $ dynamoWriteWithRetry key values' (version + 1)
+    let updates =
+          HM.fromList [
+           (Constants.needsPagingKey, ValueUpdateDelete)
+           , (Constants.eventPageNumberKey, ValueUpdateSet (set avS (Just (show pageNumber)) attributeValue))
+                      ]
+    lift $ updateItem' key updates
 
 setPageEntryPageNumber :: PageKey -> FeedEntry -> GlobalFeedWriterStack ()
 setPageEntryPageNumber pageNumber feedEntry = do

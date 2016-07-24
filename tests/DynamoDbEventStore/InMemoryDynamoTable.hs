@@ -47,7 +47,7 @@ readDb key@DynamoKey{..} db =
  in buildReadResult <$> entry
 
 updateDb :: DynamoKey -> HashMap Text ValueUpdate -> InMemoryDynamoTable -> InMemoryDynamoTable
-updateDb DynamoKey{..} updates db =
+updateDb key@DynamoKey{..} updates db =
   let
     entryLocation =
       inMemoryDynamoTableTable
@@ -55,13 +55,18 @@ updateDb DynamoKey{..} updates db =
       . at dynamoKeyEventNumber
       . _Just
       . _2
-  in over entryLocation setValues db
+  in over entryLocation setValues db & over inMemoryDynamoTableNeedsPaging updatePagingTable
   where
+    updatePagingTable =
+      case HM.lookup Constants.needsPagingKey updates of
+        Nothing -> id
+        (Just (ValueUpdateSet _)) -> Set.insert key
+        (Just ValueUpdateDelete) -> Set.delete key
     setValues :: DynamoValues -> DynamoValues
     setValues initialValues = HM.foldrWithKey applyUpdate initialValues updates
     applyUpdate :: Text -> ValueUpdate -> DynamoValues -> DynamoValues
-    applyUpdate key (ValueUpdateSet attribute) = HM.insert key attribute
-    applyUpdate key ValueUpdateDelete = HM.delete key
+    applyUpdate k (ValueUpdateSet attribute) = HM.insert k attribute
+    applyUpdate k ValueUpdateDelete = HM.delete k
 
 writeDb :: DynamoKey -> DynamoValues -> DynamoVersion -> InMemoryDynamoTable -> (DynamoWriteResult, InMemoryDynamoTable)
 writeDb key@DynamoKey{..} values version db =
