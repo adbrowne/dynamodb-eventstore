@@ -44,7 +44,9 @@ data EventStoreActionError =
   EventstoreActionErrorCouldNotFindPreviousEntry DynamoKey |
   EventStoreActionErrorCouldNotFindEvent EventKey |
   EventStoreActionErrorInvalidGlobalFeedPosition GlobalFeedPosition |
-  EventStoreActionErrorInvalidGlobalFeedPage PageKey
+  EventStoreActionErrorInvalidGlobalFeedPage PageKey |
+  EventStoreActionErrorWriteFailure DynamoKey |
+  EventStoreActionErrorUpdateFailure DynamoKey
   deriving (Show, Eq)
 
 data GlobalFeedPosition = GlobalFeedPosition {
@@ -95,9 +97,14 @@ loopUntilSuccess maxTries f action =
     loop _ lastResult | f lastResult = return lastResult
     loop triesRemaining _ = action >>= loop (triesRemaining - 1)
 
-dynamoWriteWithRetry :: DynamoKey -> DynamoValues -> Int -> ExceptT e DynamoCmdM DynamoWriteResult
-dynamoWriteWithRetry key value version =
-  loopUntilSuccess 100 (/= DynamoWriteFailure) (lift (writeToDynamo' key value version))
+dynamoWriteWithRetry :: DynamoKey -> DynamoValues -> Int -> ExceptT EventStoreActionError DynamoCmdM DynamoWriteResult
+dynamoWriteWithRetry key value version = do
+  finalResult <- loopUntilSuccess 100 (/= DynamoWriteFailure) (lift (writeToDynamo' key value version))
+  checkFinalResult finalResult
+  where
+    checkFinalResult DynamoWriteSuccess = return DynamoWriteSuccess
+    checkFinalResult DynamoWriteWrongVersion = return DynamoWriteWrongVersion
+    checkFinalResult DynamoWriteFailure = throwError $ EventStoreActionErrorWriteFailure key
 
 getPageDynamoKey :: PageKey -> DynamoKey
 getPageDynamoKey (PageKey pageNumber) =
@@ -156,14 +163,19 @@ toDynamoKey (StreamId streamId) = DynamoKey (Constants.streamDynamoKeyPrefix <> 
 eventKeyToDynamoKey :: EventKey -> DynamoKey
 eventKeyToDynamoKey (EventKey(streamId, eventNumber)) = toDynamoKey streamId eventNumber
 
-setEventEntryPage :: DynamoKey -> PageKey -> GlobalFeedWriterStack Bool
+updateItemWithRetry :: DynamoKey -> HashMap Text ValueUpdate -> ExceptT EventStoreActionError DynamoCmdM ()
+updateItemWithRetry key updates = do
+  result <- loopUntilSuccess 100 id (lift $ updateItem' key updates)
+  unless result (throwError $ EventStoreActionErrorUpdateFailure key)
+
+setEventEntryPage :: DynamoKey -> PageKey -> GlobalFeedWriterStack ()
 setEventEntryPage key (PageKey pageNumber) = do
     let updates =
           HM.fromList [
            (Constants.needsPagingKey, ValueUpdateDelete)
            , (Constants.eventPageNumberKey, ValueUpdateSet (set avS (Just (show pageNumber)) attributeValue))
                       ]
-    loopUntilSuccess 100 id (lift $ updateItem' key updates)
+    lift $ updateItemWithRetry key updates
 
 setPageEntryPageNumber :: PageKey -> FeedEntry -> GlobalFeedWriterStack ()
 setPageEntryPageNumber pageNumber feedEntry = do
