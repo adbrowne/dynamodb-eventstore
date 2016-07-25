@@ -674,7 +674,7 @@ whenIndexing1000ItemsIopsIsMinimal =
      ,((TableRead,IopsGetItem,"indexer"),1017)
      ,((TableRead,IopsGetItem,"globalFeedReader"),231)
      ,((TableRead,IopsQuery,"indexer"),1984)
-     ,((TableRead,IopsQuery,"globalFeedReader"),1085309)
+     ,((TableRead,IopsQuery,"globalFeedReader"),2184)
      ,((TableRead,IopsQuery,"writeEvents"),999)
      ,((TableWrite,IopsWrite,"indexer"),1002)
      ,((TableWrite,IopsWrite,"writeGlobalFeed"),15)

@@ -499,9 +499,11 @@ getPageItemsForward startPage =
       await >>= mapM_ yield
 
 lookupEvent :: StreamId -> Int64 -> UserProgramStack (Maybe RecordedEvent)
-lookupEvent streamId eventNumber = do
-  (events :: [RecordedEvent]) <- P.toListM $ recordedEventProducerBackward streamId (Just eventNumber) 1
-  return $ find ((== eventNumber) . recordedEventNumber) events
+lookupEvent streamId eventNumber =
+  let
+    eventsBackward = recordedEventProducerBackward streamId (Just eventNumber) 1
+    dropAnyExtras = P.dropWhile ((/= eventNumber). recordedEventNumber)
+  in P.head $ eventsBackward >-> dropAnyExtras
 
 lookupEventKey :: Pipe (GlobalFeedPosition, EventKey) (GlobalFeedPosition, RecordedEvent) UserProgramStack ()
 lookupEventKey = forever $ do
