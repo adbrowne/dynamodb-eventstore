@@ -272,6 +272,24 @@ prop_ConflictingWritesWillNotSucceed =
        sumIfSuccess s (Right WriteSuccess) = s + 1
        sumIfSuccess s _            = s
 
+pageThroughGlobalFeed :: Natural -> DynamoCmdM (Either EventStoreActionError [RecordedEvent])
+pageThroughGlobalFeed pageSize =
+  go [] Nothing
+  where
+    go acc nextPosition = do
+      result <- getReadAllRequestProgram ReadAllRequest {
+        readAllRequestDirection = FeedDirectionBackward,
+        readAllRequestStartPosition = nextPosition,
+        readAllRequestMaxItems = pageSize }
+      either (return . Left) (processResult acc) result
+    processResult :: [RecordedEvent] -> GlobalStreamResult -> DynamoCmdM (Either EventStoreActionError [RecordedEvent])
+    processResult acc GlobalStreamResult{globalStreamResultNext = Nothing} = (return . Right) acc
+    processResult acc GlobalStreamResult{globalStreamResultNext = Just(_,nextPosition,_),..} =
+      go (globalStreamResultEvents ++ acc) (convertGlobalStartPosition nextPosition)
+    convertGlobalStartPosition GlobalStartHead = Nothing
+    convertGlobalStartPosition (GlobalStartPosition x) = Just x
+
+
 getStreamRecordedEvents :: Text -> ExceptT EventStoreActionError DynamoCmdM [RecordedEvent]
 getStreamRecordedEvents streamId = do
    recordedEvents <- concat <$> unfoldrM getEventSet Nothing
@@ -650,15 +668,18 @@ whenIndexing1000ItemsIopsIsMinimal :: Assertion
 whenIndexing1000ItemsIopsIsMinimal =
   let
     afterIndexState = execProgramUntilIdle "indexer" GlobalFeedWriter.main (testStateItems 1000)
+    afterReadState = execProgramUntilIdle "globalFeedReader" (pageThroughGlobalFeed 10) (view testState afterIndexState)
     expectedWriteState = Map.fromList [
       ((UnpagedRead,IopsScanUnpaged,"indexer"),1000)
      ,((TableRead,IopsGetItem,"indexer"),1017)
+     ,((TableRead,IopsGetItem,"globalFeedReader"),231)
      ,((TableRead,IopsQuery,"indexer"),1984)
+     ,((TableRead,IopsQuery,"globalFeedReader"),1085309)
      ,((TableRead,IopsQuery,"writeEvents"),999)
      ,((TableWrite,IopsWrite,"indexer"),1002)
      ,((TableWrite,IopsWrite,"writeGlobalFeed"),15)
      ,((TableWrite,IopsWrite,"writeEvents"),1000)]
-  in assertEqual "Should be small iops" expectedWriteState (view iopCounts afterIndexState)
+  in assertEqual "Should be small iops" expectedWriteState (view iopCounts afterReadState)
 
 errorThrownIfTryingToWriteAnEventInAMultipleGap :: Assertion
 errorThrownIfTryingToWriteAnEventInAMultipleGap =
