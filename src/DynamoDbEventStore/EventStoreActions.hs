@@ -344,9 +344,10 @@ recordedEventProducerForward streamId firstEvent batchSize =
     filterFirstEvent (Just v) = P.filter ((>= v) . recordedEventNumber)
 
 getReadEventRequestProgram :: ReadEventRequest -> DynamoCmdM (Either EventStoreActionError (Maybe RecordedEvent))
-getReadEventRequestProgram (ReadEventRequest sId eventNumber) = runExceptT $ do
-  (events :: [RecordedEvent]) <- P.toListM $ recordedEventProducerBackward (StreamId sId) (Just eventNumber) 1
-  return $ find ((== eventNumber) . recordedEventNumber) events
+getReadEventRequestProgram (ReadEventRequest sId eventNumber) =
+  runExceptT . P.head $
+    recordedEventProducerBackward (StreamId sId) (Just eventNumber) 1
+    >-> P.dropWhile ((/= eventNumber) . recordedEventNumber)
 
 buildStreamResult :: FeedDirection -> Maybe Int64 -> [RecordedEvent] -> Maybe Int64 -> Natural -> Maybe StreamResult
 buildStreamResult _ Nothing _ _ _ = Nothing
@@ -390,10 +391,8 @@ buildStreamResult FeedDirectionForward (Just _lastEvent) events requestedStartEv
 
 getLastEvent :: StreamId -> UserProgramStack (Maybe Int64)
 getLastEvent streamId = do
-  lastEvent <- P.toListM $ recordedEventProducerBackward streamId Nothing 1
-  return $
-    case lastEvent of (x:_) -> Just (recordedEventNumber x)
-                      _     -> Nothing
+  x <- P.head $ recordedEventProducerBackward streamId Nothing 1
+  return $ recordedEventNumber <$> x
 
 getReadStreamRequestProgram :: ReadStreamRequest -> DynamoCmdM (Either EventStoreActionError (Maybe StreamResult))
 getReadStreamRequestProgram (ReadStreamRequest streamId startEventNumber maxItems FeedDirectionBackward) =
