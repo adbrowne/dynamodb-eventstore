@@ -5,7 +5,11 @@
 module Main where
 
 import           BasicPrelude
-import           Control.Lens                    hiding (children, element)
+import           Control.Lens                           hiding (children,
+                                                         element)
+import           Control.Monad.Except
+import           Control.Monad.State
+import qualified Control.Monad.Trans.AWS                as AWS
 import           Data.Aeson
 import           Data.Aeson.Diff
 import           Data.Aeson.Encode
@@ -13,24 +17,29 @@ import           Data.Aeson.Lens
 import           Data.Algorithm.Diff
 import           Data.Algorithm.DiffOutput
 import           Data.Attoparsec.ByteString.Lazy
-import qualified Data.ByteString                 as B
+import qualified Data.ByteString                        as B
 import           Data.ByteString.Builder
-import           Data.Char                       (isAlphaNum)
-import qualified Data.HashMap.Strict             as HM
-import           Data.List.Utils                 (replace)
+import           Data.Char                              (isAlphaNum)
+import qualified Data.HashMap.Strict                    as HM
+import           Data.List.Utils                        (replace)
 import           Data.Maybe
-import qualified Data.Text                       as T
-import qualified Data.Text.Encoding              as T
-import           Data.Text.Encoding.Error        (lenientDecode)
-import qualified Data.Text.Lazy                  as TL
-import           Data.Text.Lazy.Encoding         as TL
-import qualified Data.UUID                       (UUID)
+import qualified Data.Sequence                          as Seq
+import qualified Data.Text                              as T
+import qualified Data.Text.Encoding                     as T
+import           Data.Text.Encoding.Error               (lenientDecode)
+import qualified Data.Text.Lazy                         as TL
+import           Data.Text.Lazy.Encoding                as TL
+import qualified Data.UUID                              (UUID)
+import           DynamoDbEventStore.AmazonkaInterpreter
+import           DynamoDbEventStore.EventStoreCommands
+import qualified DynamoDbEventStore.GlobalFeedWriter    as GlobalFeedWriter
 import           Network.Wreq
-import qualified Options.Applicative             as Opt
-import qualified Prelude                         as P
+import qualified Options.Applicative                    as Opt
+import qualified Prelude                                as P
 import           Safe
 import           System.Directory
 import           System.FilePath.Posix
+import           System.IO                              (stdout)
 import           System.Random
 import           Text.Blaze.Renderer.Pretty
 import           Text.Taggy.DOM
@@ -96,6 +105,7 @@ data Command
     | CopyGlobalStream CopyGlobalStreamConfig
     | CompareDownload CompareDownloadConfig
     | InsertData InsertDataConfig
+    | SpeedTest
 
 data DownloadFeedConfig = DownloadFeedConfig {
   downloadFeedConfigOutputDirectory :: Text,
@@ -126,6 +136,8 @@ config = Config
           Opt.command "copyGlobalStream" (Opt.info copyGlobalStreamOptions (Opt.progDesc "Copy global stream"))
          <>
           Opt.command "compareDownload" (Opt.info compareDownloadOptions (Opt.progDesc "Compare downloaded streams"))
+         <>
+          Opt.command "speedTest" (Opt.info speedTestOptions (Opt.progDesc "Test bulk creation of pages"))
          <>
           Opt.command "insertData" (Opt.info insertDataOptions (Opt.progDesc "Insert data into event store"))
          )
@@ -177,6 +189,8 @@ config = Config
             <> Opt.metavar "TEST_DIRECTORY"
             <> Opt.help "test directory")
        )
+     speedTestOptions :: Opt.Parser Command
+     speedTestOptions = pure SpeedTest
 
 saveResponse :: Text -> Text -> Response LByteString -> IO ()
 saveResponse directory filename response = do
@@ -374,6 +388,41 @@ start Config { configCommand = InsertData InsertDataConfig{..}} = do
 start Config { configCommand = CompareDownload compareDownloadConfig } = do
   files <- listDirectoryTree $ fromString $ compareDownloadConfigLeftDirectory compareDownloadConfig
   sequence_ $ compareFile compareDownloadConfig <$> files
+start Config { configCommand = SpeedTest } = do
+  logger <- liftIO $ AWS.newLogger AWS.Error System.IO.stdout
+  env <- set AWS.envLogger logger <$> AWS.newEnv AWS.Sydney AWS.Discover
+  let runner = toExceptT $ runDynamoCloud env
+  let runner' = runMyAws runner "estest2"
+  result <- runExceptT $ runner' writePages
+  print result
+  return ()
+
+writePages :: DynamoCmdM ()
+writePages = do
+  _ <- runExceptT $ evalStateT (mapM_ go [0..1000]) GlobalFeedWriter.emptyGlobalFeedWriterState
+  return ()
+  where
+    testFeedEntry = GlobalFeedWriter.FeedEntry {
+      feedEntryStream = StreamId "Andrew",
+      feedEntryNumber = 0,
+      feedEntryCount = 1 }
+    feedEntries = Seq.fromList $ replicate 1000 testFeedEntry
+    go pageNumber = do
+      lift $ log' Debug ("Writing page" <> show pageNumber)
+      GlobalFeedWriter.writePage (PageKey pageNumber) feedEntries 0
+
+runMyAws :: (MyAwsStack a -> ExceptT InterpreterError IO a) -> Text -> DynamoCmdM a -> ExceptT InterpreterError IO a
+runMyAws runner tableName program =
+  runner $ runProgram tableName program
+
+toExceptT :: forall a. (MyAwsStack a -> IO (Either InterpreterError a)) -> (MyAwsStack a -> ExceptT InterpreterError IO a)
+toExceptT runner a = do
+  result <- liftIO $ runner a
+  case result of Left s -> throwError $ s
+                 Right r -> return r
+
+runDynamoCloud :: AWS.Env -> MyAwsStack a -> IO (Either InterpreterError a)
+runDynamoCloud env x = AWS.runResourceT $ AWS.runAWST env $ runExceptT x
 
 main :: IO ()
 main = Opt.execParser opts >>= start
