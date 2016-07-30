@@ -390,8 +390,8 @@ start Config { configCommand = CompareDownload compareDownloadConfig } = do
   sequence_ $ compareFile compareDownloadConfig <$> files
 start Config { configCommand = SpeedTest } = do
   logger <- liftIO $ AWS.newLogger AWS.Error System.IO.stdout
-  env <- set AWS.envLogger logger <$> AWS.newEnv AWS.Sydney AWS.Discover
-  let runner = toExceptT $ runDynamoCloud env
+  awsEnv <- set AWS.envLogger logger <$> AWS.newEnv AWS.Sydney AWS.Discover
+  let runner = toExceptT $ runDynamoCloud awsEnv
   let runner' = runMyAws runner "estest2"
   result <- runExceptT $ runner' writePages
   print result
@@ -422,7 +422,7 @@ toExceptT runner a = do
                  Right r -> return r
 
 runDynamoCloud :: AWS.Env -> MyAwsStack a -> IO (Either InterpreterError a)
-runDynamoCloud env x = AWS.runResourceT $ AWS.runAWST env $ runExceptT x
+runDynamoCloud awsEnv x = AWS.runResourceT $ AWS.runAWST awsEnv $ runExceptT x
 
 main :: IO ()
 main = Opt.execParser opts >>= start
