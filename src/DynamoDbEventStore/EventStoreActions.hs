@@ -477,7 +477,8 @@ getFirstPageBackward position@GlobalFeedPosition{..} = do
 
 getGlobalFeedBackward :: Maybe GlobalFeedPosition -> Producer (GlobalFeedPosition, EventKey) UserProgramStack ()
 getGlobalFeedBackward Nothing = do
-  lastItem <- lift $ P.last (getPageItemsForward 0) -- todo make this much more efficient
+  lastKnownPage <- lift GlobalFeedWriter.getLatestStoredPage
+  lastItem <- lift $ P.last (getPageItemsForward lastKnownPage)
   let lastPosition = fst <$> lastItem
   maybe (return ()) (getGlobalFeedBackward . Just) lastPosition
 

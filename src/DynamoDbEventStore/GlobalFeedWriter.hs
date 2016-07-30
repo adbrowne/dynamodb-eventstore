@@ -12,6 +12,7 @@ module DynamoDbEventStore.GlobalFeedWriter (
   entryEventCount,
   writePage,
   getPageDynamoKey,
+  getLatestStoredPage,
   emptyGlobalFeedWriterState,
   GlobalFeedPosition(..),
   EventStoreActionError(..)) where
@@ -141,6 +142,9 @@ readHeadData = do
       return HeadData {
         headDataCurrentPage = currentPage,
         headDataVersion = dynamoReadResultVersion }
+
+getLatestStoredPage :: DynamoCmdWithErrors m => m PageKey
+getLatestStoredPage = headDataCurrentPage <$> readHeadData
 
 trySetLatestPage :: DynamoCmdWithErrors m => PageKey -> m ()
 trySetLatestPage latestPage = do

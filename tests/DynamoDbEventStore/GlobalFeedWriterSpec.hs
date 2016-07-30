@@ -672,7 +672,7 @@ whenIndexing1000ItemsIopsIsMinimal =
     expectedWriteState = Map.fromList [
       ((UnpagedRead,IopsScanUnpaged,"indexer"),1000)
      ,((TableRead,IopsGetItem,"indexer"),1019)
-     ,((TableRead,IopsGetItem,"globalFeedReader"),231)
+     ,((TableRead,IopsGetItem,"globalFeedReader"),232)
      ,((TableRead,IopsQuery,"indexer"),1984)
      ,((TableRead,IopsQuery,"globalFeedReader"),2184)
      ,((TableRead,IopsQuery,"writeEvents"),999)
