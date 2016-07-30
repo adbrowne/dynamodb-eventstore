@@ -52,6 +52,7 @@ library
                        aeson-pretty,
                        random >= 1.1,
                        transformers >= 0.4,
+                       transformers-base,
                        mtl,
                        text-format,
                        aeson,

@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveFunctor              #-}
 {-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE OverloadedStrings          #-}
@@ -36,6 +37,7 @@ module DynamoDbEventStore.EventStoreCommands(
   ) where
 import           BasicPrelude
 import           Control.Lens              hiding ((.=))
+import           Control.Monad.Base
 import           Control.Monad.Except
 import           Control.Monad.Free.Church
 import           Control.Monad.Free.TH
@@ -210,6 +212,9 @@ data DynamoCmd next =
 makeFree ''DynamoCmd
 
 type DynamoCmdM = F DynamoCmd
+
+instance MonadBase (F DynamoCmd) (F DynamoCmd) where
+  liftBase = id
 
 readField :: (MonadError e m) => (Text -> e) -> Text -> Lens' AttributeValue (Maybe a) -> DynamoValues -> m a
 readField toError fieldName fieldType values =
