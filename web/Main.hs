@@ -23,6 +23,10 @@ import           Network.Wai.Handler.Warp
 import           Options.Applicative                    as Opt
 import           System.Exit
 import           System.IO                              (stdout)
+import           System.Metrics                         hiding (Value)
+import qualified System.Metrics.Counter                 as Counter
+import qualified System.Metrics.Distribution            as Distribution
+import           System.Remote.Monitoring
 import           Web.Scotty
 
 runDynamoLocal :: Env -> MyAwsStack a -> IO (Either InterpreterError a)
@@ -33,9 +37,9 @@ runDynamoLocal env x = do
 runDynamoCloud :: Env -> MyAwsStack a -> IO (Either InterpreterError a)
 runDynamoCloud env x = runResourceT $ runAWST env $ runExceptT x
 
-runMyAws :: (MyAwsStack a -> ExceptT InterpreterError IO a) -> Text -> DynamoCmdM a -> ExceptT InterpreterError IO a
-runMyAws runner tableName program =
-  runner $ runProgram tableName program
+runMyAws :: (MyAwsStack a -> ExceptT InterpreterError IO a) -> Text -> MetricLogs -> DynamoCmdM a -> ExceptT InterpreterError IO a
+runMyAws runner tableName metrics program =
+  runner $ runProgram tableName metrics program
 
 printEvent :: (MonadIO m) => EventStoreAction -> m EventStoreAction
 printEvent a = do
@@ -123,9 +127,32 @@ startWebServer runner parsedConfig = do
   putStrLn $ "Server listenting on: " <> baseUri
   void $ scottyApp (app (printEvent >=> realRunner baseUri (buildActionRunner runner))) >>= runSettings warpSettings
 
+startMetrics :: IO MetricLogs
+startMetrics = do
+  metricServer <- forkServer "localhost" 8001
+  let store = serverMetricStore metricServer
+  readItemPair <- createPair store "readItem"
+  writeItemPair <- createPair store "writeItem"
+  updateItemPair <- createPair store "updateItem"
+  queryPair <- createPair store "query"
+  scanPair <- createPair store "scan"
+  return MetricLogs {
+    metricLogsReadItem = readItemPair,
+    metricLogsWriteItem = writeItemPair,
+    metricLogsUpdateItem = updateItemPair,
+    metricLogsQuery = queryPair,
+    metricLogsScan = scanPair}
+  where
+    createPair store name =  do
+      theCounter <- createCounter ("dynamodb-eventstore." <> name) store
+      theDistribution <- createDistribution ("dynamodb-eventstore." <>  name <> "_ms") store
+      return $ MetricLogsPair (Counter.inc theCounter) (Distribution.add theDistribution)
+
+
 start :: Config -> ExceptT ApplicationError IO ()
 start parsedConfig = do
   let tableName = (T.pack . configTableName) parsedConfig
+  metrics <- liftIO startMetrics
   logger <- liftIO $ newLogger AWS.Error stdout
   env <- set envLogger logger <$> newEnv Sydney Discover
   let interperter = (if configLocalDynamoDB parsedConfig then runDynamoLocal else runDynamoCloud) env
@@ -134,11 +161,11 @@ start parsedConfig = do
   let shouldCreateTable = configCreateTable parsedConfig
   when (not tableAlreadyExists && shouldCreateTable)
     (putStrLn "Creating table..." >> toApplicationError interperter (buildTable tableName) >> putStrLn "Table created")
-  if tableAlreadyExists || shouldCreateTable then runApp runner tableName else failNoTable
+  if tableAlreadyExists || shouldCreateTable then runApp runner tableName metrics else failNoTable
   where
-   runApp :: (forall a. MyAwsStack a -> ExceptT InterpreterError IO a) -> Text -> ExceptT ApplicationError IO ()
-   runApp runner tableName = do
-     let runner' = runMyAws runner tableName
+   runApp :: (forall a. MyAwsStack a -> ExceptT InterpreterError IO a) -> Text -> MetricLogs -> ExceptT ApplicationError IO ()
+   runApp runner tableName metrics = do
+     let runner' = runMyAws runner tableName metrics
      liftIO $ forkGlobalFeedWriter runner'
      liftIO $ startWebServer runner' parsedConfig
    failNoTable = putStrLn "Table does not exist"

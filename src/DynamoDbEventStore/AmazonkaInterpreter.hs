@@ -2,10 +2,20 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE RankNTypes            #-}
+{-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE TypeFamilies          #-}
 
-module DynamoDbEventStore.AmazonkaInterpreter (runProgram, buildTable, runLocalDynamo, evalProgram, doesTableExist, MyAwsStack, InterpreterError(..)) where
+module DynamoDbEventStore.AmazonkaInterpreter (
+  runProgram,
+  buildTable,
+  runLocalDynamo,
+  evalProgram,
+  doesTableExist,
+  MyAwsStack,
+  MetricLogsPair(..),
+  MetricLogs(..),
+  InterpreterError(..)) where
 
 import           BasicPrelude
 import           Control.Concurrent                    (threadDelay)
@@ -14,7 +24,6 @@ import           Control.Lens
 import           Control.Monad.Catch
 import           Control.Monad.Except
 import           Control.Monad.Free.Church
-import           Control.Monad.Representable.Reader
 import           Control.Monad.Trans.Resource
 import qualified Data.HashMap.Strict                   as HM
 import           Data.List.NonEmpty                    (NonEmpty (..))
@@ -22,11 +31,11 @@ import qualified Data.Text                             as T
 import qualified DynamoDbEventStore.Constants          as Constants
 import           DynamoDbEventStore.EventStoreCommands hiding (readField)
 import qualified DynamoDbEventStore.EventStoreCommands as EventStoreCommands
+import           System.CPUTime
 import           System.Random
 import           TextShow
 
 import           Control.Monad.Trans.AWS
-import           Network.AWS                           (MonadAWS)
 import           Network.AWS.DynamoDB
 import           Network.AWS.Waiter
 
@@ -93,16 +102,37 @@ eitherToExcept :: (MonadError e m) => Either e a -> m a
 eitherToExcept (Left s) = throwError s
 eitherToExcept (Right a) = return a
 
-runCmd :: (Typeable m, MonadCatch m, MonadAWS m, MonadIO m, MonadError InterpreterError m, MonadResource m, MonadReader r m, HasEnv r) => Text -> DynamoCmd (m a) -> m a
-runCmd _ (Wait' milliseconds n) = do
+data MetricLogsPair = MetricLogsPair {
+  metricLogsPairCount  :: IO (),
+  metricLogsPairTimeMs :: Double -> IO () }
+
+data MetricLogs = MetricLogs {
+  metricLogsReadItem   :: MetricLogsPair,
+  metricLogsWriteItem  :: MetricLogsPair,
+  metricLogsQuery      :: MetricLogsPair,
+  metricLogsUpdateItem :: MetricLogsPair,
+  metricLogsScan       :: MetricLogsPair }
+
+timeAction :: MonadIO m => MetricLogsPair -> m a -> m a
+timeAction MetricLogsPair{..} action = do
+  startTime <- liftIO getCPUTime
+  a <- action
+  endTime <- liftIO getCPUTime
+  let t = fromIntegral (endTime-startTime) * 1e-9
+  liftIO $ metricLogsPairTimeMs t
+  liftIO metricLogsPairCount
+  return a
+
+runCmd :: Text -> MetricLogs -> DynamoCmd (MyAwsStack a) -> MyAwsStack a
+runCmd _ _ (Wait' milliseconds n) = do
   liftIO $ threadDelay (milliseconds * 1000)
   n
-runCmd tn (ReadFromDynamo' eventKey n) = do
+runCmd tn MetricLogs{..} (ReadFromDynamo' eventKey n) = do
   let key = getDynamoKeyForEvent eventKey
   let req = getItem tn
             & set giKey key
             & set giConsistentRead (Just True)
-  resp <- send req
+  resp <- timeAction metricLogsReadItem $ send req
   result <- getResult resp
   n result
   where
@@ -112,14 +142,14 @@ runCmd tn (ReadFromDynamo' eventKey n) = do
       in
         if item == mempty then return Nothing
         else eitherToExcept (Just <$> toDynamoReadResult item)
-runCmd tn (QueryTable' direction streamId limit exclusiveStartKey n) =
+runCmd tn MetricLogs{..} (QueryTable' direction streamId limit exclusiveStartKey n) =
   getBackward
     where
       setStartKey Nothing = id
       setStartKey (Just startKey) = set qExclusiveStartKey (HM.fromList [("streamId", set avS (Just streamId) attributeValue),("eventNumber", set avN (Just $ show startKey) attributeValue)])
       scanForward = direction == QueryDirectionForward
       getBackward = do
-        resp <- send $
+        resp <- timeAction metricLogsQuery $ send $
                 query tn
                 & setStartKey exclusiveStartKey
                 & set qConsistentRead (Just True)
@@ -130,7 +160,7 @@ runCmd tn (QueryTable' direction streamId limit exclusiveStartKey n) =
         let items :: [HM.HashMap Text AttributeValue] = view qrsItems resp
         let parsedItems = fmap toDynamoReadResult items
         allErrors parsedItems >>= n
-runCmd tn (UpdateItem' DynamoKey { dynamoKeyKey = streamId, dynamoKeyEventNumber = eventNumber } values n) =
+runCmd tn MetricLogs{..} (UpdateItem' DynamoKey { dynamoKeyKey = streamId, dynamoKeyEventNumber = eventNumber } values n) =
   go
   where
     getSetExpressions :: Text -> ValueUpdate -> [Text] -> [Text]
@@ -166,9 +196,9 @@ runCmd tn (UpdateItem' DynamoKey { dynamoKeyKey = streamId, dynamoKeyEventNumber
                  set uiExpressionAttributeValues expressionAttributeValues
                 else
                  id
-        _ <- send req0
+        _ <- timeAction metricLogsUpdateItem $ send req0
         n True
-runCmd tn (WriteToDynamo' DynamoKey { dynamoKeyKey = streamId, dynamoKeyEventNumber = eventNumber } values version n) =
+runCmd tn MetricLogs{..} (WriteToDynamo' DynamoKey { dynamoKeyKey = streamId, dynamoKeyEventNumber = eventNumber } values version n) =
   catches writeItem [handler _ConditionalCheckFailedException (\_ -> n DynamoWriteWrongVersion)]
   where
     addVersionChecks 0 req =
@@ -187,20 +217,20 @@ runCmd tn (WriteToDynamo' DynamoKey { dynamoKeyKey = streamId, dynamoKeyEventNum
               putItem tn
               & set piItem item
               & addVersionChecks version
-        _ <- send req0
+        _ <- timeAction metricLogsWriteItem $ send req0
         n DynamoWriteSuccess
-runCmd tn (ScanNeedsPaging' n) =
+runCmd tn MetricLogs{..} (ScanNeedsPaging' n) =
   scanUnpaged
     where
       scanUnpaged = do
-        resp <- send $
+        resp <- timeAction metricLogsScan $ send $
              scan tn
              & set sIndexName (Just unpagedIndexName)
         allErrors (fmap fromAttributesToDynamoKey (view srsItems resp)) >>= n
-runCmd _tn (SetPulseStatus' _ n) = n
-runCmd _tn (Log' _level msg n) = do
+runCmd _tn _ (SetPulseStatus' _ n) = n
+runCmd _tn _ (Log' _level msg n) = do
   liftIO $ print msg
-  n -- todo: error "Log' unimplemented"
+  n
 
 buildTable :: Text -> MyAwsStack ()
 buildTable tableName = do
@@ -232,12 +262,12 @@ doesTableExist tableName =
       let tableDesc = view drsTable resp
       return $ isJust tableDesc
 
-evalProgram :: DynamoCmdM a -> IO (Either InterpreterError a)
-evalProgram program = do
+evalProgram :: MetricLogs -> DynamoCmdM a -> IO (Either InterpreterError a)
+evalProgram metrics program = do
   tableNameId :: Int <- getStdRandom (randomR (1,9999999999))
   let tableName = "testtable-" ++ show tableNameId
   _ <- runLocalDynamo $ buildTable tableName
-  runLocalDynamo $ runProgram tableName program
+  runLocalDynamo $ runProgram tableName metrics program
 
 runLocalDynamo :: MyAwsStack b -> IO (Either InterpreterError b)
 runLocalDynamo x = do
@@ -253,5 +283,5 @@ data InterpreterError =
 
 type MyAwsStack = (ExceptT InterpreterError) (AWST (ResourceT IO))
 
-runProgram :: Text -> DynamoCmdM a -> MyAwsStack a
-runProgram tableName = iterM (runCmd tableName)
+runProgram :: Text -> MetricLogs -> DynamoCmdM a -> MyAwsStack a
+runProgram tableName metrics = iterM (runCmd tableName metrics)

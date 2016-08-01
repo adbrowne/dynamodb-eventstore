@@ -363,6 +363,18 @@ makeTestEntry n =
     , entryDataStream = "mystream"
     , entryDataBody = Just . TL.encodeUtf8 . TL.fromStrict $ "{ \"a\":" <> show n <> "}"}
 
+nullMetrics :: MetricLogs
+nullMetrics = MetricLogs {
+    metricLogsReadItem = doNothingPair,
+    metricLogsWriteItem = doNothingPair,
+    metricLogsUpdateItem = doNothingPair,
+    metricLogsQuery = doNothingPair,
+    metricLogsScan = doNothingPair}
+  where
+    doNothingPair = MetricLogsPair {
+        metricLogsPairCount = return (),
+        metricLogsPairTimeMs = const $ return () }
+
 start :: Config -> IO ()
 start Config { configCommand = DownloadGlobalStream DownloadGlobalStreamConfig{..}} = do
   responses <- followNext downloadGlobalStreamStartUrl
@@ -392,7 +404,7 @@ start Config { configCommand = SpeedTest } = do
   logger <- liftIO $ AWS.newLogger AWS.Error System.IO.stdout
   awsEnv <- set AWS.envLogger logger <$> AWS.newEnv AWS.Sydney AWS.Discover
   let runner = toExceptT $ runDynamoCloud awsEnv
-  let runner' = runMyAws runner "estest2"
+  let runner' = runMyAws runner "estest2" nullMetrics
   result <- runExceptT $ runner' writePages
   print result
   return ()
@@ -411,9 +423,9 @@ writePages = do
       lift $ log' Debug ("Writing page" <> show pageNumber)
       GlobalFeedWriter.writePage (PageKey pageNumber) feedEntries 0
 
-runMyAws :: (MyAwsStack a -> ExceptT InterpreterError IO a) -> Text -> DynamoCmdM a -> ExceptT InterpreterError IO a
-runMyAws runner tableName program =
-  runner $ runProgram tableName program
+runMyAws :: (MyAwsStack a -> ExceptT InterpreterError IO a) -> Text -> MetricLogs -> DynamoCmdM a -> ExceptT InterpreterError IO a
+runMyAws runner tableName metrics program =
+  runner $ runProgram tableName metrics program
 
 toExceptT :: forall a. (MyAwsStack a -> IO (Either InterpreterError a)) -> (MyAwsStack a -> ExceptT InterpreterError IO a)
 toExceptT runner a = do
