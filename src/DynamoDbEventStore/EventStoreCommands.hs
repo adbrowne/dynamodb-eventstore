@@ -20,6 +20,8 @@ module DynamoDbEventStore.EventStoreCommands(
   queryTable',
   updateItem',
   setPulseStatus',
+  writeCompletePageQueue',
+  tryReadCompletePageQueue',
   readField,
   DynamoCmdM,
   DynamoVersion,
@@ -33,7 +35,8 @@ module DynamoDbEventStore.EventStoreCommands(
   DynamoReadResult(..),
   DynamoValues,
   ValueUpdate(..),
-  PageKey(..)
+  PageKey(..),
+  FeedEntry(..)
   ) where
 import           BasicPrelude
 import           Control.Lens              hiding ((.=))
@@ -141,6 +144,29 @@ instance ToJSON EventKey where
            , "eventNumber" .= eventNumber
            ]
 
+data FeedEntry = FeedEntry {
+  feedEntryStream :: StreamId,
+  feedEntryNumber :: Int64,
+  feedEntryCount  :: Int
+} deriving (Eq, Show)
+
+instance QC.Arbitrary FeedEntry where
+  arbitrary =
+    FeedEntry <$> QC.arbitrary
+              <*> QC.arbitrary
+              <*> QC.arbitrary
+
+instance FromJSON FeedEntry where
+    parseJSON (Object v) = FeedEntry <$>
+                           v .: "s" <*>
+                           v .: "n" <*>
+                           v .: "c"
+    parseJSON _                = mempty
+
+instance ToJSON FeedEntry where
+    toJSON (FeedEntry stream number entryCount) =
+        object ["s" .= stream, "n" .= number, "c" .=entryCount]
+
 data DynamoKey = DynamoKey {
   dynamoKeyKey         :: Text,
   dynamoKeyEventNumber :: Int64
@@ -196,6 +222,11 @@ data DynamoCmd next =
     (Bool -> next) |
   ScanNeedsPaging'
     ([DynamoKey] -> next) |
+  WriteCompletePageQueue'
+    (PageKey, Seq FeedEntry)
+    next |
+  TryReadCompletePageQueue'
+    (Maybe (PageKey, Seq FeedEntry) -> next) |
   Wait'
     Int
     next |

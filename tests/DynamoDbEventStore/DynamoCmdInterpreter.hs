@@ -191,6 +191,8 @@ setPulseStatus isActive = do
 runCmd :: DynamoCmdMFree r -> InterpreterOperationStack m r (Either r (DynamoCmdMFree r))
 runCmd (Free.Pure r) = return $ Left r
 runCmd (Free.Free (Wait' _ r)) = Right <$> return r
+runCmd (Free.Free (WriteCompletePageQueue' _ r)) = Right <$> return r -- todo implement
+runCmd (Free.Free (TryReadCompletePageQueue' r)) = Right <$> return (r Nothing) -- todo implement
 runCmd (Free.Free (QueryTable' direction key maxEvents start r)) = Right <$> queryTable direction key maxEvents start r
 runCmd (Free.Free (WriteToDynamo' key values version r)) = Right <$> writeToDynamo key values version r
 runCmd (Free.Free (UpdateItem' key values r)) = Right <$> updateItem key values r

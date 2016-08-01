@@ -124,6 +124,8 @@ timeAction MetricLogsPair{..} action = do
   return a
 
 runCmd :: Text -> MetricLogs -> DynamoCmd (MyAwsStack a) -> MyAwsStack a
+runCmd _ _ (WriteCompletePageQueue' _ n) = n -- todo implement
+runCmd _ _ (TryReadCompletePageQueue' n) = n Nothing -- todo implement
 runCmd _ _ (Wait' milliseconds n) = do
   liftIO $ threadDelay (milliseconds * 1000)
   n

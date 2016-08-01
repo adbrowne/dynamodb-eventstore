@@ -7,7 +7,6 @@
 
 module DynamoDbEventStore.GlobalFeedWriter (
   main,
-  FeedEntry(..),
   dynamoWriteWithRetry,
   entryEventCount,
   writePage,
@@ -63,29 +62,6 @@ instance QC.Arbitrary GlobalFeedPosition where
   arbitrary = GlobalFeedPosition
                 <$> QC.arbitrary
                 <*> ((\(QC.Positive p) -> p) <$> QC.arbitrary)
-
-data FeedEntry = FeedEntry {
-  feedEntryStream :: StreamId,
-  feedEntryNumber :: Int64,
-  feedEntryCount  :: Int
-} deriving (Eq, Show)
-
-instance QC.Arbitrary FeedEntry where
-  arbitrary =
-    FeedEntry <$> QC.arbitrary
-              <*> QC.arbitrary
-              <*> QC.arbitrary
-
-instance Aeson.FromJSON FeedEntry where
-    parseJSON (Aeson.Object v) = FeedEntry <$>
-                           v Aeson..: "s" <*>
-                           v Aeson..: "n" <*>
-                           v Aeson..: "c"
-    parseJSON _                = mempty
-
-instance Aeson.ToJSON FeedEntry where
-    toJSON (FeedEntry stream number entryCount) =
-        Aeson.object ["s" Aeson..= stream, "n" Aeson..= number, "c" Aeson..=entryCount]
 
 data FeedPage = FeedPage {
   feedPageNumber     :: PageKey,

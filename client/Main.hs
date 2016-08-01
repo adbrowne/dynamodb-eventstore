@@ -414,7 +414,7 @@ writePages = do
   _ <- runExceptT $ evalStateT (mapM_ go [0..1000]) GlobalFeedWriter.emptyGlobalFeedWriterState
   return ()
   where
-    testFeedEntry = GlobalFeedWriter.FeedEntry {
+    testFeedEntry = FeedEntry {
       feedEntryStream = StreamId "Andrew",
       feedEntryNumber = 0,
       feedEntryCount = 1 }

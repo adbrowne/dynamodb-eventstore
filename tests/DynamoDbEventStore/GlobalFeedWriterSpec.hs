@@ -39,8 +39,7 @@ import qualified Test.Tasty.QuickCheck                   as QC
 import           DynamoDbEventStore.DynamoCmdInterpreter
 import           DynamoDbEventStore.EventStoreActions
 import           DynamoDbEventStore.EventStoreCommands
-import           DynamoDbEventStore.GlobalFeedWriter     (EventStoreActionError (..),
-                                                          FeedEntry ())
+import           DynamoDbEventStore.GlobalFeedWriter     (EventStoreActionError (..))
 import qualified DynamoDbEventStore.GlobalFeedWriter     as GlobalFeedWriter
 
 type UploadItem = (Text,Int64,NonEmpty EventEntry)
@@ -457,7 +456,7 @@ testStateItems itemCount =
     postProgram (eventId, eventNumber) = postEventRequestProgram PostEventRequest { perStreamId = streamId, perExpectedVersion = Nothing, perEvents = sampleEventEntry { eventEntryType = (EventType . show) eventNumber, eventEntryEventId = eventId } :| [] }
     requests = take itemCount $ postProgram <$> zip sampleEventIds [(0::Int)..]
     writeState = execProgram "writeEvents" (forM_ requests id) emptyTestState
-    feedEntries = (\x -> GlobalFeedWriter.FeedEntry { feedEntryCount = 1, feedEntryNumber = fromIntegral x, feedEntryStream = StreamId streamId}) <$> [0..itemCount-1]
+    feedEntries = (\x -> FeedEntry { feedEntryCount = 1, feedEntryNumber = fromIntegral x, feedEntryStream = StreamId streamId}) <$> [0..itemCount-1]
     pages = zip  [0..] (Seq.fromList <$> groupByFibs feedEntries)
     writePage' (pageNumber, pageEntries) = GlobalFeedWriter.writePage pageNumber pageEntries 0
     writePagesProgram = runExceptT $ evalStateT (forM_ pages writePage') GlobalFeedWriter.emptyGlobalFeedWriterState

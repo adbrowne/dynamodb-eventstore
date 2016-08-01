@@ -426,8 +426,8 @@ getReadStreamRequestProgram (ReadStreamRequest streamId startEventNumber maxItem
     filterFirstEvent Nothing = P.filter (const True)
     filterFirstEvent (Just v) = P.filter ((>= v) . recordedEventNumber)
 
-feedEntryToEventKeys :: GlobalFeedWriter.FeedEntry -> [EventKey]
-feedEntryToEventKeys GlobalFeedWriter.FeedEntry { GlobalFeedWriter.feedEntryStream = streamId, GlobalFeedWriter.feedEntryNumber = eventNumber, GlobalFeedWriter.feedEntryCount = entryCount } =
+feedEntryToEventKeys :: FeedEntry -> [EventKey]
+feedEntryToEventKeys FeedEntry { feedEntryStream = streamId, feedEntryNumber = eventNumber, feedEntryCount = entryCount } =
   (\number -> EventKey(streamId, number)) <$> take entryCount [eventNumber..]
 
 jsonDecode :: (Aeson.FromJSON a, MonadError EventStoreActionError m) => ByteString -> m a
