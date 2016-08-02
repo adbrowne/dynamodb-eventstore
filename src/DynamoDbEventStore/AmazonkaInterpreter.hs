@@ -26,7 +26,7 @@ module DynamoDbEventStore.AmazonkaInterpreter (
 
 import           BasicPrelude
 import           Control.Concurrent                    (threadDelay)
-import           Control.Concurrent.STM.TQueue
+import           Control.Concurrent.STM
 import           Control.Exception.Lens
 import           Control.Lens
 import           Control.Monad.Catch
@@ -148,8 +148,14 @@ timeAction MetricLogsPair{..} action = do
   return a
 
 runCmd :: Text -> MetricLogs -> DynamoCmd (MyAwsStack a) -> MyAwsStack a
-runCmd _ _ (WriteCompletePageQueue' _ n) = n -- todo implement
-runCmd _ _ (TryReadCompletePageQueue' n) = n Nothing -- todo implement
+runCmd _ _ (WriteCompletePageQueue' item n) = do
+  queue <- view runtimeEnvironmentCompletePageQueue
+  liftIO . atomically $ writeTQueue queue item
+  n
+runCmd _ _ (TryReadCompletePageQueue' n) = do
+  queue <- view runtimeEnvironmentCompletePageQueue
+  item <- liftIO . atomically $ tryReadTQueue queue
+  n item
 runCmd _ _ (Wait' milliseconds n) = do
   liftIO $ threadDelay (milliseconds * 1000)
   n
