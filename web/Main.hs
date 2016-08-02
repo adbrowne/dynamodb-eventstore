@@ -38,9 +38,9 @@ runDynamoLocal env x = do
 runDynamoCloud :: RuntimeEnvironment -> MyAwsStack a -> IO (Either InterpreterError a)
 runDynamoCloud env x = runResourceT $ runAWST env $ runExceptT x
 
-runMyAws :: (MyAwsStack a -> ExceptT InterpreterError IO a) -> Text -> MetricLogs -> DynamoCmdM a -> ExceptT InterpreterError IO a
-runMyAws runner tableName metrics program =
-  runner $ runProgram tableName metrics program
+runMyAws :: (MyAwsStack a -> ExceptT InterpreterError IO a) -> Text -> DynamoCmdM a -> ExceptT InterpreterError IO a
+runMyAws runner tableName program =
+  runner $ runProgram tableName program
 
 printEvent :: (MonadIO m) => EventStoreAction -> m EventStoreAction
 printEvent a = do
@@ -167,11 +167,11 @@ start parsedConfig = do
   let shouldCreateTable = configCreateTable parsedConfig
   when (not tableAlreadyExists && shouldCreateTable)
     (putStrLn "Creating table..." >> toApplicationError interperter (buildTable tableName) >> putStrLn "Table created")
-  if tableAlreadyExists || shouldCreateTable then runApp runner tableName metrics else failNoTable
+  if tableAlreadyExists || shouldCreateTable then runApp runner tableName else failNoTable
   where
-   runApp :: (forall a. MyAwsStack a -> ExceptT InterpreterError IO a) -> Text -> MetricLogs -> ExceptT ApplicationError IO ()
-   runApp runner tableName metrics = do
-     let runner' = runMyAws runner tableName metrics
+   runApp :: (forall a. MyAwsStack a -> ExceptT InterpreterError IO a) -> Text -> ExceptT ApplicationError IO ()
+   runApp runner tableName = do
+     let runner' = runMyAws runner tableName
      liftIO $ forkGlobalFeedWriter runner'
      liftIO $ startWebServer runner' parsedConfig
    failNoTable = putStrLn "Table does not exist"

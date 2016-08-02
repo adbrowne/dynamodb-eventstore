@@ -32,6 +32,7 @@ import           Control.Lens
 import           Control.Monad.Catch
 import           Control.Monad.Except
 import           Control.Monad.Free.Church
+import           Control.Monad.Reader
 import           Control.Monad.Trans.Resource
 import qualified Data.HashMap.Strict                   as HM
 import           Data.List.NonEmpty                    (NonEmpty (..))
@@ -137,8 +138,9 @@ $(makeLenses ''RuntimeEnvironment)
 instance HasEnv RuntimeEnvironment where
   environment = runtimeEnvironmentAmazonkaEnv
 
-timeAction :: MonadIO m => MetricLogsPair -> m a -> m a
-timeAction MetricLogsPair{..} action = do
+timeAction :: (MonadIO m, MonadReader RuntimeEnvironment m) => (MetricLogs -> MetricLogsPair) -> m a -> m a
+timeAction getPair action = do
+  MetricLogsPair{..} <- views runtimeEnvironmentMetricLogs getPair
   startTime <- liftIO getCPUTime
   a <- action
   endTime <- liftIO getCPUTime
@@ -147,19 +149,19 @@ timeAction MetricLogsPair{..} action = do
   liftIO metricLogsPairCount
   return a
 
-runCmd :: Text -> MetricLogs -> DynamoCmd (MyAwsStack a) -> MyAwsStack a
-runCmd _ _ (WriteCompletePageQueue' item n) = do
+runCmd :: Text -> DynamoCmd (MyAwsStack a) -> MyAwsStack a
+runCmd _ (WriteCompletePageQueue' item n) = do
   queue <- view runtimeEnvironmentCompletePageQueue
   liftIO . atomically $ writeTQueue queue item
   n
-runCmd _ _ (TryReadCompletePageQueue' n) = do
+runCmd _ (TryReadCompletePageQueue' n) = do
   queue <- view runtimeEnvironmentCompletePageQueue
   item <- liftIO . atomically $ tryReadTQueue queue
   n item
-runCmd _ _ (Wait' milliseconds n) = do
+runCmd _ (Wait' milliseconds n) = do
   liftIO $ threadDelay (milliseconds * 1000)
   n
-runCmd tn MetricLogs{..} (ReadFromDynamo' eventKey n) = do
+runCmd tn (ReadFromDynamo' eventKey n) = do
   let key = getDynamoKeyForEvent eventKey
   let req = getItem tn
             & set giKey key
@@ -174,7 +176,7 @@ runCmd tn MetricLogs{..} (ReadFromDynamo' eventKey n) = do
       in
         if item == mempty then return Nothing
         else eitherToExcept (Just <$> toDynamoReadResult item)
-runCmd tn MetricLogs{..} (QueryTable' direction streamId limit exclusiveStartKey n) =
+runCmd tn (QueryTable' direction streamId limit exclusiveStartKey n) =
   getBackward
     where
       setStartKey Nothing = id
@@ -192,7 +194,7 @@ runCmd tn MetricLogs{..} (QueryTable' direction streamId limit exclusiveStartKey
         let items :: [HM.HashMap Text AttributeValue] = view qrsItems resp
         let parsedItems = fmap toDynamoReadResult items
         allErrors parsedItems >>= n
-runCmd tn MetricLogs{..} (UpdateItem' DynamoKey { dynamoKeyKey = streamId, dynamoKeyEventNumber = eventNumber } values n) =
+runCmd tn (UpdateItem' DynamoKey { dynamoKeyKey = streamId, dynamoKeyEventNumber = eventNumber } values n) =
   go
   where
     getSetExpressions :: Text -> ValueUpdate -> [Text] -> [Text]
@@ -230,7 +232,7 @@ runCmd tn MetricLogs{..} (UpdateItem' DynamoKey { dynamoKeyKey = streamId, dynam
                  id
         _ <- timeAction metricLogsUpdateItem $ send req0
         n True
-runCmd tn MetricLogs{..} (WriteToDynamo' DynamoKey { dynamoKeyKey = streamId, dynamoKeyEventNumber = eventNumber } values version n) =
+runCmd tn (WriteToDynamo' DynamoKey { dynamoKeyKey = streamId, dynamoKeyEventNumber = eventNumber } values version n) =
   catches writeItem [handler _ConditionalCheckFailedException (\_ -> n DynamoWriteWrongVersion)]
   where
     addVersionChecks 0 req =
@@ -251,7 +253,7 @@ runCmd tn MetricLogs{..} (WriteToDynamo' DynamoKey { dynamoKeyKey = streamId, dy
               & addVersionChecks version
         _ <- timeAction metricLogsWriteItem $ send req0
         n DynamoWriteSuccess
-runCmd tn MetricLogs{..} (ScanNeedsPaging' n) =
+runCmd tn (ScanNeedsPaging' n) =
   scanUnpaged
     where
       scanUnpaged = do
@@ -259,8 +261,8 @@ runCmd tn MetricLogs{..} (ScanNeedsPaging' n) =
              scan tn
              & set sIndexName (Just unpagedIndexName)
         allErrors (fmap fromAttributesToDynamoKey (view srsItems resp)) >>= n
-runCmd _tn _ (SetPulseStatus' _ n) = n
-runCmd _tn _ (Log' _level msg n) = do
+runCmd _tn (SetPulseStatus' _ n) = n
+runCmd _tn (Log' _level msg n) = do
   liftIO $ print msg
   n
 
@@ -305,7 +307,7 @@ evalProgram metrics program = do
         _runtimeEnvironmentCompletePageQueue = thisCompletePageQueue,
         _runtimeEnvironmentAmazonkaEnv = awsEnv }
   _ <- runLocalDynamo runtimeEnvironment $ buildTable tableName
-  runLocalDynamo runtimeEnvironment $ runProgram tableName metrics program
+  runLocalDynamo runtimeEnvironment $ runProgram tableName program
 
 runLocalDynamo :: RuntimeEnvironment -> MyAwsStack b -> IO (Either InterpreterError b)
 runLocalDynamo runtimeEnvironment x = do
@@ -316,5 +318,5 @@ runLocalDynamo runtimeEnvironment x = do
 
 type MyAwsStack = ((ExceptT InterpreterError) (AWST' RuntimeEnvironment (ResourceT IO)))
 
-runProgram :: Text -> MetricLogs -> DynamoCmdM a -> MyAwsStack a
-runProgram tableName metrics = iterM (runCmd tableName metrics)
+runProgram :: Text -> DynamoCmdM a -> MyAwsStack a
+runProgram tableName = iterM (runCmd tableName)

@@ -410,7 +410,7 @@ start Config { configCommand = SpeedTest } = do
         _runtimeEnvironmentCompletePageQueue = thisCompletePageQueue,
         _runtimeEnvironmentAmazonkaEnv = awsEnv }
   let runner = toExceptT $ runDynamoCloud runtimeEnvironment
-  let runner' = runMyAws runner "estest2" nullMetrics
+  let runner' = runMyAws runner "estest2"
   result <- runExceptT $ runner' writePages
   print result
   return ()
@@ -429,14 +429,14 @@ writePages = do
       lift $ log' Debug ("Writing page" <> show pageNumber)
       GlobalFeedWriter.writePage (PageKey pageNumber) feedEntries 0
 
-runMyAws :: (MyAwsStack a -> ExceptT InterpreterError IO a) -> Text -> MetricLogs -> DynamoCmdM a -> ExceptT InterpreterError IO a
-runMyAws runner tableName metrics program =
-  runner $ runProgram tableName metrics program
+runMyAws :: (MyAwsStack a -> ExceptT InterpreterError IO a) -> Text -> DynamoCmdM a -> ExceptT InterpreterError IO a
+runMyAws runner tableName program =
+  runner $ runProgram tableName program
 
 toExceptT :: forall a. (MyAwsStack a -> IO (Either InterpreterError a)) -> (MyAwsStack a -> ExceptT InterpreterError IO a)
 toExceptT runner a = do
   result <- liftIO $ runner a
-  case result of Left s -> throwError $ s
+  case result of Left s -> throwError s
                  Right r -> return r
 
 runDynamoCloud :: RuntimeEnvironment -> MyAwsStack a -> IO (Either InterpreterError a)
