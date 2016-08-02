@@ -5,6 +5,7 @@
 module Main where
 
 import           BasicPrelude
+import           Control.Concurrent.STM.TQueue
 import           Control.Lens                           hiding (children,
                                                          element)
 import           Control.Monad.Except
@@ -403,7 +404,12 @@ start Config { configCommand = CompareDownload compareDownloadConfig } = do
 start Config { configCommand = SpeedTest } = do
   logger <- liftIO $ AWS.newLogger AWS.Error System.IO.stdout
   awsEnv <- set AWS.envLogger logger <$> AWS.newEnv AWS.Sydney AWS.Discover
-  let runner = toExceptT $ runDynamoCloud awsEnv
+  thisCompletePageQueue <- newTQueueIO
+  let runtimeEnvironment = RuntimeEnvironment {
+        _runtimeEnvironmentMetricLogs = nullMetrics,
+        _runtimeEnvironmentCompletePageQueue = thisCompletePageQueue,
+        _runtimeEnvironmentAmazonkaEnv = awsEnv }
+  let runner = toExceptT $ runDynamoCloud runtimeEnvironment
   let runner' = runMyAws runner "estest2" nullMetrics
   result <- runExceptT $ runner' writePages
   print result
@@ -433,8 +439,9 @@ toExceptT runner a = do
   case result of Left s -> throwError $ s
                  Right r -> return r
 
-runDynamoCloud :: AWS.Env -> MyAwsStack a -> IO (Either InterpreterError a)
-runDynamoCloud awsEnv x = AWS.runResourceT $ AWS.runAWST awsEnv $ runExceptT x
+runDynamoCloud :: RuntimeEnvironment -> MyAwsStack a -> IO (Either InterpreterError a)
+runDynamoCloud runtimeEnvironment x =
+  AWS.runResourceT $ AWS.runAWST runtimeEnvironment $ runExceptT x
 
 main :: IO ()
 main = Opt.execParser opts >>= start

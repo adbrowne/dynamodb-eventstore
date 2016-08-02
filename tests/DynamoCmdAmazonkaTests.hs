@@ -6,6 +6,7 @@ module DynamoCmdAmazonkaTests where
 import           BasicPrelude
 import           Control.Lens
 import qualified Data.HashMap.Lazy                      as HM
+import qualified Data.Sequence                          as Seq
 import           DynamoDbEventStore.AmazonkaInterpreter (InterpreterError)
 import qualified DynamoDbEventStore.Constants           as Constants
 import           DynamoDbEventStore.EventStoreCommands
@@ -34,7 +35,17 @@ sampleRead = readFromDynamo' testKey
 tests :: (forall a. DynamoCmdM a -> IO (Either InterpreterError a)) -> [TestTree]
 tests evalProgram =
   [
-    testCase "Can read event" $
+    testCase "Can write and read to complete page queue" $
+        let
+          queueItem = (PageKey 1, Seq.empty)
+          actions = do
+            writeCompletePageQueue' queueItem >> tryReadCompletePageQueue'
+          evt = evalProgram actions
+          expected = Right . Just $ queueItem
+        in do
+          r <- evt
+          assertEqual "Queue item is read back" expected r
+    , testCase "Can read event" $
         let
           actions = do
             _ <- testWrite sampleValuesNeedsPaging 0

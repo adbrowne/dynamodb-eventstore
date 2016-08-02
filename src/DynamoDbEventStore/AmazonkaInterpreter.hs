@@ -1,10 +1,13 @@
-{-# LANGUAGE FlexibleContexts      #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE OverloadedStrings     #-}
-{-# LANGUAGE RankNTypes            #-}
-{-# LANGUAGE RecordWildCards       #-}
-{-# LANGUAGE ScopedTypeVariables   #-}
-{-# LANGUAGE TypeFamilies          #-}
+{-# LANGUAGE FlexibleContexts       #-}
+{-# LANGUAGE FlexibleInstances      #-}
+{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE MultiParamTypeClasses  #-}
+{-# LANGUAGE OverloadedStrings      #-}
+{-# LANGUAGE RankNTypes             #-}
+{-# LANGUAGE RecordWildCards        #-}
+{-# LANGUAGE ScopedTypeVariables    #-}
+{-# LANGUAGE TemplateHaskell        #-}
+{-# LANGUAGE TypeFamilies           #-}
 
 module DynamoDbEventStore.AmazonkaInterpreter (
   runProgram,
@@ -12,13 +15,18 @@ module DynamoDbEventStore.AmazonkaInterpreter (
   runLocalDynamo,
   evalProgram,
   doesTableExist,
+  runtimeEnvironmentCompletePageQueue,
+  runtimeEnvironmentMetricLogs,
+  runtimeEnvironmentAmazonkaEnv,
   MyAwsStack,
+  RuntimeEnvironment(..),
   MetricLogsPair(..),
   MetricLogs(..),
   InterpreterError(..)) where
 
 import           BasicPrelude
 import           Control.Concurrent                    (threadDelay)
+import           Control.Concurrent.STM.TQueue
 import           Control.Exception.Lens
 import           Control.Lens
 import           Control.Monad.Catch
@@ -49,6 +57,12 @@ fieldPagingRequired :: Text
 fieldPagingRequired = Constants.needsPagingKey
 unpagedIndexName :: Text
 unpagedIndexName = "unpagedIndex"
+
+data InterpreterError =
+  FieldMissing Text |
+  EventNumberFormat Text |
+  EventVersionFormat Text
+  deriving (Show, Eq)
 
 getDynamoKeyForEvent :: DynamoKey -> HM.HashMap Text AttributeValue
 getDynamoKeyForEvent (DynamoKey hashKey rangeKey) =
@@ -112,6 +126,16 @@ data MetricLogs = MetricLogs {
   metricLogsQuery      :: MetricLogsPair,
   metricLogsUpdateItem :: MetricLogsPair,
   metricLogsScan       :: MetricLogsPair }
+
+data RuntimeEnvironment = RuntimeEnvironment {
+  _runtimeEnvironmentMetricLogs        :: MetricLogs,
+  _runtimeEnvironmentCompletePageQueue :: TQueue (PageKey, Seq FeedEntry),
+  _runtimeEnvironmentAmazonkaEnv       :: Env}
+
+$(makeLenses ''RuntimeEnvironment)
+
+instance HasEnv RuntimeEnvironment where
+  environment = runtimeEnvironmentAmazonkaEnv
 
 timeAction :: MonadIO m => MetricLogsPair -> m a -> m a
 timeAction MetricLogsPair{..} action = do
@@ -268,22 +292,23 @@ evalProgram :: MetricLogs -> DynamoCmdM a -> IO (Either InterpreterError a)
 evalProgram metrics program = do
   tableNameId :: Int <- getStdRandom (randomR (1,9999999999))
   let tableName = "testtable-" ++ show tableNameId
-  _ <- runLocalDynamo $ buildTable tableName
-  runLocalDynamo $ runProgram tableName metrics program
+  thisCompletePageQueue <- newTQueueIO
+  awsEnv <- newEnv Sydney Discover
+  let runtimeEnvironment = RuntimeEnvironment {
+        _runtimeEnvironmentMetricLogs = metrics,
+        _runtimeEnvironmentCompletePageQueue = thisCompletePageQueue,
+        _runtimeEnvironmentAmazonkaEnv = awsEnv }
+  _ <- runLocalDynamo runtimeEnvironment $ buildTable tableName
+  runLocalDynamo runtimeEnvironment $ runProgram tableName metrics program
 
-runLocalDynamo :: MyAwsStack b -> IO (Either InterpreterError b)
-runLocalDynamo x = do
+runLocalDynamo :: RuntimeEnvironment -> MyAwsStack b -> IO (Either InterpreterError b)
+runLocalDynamo runtimeEnvironment x = do
   let dynamo = setEndpoint False "localhost" 8000 dynamoDB
   env <- newEnv Sydney (FromEnv "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" Nothing)
-  runResourceT $ runAWST env $ reconfigure dynamo $ runExceptT x
+  let runtimeEnvironment' = runtimeEnvironment { _runtimeEnvironmentAmazonkaEnv = env }
+  runResourceT $ runAWST runtimeEnvironment' $ reconfigure dynamo $ runExceptT x
 
-data InterpreterError =
-  FieldMissing Text |
-  EventNumberFormat Text |
-  EventVersionFormat Text
-  deriving (Show, Eq)
-
-type MyAwsStack = (ExceptT InterpreterError) (AWST (ResourceT IO))
+type MyAwsStack = ((ExceptT InterpreterError) (AWST' RuntimeEnvironment (ResourceT IO)))
 
 runProgram :: Text -> MetricLogs -> DynamoCmdM a -> MyAwsStack a
 runProgram tableName metrics = iterM (runCmd tableName metrics)

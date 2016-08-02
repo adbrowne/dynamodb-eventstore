@@ -6,6 +6,7 @@ module Main where
 
 import           BasicPrelude
 import           Control.Concurrent
+import           Control.Concurrent.STM.TQueue
 import           Control.Lens
 import           Control.Monad.Except
 import           Control.Monad.Trans.AWS
@@ -29,12 +30,12 @@ import qualified System.Metrics.Distribution            as Distribution
 import           System.Remote.Monitoring
 import           Web.Scotty
 
-runDynamoLocal :: Env -> MyAwsStack a -> IO (Either InterpreterError a)
+runDynamoLocal :: RuntimeEnvironment -> MyAwsStack a -> IO (Either InterpreterError a)
 runDynamoLocal env x = do
   let dynamo = setEndpoint False "localhost" 8000 dynamoDB
   runResourceT $ runAWST env $ reconfigure dynamo $ runExceptT x
 
-runDynamoCloud :: Env -> MyAwsStack a -> IO (Either InterpreterError a)
+runDynamoCloud :: RuntimeEnvironment -> MyAwsStack a -> IO (Either InterpreterError a)
 runDynamoCloud env x = runResourceT $ runAWST env $ runExceptT x
 
 runMyAws :: (MyAwsStack a -> ExceptT InterpreterError IO a) -> Text -> MetricLogs -> DynamoCmdM a -> ExceptT InterpreterError IO a
@@ -154,8 +155,13 @@ start parsedConfig = do
   let tableName = (T.pack . configTableName) parsedConfig
   metrics <- liftIO startMetrics
   logger <- liftIO $ newLogger AWS.Error stdout
-  env <- set envLogger logger <$> newEnv Sydney Discover
-  let interperter = (if configLocalDynamoDB parsedConfig then runDynamoLocal else runDynamoCloud) env
+  awsEnv <- set envLogger logger <$> newEnv Sydney Discover
+  thisCompletePageQueue <- lift newTQueueIO
+  let runtimeEnvironment = RuntimeEnvironment {
+        _runtimeEnvironmentMetricLogs = metrics,
+        _runtimeEnvironmentCompletePageQueue = thisCompletePageQueue,
+        _runtimeEnvironmentAmazonkaEnv = awsEnv }
+  let interperter = (if configLocalDynamoDB parsedConfig then runDynamoLocal else runDynamoCloud) runtimeEnvironment
   let runner = toExceptT interperter
   tableAlreadyExists <- toApplicationError interperter $ doesTableExist tableName
   let shouldCreateTable = configCreateTable parsedConfig
