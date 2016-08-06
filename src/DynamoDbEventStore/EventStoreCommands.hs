@@ -8,6 +8,9 @@
 {-# LANGUAGE RankNTypes                 #-}
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE TemplateHaskell            #-}
+{-# LANGUAGE GADTs                      #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE DeriveFunctor #-}
 
 module DynamoDbEventStore.EventStoreCommands(
   StreamId(..),
@@ -43,7 +46,6 @@ import           Control.Lens              hiding ((.=))
 import           Control.Monad.Base
 import           Control.Monad.Except
 import           Control.Monad.Free.Church
-import           Control.Monad.Free.TH
 import           GHC.Natural
 
 import           Data.Aeson
@@ -201,46 +203,49 @@ data QueryDirection =
   | QueryDirectionBackward
   deriving (Show, Eq)
 
-data DynamoCmd next =
-  ReadFromDynamo'
-    DynamoKey
-    (Maybe DynamoReadResult -> next) |
-  WriteToDynamo'
-    DynamoKey
-    DynamoValues
-    DynamoVersion
-    (DynamoWriteResult -> next) |
-  QueryTable'
-    QueryDirection
-    Text -- Hash Key
-    Natural -- max events to retrieve
-    (Maybe Int64) -- starting event, Nothing means start at head
-    ([DynamoReadResult] -> next) |
-  UpdateItem'
-    DynamoKey
-    (HashMap Text ValueUpdate)
-    (Bool -> next) |
-  ScanNeedsPaging'
-    ([DynamoKey] -> next) |
-  WriteCompletePageQueue'
-    (PageKey, Seq FeedEntry)
-    next |
-  TryReadCompletePageQueue'
-    (Maybe (PageKey, Seq FeedEntry) -> next) |
-  Wait'
-    Int
-    next |
-  SetPulseStatus'
-    Bool
-    next |
-  Log'
-    LogLevel
-    Text
-    next
+data DynamoCmd next where
+  ReadFromDynamo' :: DynamoKey -> (Maybe DynamoReadResult -> next) -> DynamoCmd next
+  WriteToDynamo' :: DynamoKey -> DynamoValues -> DynamoVersion -> (DynamoWriteResult -> next) -> DynamoCmd next
+  QueryTable' :: QueryDirection -> Text -> Natural -> Maybe Int64 -> ([DynamoReadResult] -> next) -> DynamoCmd next
+  UpdateItem' :: DynamoKey -> (HashMap Text ValueUpdate) -> (Bool -> next) -> DynamoCmd next
+  ScanNeedsPaging' :: ([DynamoKey] -> next) -> DynamoCmd next
+  WriteCompletePageQueue' :: (PageKey, Seq FeedEntry) -> next -> DynamoCmd next
+  TryReadCompletePageQueue' :: (Maybe (PageKey, Seq FeedEntry) -> next) -> DynamoCmd next
+  Wait' :: Int -> next -> DynamoCmd next
+  SetPulseStatus' :: Bool -> next -> DynamoCmd next
+  Log' :: LogLevel -> Text -> next -> DynamoCmd next
 
-  deriving (Functor)
+deriving instance Functor DynamoCmd
 
-makeFree ''DynamoCmd
+writeCompletePageQueue' :: (MonadFree DynamoCmd m) => (PageKey, Seq FeedEntry) -> m ()
+writeCompletePageQueue' item = liftF $ WriteCompletePageQueue' item ()
+
+tryReadCompletePageQueue' :: (MonadFree DynamoCmd m) => m (Maybe (PageKey, Seq FeedEntry))
+tryReadCompletePageQueue' = liftF $ TryReadCompletePageQueue' id
+
+wait' :: (MonadFree DynamoCmd m) => Int -> m ()
+wait' seconds = liftF $ Wait' seconds ()
+
+setPulseStatus' :: (MonadFree DynamoCmd m) => Bool -> m ()
+setPulseStatus' active = liftF $ SetPulseStatus' active ()
+
+log' :: (MonadFree DynamoCmd m) => LogLevel -> Text -> m ()
+log' level message = liftF $ Log' level message ()
+
+scanNeedsPaging' :: (MonadFree DynamoCmd m) => m ([DynamoKey])
+scanNeedsPaging' = liftF $ ScanNeedsPaging' id
+
+updateItem' :: (MonadFree DynamoCmd m) => DynamoKey -> (HashMap Text ValueUpdate) -> m (Bool)
+updateItem' key updates = liftF $ UpdateItem' key updates id
+
+readFromDynamo' :: (MonadFree DynamoCmd m) => DynamoKey -> m (Maybe DynamoReadResult)
+readFromDynamo' key = liftF $ ReadFromDynamo' key id
+
+writeToDynamo' :: (MonadFree DynamoCmd m) => DynamoKey -> DynamoValues -> DynamoVersion -> m (DynamoWriteResult)
+writeToDynamo' key values version = liftF $ WriteToDynamo' key values version id
+
+queryTable' :: (MonadFree DynamoCmd m) => QueryDirection -> Text -> Natural -> Maybe Int64 -> m ([DynamoReadResult])
+queryTable' direction hashKey maxEvents startEvent = liftF $ QueryTable' direction hashKey maxEvents startEvent id
 
 type DynamoCmdM = F DynamoCmd
 
