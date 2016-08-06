@@ -210,22 +210,22 @@ data DynamoCmd q next where
   QueryTable' :: QueryDirection -> Text -> Natural -> Maybe Int64 -> ([DynamoReadResult] -> next) -> DynamoCmd q next
   UpdateItem' :: DynamoKey -> (HashMap Text ValueUpdate) -> (Bool -> next) -> DynamoCmd q next
   ScanNeedsPaging' :: ([DynamoKey] -> next) -> DynamoCmd q next
-  NewQueue' :: (q a -> next) -> DynamoCmd q next
-  WriteQueue' :: q a -> a -> next -> DynamoCmd q next
-  TryReadQueue' :: q a ->  (Maybe a -> next) -> DynamoCmd q next
+  NewQueue' :: Typeable a => (q a -> next) -> DynamoCmd q next
+  WriteQueue' :: Typeable a => q a -> a -> next -> DynamoCmd q next
+  TryReadQueue' :: Typeable a => q a ->  (Maybe a -> next) -> DynamoCmd q next
   Wait' :: Int -> next -> DynamoCmd q next
   SetPulseStatus' :: Bool -> next -> DynamoCmd q next
   Log' :: LogLevel -> Text -> next -> DynamoCmd q next
 
 deriving instance Functor (DynamoCmd q)
 
-newQueue' :: (MonadFree (DynamoCmd q) m) => m (q a)
+newQueue' :: (MonadFree (DynamoCmd q) m, Typeable a) => m (q a)
 newQueue' = liftF $ NewQueue' id
 
-writeQueue' :: (MonadFree (DynamoCmd q) m) => q a -> a -> m ()
+writeQueue' :: (MonadFree (DynamoCmd q) m, Typeable a) => q a -> a -> m ()
 writeQueue' queue item = liftF $ WriteQueue' queue item ()
 
-tryReadQueue' :: (MonadFree (DynamoCmd q) m) => q a -> m (Maybe a)
+tryReadQueue' :: (MonadFree (DynamoCmd q) m, Typeable a) => q a -> m (Maybe a)
 tryReadQueue' queue = liftF $ TryReadQueue' queue id
 
 wait' :: (MonadFree (DynamoCmd q) m) => Int -> m ()

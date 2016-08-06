@@ -9,6 +9,7 @@ import qualified DynamoDbEventStore.DynamoCmdInterpreter as TestInterpreter
 import           DynamoDbEventStore.EventStoreCommands
 import           DynamoDbEventStore.FeedOutputSpec       as FeedOutputSpec
 import           DynamoDbEventStore.GlobalFeedWriterSpec as GlobalFeedWriterSpec
+import qualified DynamoDbEventStore.InMemoryQueues      as MemQ
 
 import           Test.Tasty
 import           Test.Tasty.Hspec
@@ -16,7 +17,7 @@ import qualified WebserverInternalSpec
 import           WebserverSpec
 
 
-testInterpreter :: DynamoCmdM TestInterpreter.Queue a -> IO (Either Ai.InterpreterError a)
+testInterpreter :: DynamoCmdM MemQ.Queue a -> IO (Either Ai.InterpreterError a)
 testInterpreter program =
   return $ Right $ TestInterpreter.evalProgram "Test Program" program TestInterpreter.emptyTestState
 
