@@ -415,7 +415,7 @@ start Config { configCommand = SpeedTest } = do
   print result
   return ()
 
-writePages :: DynamoCmdM ()
+writePages :: DynamoCmdM q ()
 writePages = do
   _ <- runExceptT $ evalStateT (mapM_ go [0..1000]) GlobalFeedWriter.emptyGlobalFeedWriterState
   return ()
@@ -429,7 +429,7 @@ writePages = do
       lift $ log' Debug ("Writing page" <> show pageNumber)
       GlobalFeedWriter.writePage (PageKey pageNumber) feedEntries 0
 
-runMyAws :: (MyAwsStack a -> ExceptT InterpreterError IO a) -> Text -> DynamoCmdM a -> ExceptT InterpreterError IO a
+runMyAws :: (MyAwsStack a -> ExceptT InterpreterError IO a) -> Text -> DynamoCmdM TQueue a -> ExceptT InterpreterError IO a
 runMyAws runner tableName program =
   runner $ runProgram tableName program
 

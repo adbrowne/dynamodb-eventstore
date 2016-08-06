@@ -149,13 +149,14 @@ timeAction getPair action = do
   liftIO metricLogsPairCount
   return a
 
-runCmd :: Text -> DynamoCmd (MyAwsStack a) -> MyAwsStack a
-runCmd _ (WriteCompletePageQueue' item n) = do
-  queue <- view runtimeEnvironmentCompletePageQueue
+runCmd :: Text -> DynamoCmd TQueue (MyAwsStack a) -> MyAwsStack a
+runCmd _ (NewQueue' n) = do
+  queue <- liftIO newTQueueIO
+  n queue
+runCmd _ (WriteQueue' queue item n) = do
   liftIO . atomically $ writeTQueue queue item
   n
-runCmd _ (TryReadCompletePageQueue' n) = do
-  queue <- view runtimeEnvironmentCompletePageQueue
+runCmd _ (TryReadQueue' queue n) = do
   item <- liftIO . atomically $ tryReadTQueue queue
   n item
 runCmd _ (Wait' milliseconds n) = do
@@ -296,7 +297,7 @@ doesTableExist tableName =
       let tableDesc = view drsTable resp
       return $ isJust tableDesc
 
-evalProgram :: MetricLogs -> DynamoCmdM a -> IO (Either InterpreterError a)
+evalProgram :: MetricLogs -> DynamoCmdM TQueue a -> IO (Either InterpreterError a)
 evalProgram metrics program = do
   tableNameId :: Int <- getStdRandom (randomR (1,9999999999))
   let tableName = "testtable-" ++ show tableNameId
@@ -318,5 +319,5 @@ runLocalDynamo runtimeEnvironment x = do
 
 type MyAwsStack = ((ExceptT InterpreterError) (AWST' RuntimeEnvironment (ResourceT IO)))
 
-runProgram :: Text -> DynamoCmdM a -> MyAwsStack a
+runProgram :: Text -> DynamoCmdM TQueue a -> MyAwsStack a
 runProgram tableName = iterM (runCmd tableName)

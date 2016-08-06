@@ -38,7 +38,7 @@ runDynamoLocal env x = do
 runDynamoCloud :: RuntimeEnvironment -> MyAwsStack a -> IO (Either InterpreterError a)
 runDynamoCloud env x = runResourceT $ runAWST env $ runExceptT x
 
-runMyAws :: (MyAwsStack a -> ExceptT InterpreterError IO a) -> Text -> DynamoCmdM a -> ExceptT InterpreterError IO a
+runMyAws :: (MyAwsStack a -> ExceptT InterpreterError IO a) -> Text -> DynamoCmdM TQueue a -> ExceptT InterpreterError IO a
 runMyAws runner tableName program =
   runner $ runProgram tableName program
 
@@ -47,7 +47,7 @@ printEvent a = do
   liftIO $ print . show $ a
   return a
 
-buildActionRunner :: (forall a. DynamoCmdM a -> ExceptT InterpreterError IO a) -> EventStoreActionRunner
+buildActionRunner :: (forall a. DynamoCmdM TQueue a -> ExceptT InterpreterError IO a) -> EventStoreActionRunner
 buildActionRunner runner =
   EventStoreActionRunner {
     eventStoreActionRunnerPostEvent = (\req -> liftIO $ runExceptT $ (PostEventResult <$> runner (postEventRequestProgram req)))
@@ -112,7 +112,7 @@ forkAndSupervise processName =
 printError :: (Show a) => a -> IO ()
 printError err = putStrLn $ "Error: " <> show err
 
-forkGlobalFeedWriter :: (forall a. DynamoCmdM a -> ExceptT InterpreterError IO a) -> IO ()
+forkGlobalFeedWriter :: (forall a. DynamoCmdM TQueue a -> ExceptT InterpreterError IO a) -> IO ()
 forkGlobalFeedWriter runner =
   forkAndSupervise "GlobalFeedWriter" $ do
     result <- runExceptT $ runner GlobalFeedWriter.main
@@ -120,7 +120,7 @@ forkGlobalFeedWriter runner =
                    (Right (Left err)) -> printError (ApplicationErrorGlobalFeedWriter err)
                    _                  -> return ()
 
-startWebServer :: (forall a. DynamoCmdM a -> ExceptT InterpreterError IO a) -> Config -> IO ()
+startWebServer :: (forall a. DynamoCmdM TQueue a -> ExceptT InterpreterError IO a) -> Config -> IO ()
 startWebServer runner parsedConfig = do
   let httpPort = configPort parsedConfig
   let warpSettings = setPort httpPort $ setHost (fromString httpHost) defaultSettings

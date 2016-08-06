@@ -26,20 +26,21 @@ sampleValuesNeedsPaging = HM.singleton "Body" (set avS (Just "Andrew") attribute
 sampleValuesNoPaging :: DynamoValues
 sampleValuesNoPaging = HM.singleton "Body" (set avS (Just "Andrew") attributeValue)
 
-testWrite :: DynamoValues -> DynamoVersion -> DynamoCmdM DynamoWriteResult
+testWrite :: DynamoValues -> DynamoVersion -> DynamoCmdM q DynamoWriteResult
 testWrite = writeToDynamo' testKey
 
-sampleRead :: DynamoCmdM (Maybe DynamoReadResult)
+sampleRead :: DynamoCmdM q (Maybe DynamoReadResult)
 sampleRead = readFromDynamo' testKey
 
-tests :: (forall a. DynamoCmdM a -> IO (Either InterpreterError a)) -> [TestTree]
+tests :: (forall a. DynamoCmdM q a -> IO (Either InterpreterError a)) -> [TestTree]
 tests evalProgram =
   [
     testCase "Can write and read to complete page queue" $
         let
-          queueItem = (PageKey 1, Seq.empty)
+          queueItem = (PageKey 1, Seq.fromList ['a'])
           actions = do
-            writeCompletePageQueue' queueItem >> tryReadCompletePageQueue'
+            q <- newQueue'
+            writeQueue' q queueItem >> tryReadQueue' q
           evt = evalProgram actions
           expected = Right . Just $ queueItem
         in do

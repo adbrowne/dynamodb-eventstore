@@ -16,7 +16,7 @@ import qualified WebserverInternalSpec
 import           WebserverSpec
 
 
-testInterpreter :: DynamoCmdM a -> IO (Either Ai.InterpreterError a)
+testInterpreter :: DynamoCmdM TestInterpreter.Queue a -> IO (Either Ai.InterpreterError a)
 testInterpreter program =
   return $ Right $ TestInterpreter.evalProgram "Test Program" program TestInterpreter.emptyTestState
 

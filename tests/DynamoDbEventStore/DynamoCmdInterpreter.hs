@@ -9,7 +9,21 @@
 {-# LANGUAGE TemplateHaskell            #-}
 {-# LANGUAGE TypeFamilies               #-}
 
-module DynamoDbEventStore.DynamoCmdInterpreter(TestState(..), runPrograms, runProgramGenerator, runProgram, emptyTestState, evalProgram, execProgram, execProgramUntilIdle, LoopState(..), testState, iopCounts, IopsCategory(..), IopsOperation(..)) where
+module DynamoDbEventStore.DynamoCmdInterpreter(
+  TestState(..),
+  runPrograms,
+  runProgramGenerator,
+  runProgram,
+  emptyTestState,
+  evalProgram,
+  execProgram,
+  execProgramUntilIdle,
+  Queue(..),
+  LoopState(..),
+  testState,
+  iopCounts,
+  IopsCategory(..),
+  IopsOperation(..)) where
 
 import           BasicPrelude
 import           Control.Lens
@@ -26,7 +40,9 @@ import qualified Test.Tasty.QuickCheck                  as QC
 
 import           DynamoDbEventStore.EventStoreCommands
 
-type DynamoCmdMFree = Free.Free DynamoCmd
+newtype Queue a = Queue { unQueue :: Int }
+
+type DynamoCmdMFree = Free.Free (DynamoCmd Queue)
 
 data RunningProgramState r = RunningProgramState {
   runningProgramStateNext    :: DynamoCmdMFree r,
@@ -191,8 +207,9 @@ setPulseStatus isActive = do
 runCmd :: DynamoCmdMFree r -> InterpreterOperationStack m r (Either r (DynamoCmdMFree r))
 runCmd (Free.Pure r) = return $ Left r
 runCmd (Free.Free (Wait' _ r)) = Right <$> return r
-runCmd (Free.Free (WriteCompletePageQueue' _ r)) = Right <$> return r -- todo implement
-runCmd (Free.Free (TryReadCompletePageQueue' r)) = Right <$> return (r Nothing) -- todo implement
+runCmd (Free.Free (WriteQueue' _ _ r)) = Right <$> return r -- todo implement
+runCmd (Free.Free (NewQueue' r)) = Right <$> return (r undefined) -- todo implement
+runCmd (Free.Free (TryReadQueue' _q r)) = Right <$> return (r Nothing) -- todo implement
 runCmd (Free.Free (QueryTable' direction key maxEvents start r)) = Right <$> queryTable direction key maxEvents start r
 runCmd (Free.Free (WriteToDynamo' key values version r)) = Right <$> writeToDynamo key values version r
 runCmd (Free.Free (UpdateItem' key values r)) = Right <$> updateItem key values r
@@ -229,7 +246,7 @@ iterateApp = do
  (programId, programState) <- lift . QC.elements $ Map.toList p
  stepProgram programId programState
 
-runPrograms :: Map ProgramId (DynamoCmdM a, Int) -> QC.Gen (Map ProgramId a, TestState)
+runPrograms :: Map ProgramId (DynamoCmdM Queue a, Int) -> QC.Gen (Map ProgramId a, TestState)
 runPrograms ps =
   over _2 (view loopStateTestState) <$> runStateT loop initialState
   where
@@ -242,7 +259,7 @@ runPrograms ps =
              then use loopStateProgramResults
              else iterateApp >> loopStateIterations += 1 >> loop
 
-runProgramGenerator :: ProgramId -> DynamoCmdM a -> TestState -> QC.Gen a
+runProgramGenerator :: ProgramId -> DynamoCmdM Queue a -> TestState -> QC.Gen a
 runProgramGenerator programId program initialTestState =
   evalStateT (runReaderT (loop $ Right (Church.fromF program)) programId) initialState
   where
@@ -252,7 +269,7 @@ runProgramGenerator programId program initialTestState =
         loop (Left x) = return x
         loop (Right n) = runCmd n >>= loop
 
-runProgram :: ProgramId -> DynamoCmdM a -> TestState -> (a, LoopState a)
+runProgram :: ProgramId -> DynamoCmdM Queue a -> TestState -> (a, LoopState a)
 runProgram programId program initialTestState =
   runIdentity $ runStateT (runReaderT (loop $ Right (Church.fromF program)) programId) initialState
   where
@@ -262,7 +279,7 @@ runProgram programId program initialTestState =
         loop (Left x) = return x
         loop (Right n) = runCmd n >>= loop
 
-execProgramUntilIdle :: ProgramId -> DynamoCmdM a -> TestState -> LoopState a
+execProgramUntilIdle :: ProgramId -> DynamoCmdM Queue a -> TestState -> LoopState a
 execProgramUntilIdle programId program initialTestState =
   runIdentity $ execStateT (runReaderT (loop $ Right (Church.fromF program)) programId) initialState
   where
@@ -276,7 +293,7 @@ execProgramUntilIdle programId program initialTestState =
               then return Nothing
               else runCmd n >>= loop
 
-evalProgram :: ProgramId -> DynamoCmdM a -> TestState -> a
+evalProgram :: ProgramId -> DynamoCmdM Queue a -> TestState -> a
 evalProgram programId program initialTestState = fst $ runProgram programId program initialTestState
-execProgram :: ProgramId -> DynamoCmdM a -> TestState -> LoopState a
+execProgram :: ProgramId -> DynamoCmdM Queue a -> TestState -> LoopState a
 execProgram programId program initialTestState = snd $ runProgram programId program initialTestState
