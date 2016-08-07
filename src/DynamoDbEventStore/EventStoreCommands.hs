@@ -11,6 +11,8 @@
 {-# LANGUAGE GADTs                      #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE FunctionalDependencies #-}
 
 module DynamoDbEventStore.EventStoreCommands(
   StreamId(..),
@@ -27,6 +29,7 @@ module DynamoDbEventStore.EventStoreCommands(
   writeQueue',
   tryReadQueue',
   readField,
+  MonadEsDsl(..),
   DynamoCmdM,
   DynamoVersion,
   QueryDirection(..),
@@ -213,11 +216,38 @@ data DynamoCmd q next where
   NewQueue' :: Typeable a => (q a -> next) -> DynamoCmd q next
   WriteQueue' :: Typeable a => q a -> a -> next -> DynamoCmd q next
   TryReadQueue' :: Typeable a => q a ->  (Maybe a -> next) -> DynamoCmd q next
+  ForkChild :: DynamoCmd q () -> next -> DynamoCmd q next
   Wait' :: Int -> next -> DynamoCmd q next
   SetPulseStatus' :: Bool -> next -> DynamoCmd q next
   Log' :: LogLevel -> Text -> next -> DynamoCmd q next
 
 deriving instance Functor (DynamoCmd q)
+
+class Monad m => MonadEsDsl q m | m -> q where
+  newQueue :: forall a. Typeable a => m (q a)
+  writeQueue :: forall a. Typeable a => q a -> a -> m ()
+  tryReadQueue :: forall a. Typeable a => q a -> m (Maybe a)
+  readFromDynamo :: DynamoKey -> m (Maybe DynamoReadResult)
+  writeToDynamo :: DynamoKey -> DynamoValues -> DynamoVersion -> m (DynamoWriteResult)
+  queryTable :: QueryDirection -> Text -> Natural -> Maybe Int64 -> m [DynamoReadResult]
+  updateItem :: DynamoKey -> (HashMap Text ValueUpdate) -> m Bool
+  log :: LogLevel -> Text -> m ()
+  scanNeedsPaging :: m [DynamoKey]
+  wait :: Int -> m ()
+  setPulseStatus :: Bool -> m ()
+
+instance (MonadFree (DynamoCmd q) m) => (MonadEsDsl q) m where
+  newQueue = newQueue'
+  writeQueue = writeQueue'
+  tryReadQueue = tryReadQueue'
+  readFromDynamo = readFromDynamo'
+  writeToDynamo = writeToDynamo'
+  updateItem = updateItem'
+  queryTable = queryTable'
+  log = log'
+  scanNeedsPaging = scanNeedsPaging'
+  wait = wait'
+  setPulseStatus = setPulseStatus'
 
 newQueue' :: (MonadFree (DynamoCmd q) m, Typeable a) => m (q a)
 newQueue' = liftF $ NewQueue' id

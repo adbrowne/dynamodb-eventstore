@@ -13,12 +13,12 @@ module DynamoDbEventStore.GlobalFeedWriter (
   getPageDynamoKey,
   getLatestStoredPage,
   emptyGlobalFeedWriterState,
+  DynamoCmdWithErrors,
   GlobalFeedPosition(..),
   EventStoreActionError(..)) where
 
-import           BasicPrelude
+import           BasicPrelude hiding (log)
 import           Control.Lens
-import           Control.Monad.Base
 import           Control.Monad.Except
 import           Control.Monad.State
 import qualified Data.Aeson                            as Aeson
@@ -30,8 +30,8 @@ import qualified Data.Sequence                         as Seq
 import qualified Data.Set                              as Set
 import qualified Data.Text                             as T
 import qualified DynamoDbEventStore.Constants          as Constants
-import           DynamoDbEventStore.EventStoreCommands
-import           Network.AWS.DynamoDB
+import           DynamoDbEventStore.EventStoreCommands 
+import           Network.AWS.DynamoDB hiding (updateItem)
 import           Safe
 import qualified Test.QuickCheck                       as QC
 import           Text.Printf                           (printf)
@@ -78,10 +78,9 @@ loopUntilSuccess maxTries f action =
     loop _ lastResult | f lastResult = return lastResult
     loop triesRemaining _ = action >>= loop (triesRemaining - 1)
 
-dynamoWriteWithRetry :: DynamoKey -> DynamoValues -> Int -> ExceptT EventStoreActionError (DynamoCmdM q) DynamoWriteResult
+dynamoWriteWithRetry :: DynamoCmdWithErrors q m => DynamoKey -> DynamoValues -> Int -> m DynamoWriteResult
 dynamoWriteWithRetry key value version = do
-  let writeCommand = lift $ writeToDynamo' key value version
-  finalResult <- loopUntilSuccess 100 (/= DynamoWriteFailure) writeCommand
+  finalResult <- loopUntilSuccess 100 (/= DynamoWriteFailure) (writeToDynamo key value version)
   checkFinalResult finalResult
   where
     checkFinalResult DynamoWriteSuccess = return DynamoWriteSuccess
@@ -105,11 +104,11 @@ readExcept err t =
   in case parsed of Nothing  -> throwError $ err t
                     (Just a) -> return a
 
-type DynamoCmdWithErrors q m = (MonadBase (DynamoCmdM q) m, MonadError EventStoreActionError m)
+type DynamoCmdWithErrors q m = (MonadEsDsl q m, MonadError EventStoreActionError m)
 
 readHeadData :: DynamoCmdWithErrors q m => m HeadData
 readHeadData = do
-  currentHead <- liftBase $ readFromDynamo' headDynamoKey
+  currentHead <- readFromDynamo headDynamoKey
   readHead currentHead
   where
     readHead Nothing = return HeadData { headDataCurrentPage = 0, headDataVersion = 0 }
@@ -127,7 +126,7 @@ trySetLatestPage latestPage = do
   HeadData{..} <- readHeadData
   when (latestPage > headDataCurrentPage) $ do
     let value = HM.singleton latestPageKey  (set avN (Just . show $  latestPage) attributeValue)
-    void . liftBase $ writeToDynamo' headDynamoKey value (headDataVersion + 1)
+    void (writeToDynamo headDynamoKey value (headDataVersion + 1))
   return ()
 
 getPageDynamoKey :: PageKey -> DynamoKey
@@ -135,13 +134,13 @@ getPageDynamoKey (PageKey pageNumber) =
   let paddedPageNumber = T.pack (printf "%08d" pageNumber)
   in DynamoKey (Constants.pageDynamoKeyPrefix <> paddedPageNumber) 0
 
-getMostRecentPage :: PageKey -> GlobalFeedWriterStack q (Maybe FeedPage)
+getMostRecentPage :: GlobalFeedWriterStack q m => PageKey -> m (Maybe FeedPage)
 getMostRecentPage startPageNumber =
   readFeedPage startPageNumber >>= findPage
   where
-    readFeedPage :: PageKey -> GlobalFeedWriterStack q (Maybe FeedPage)
+    readFeedPage :: GlobalFeedWriterStack q m => PageKey -> m (Maybe FeedPage)
     readFeedPage pageNumber = do
-      dynamoEntry <- lift (readFromDynamo' $ getPageDynamoKey pageNumber)
+      dynamoEntry <- readFromDynamo $ getPageDynamoKey pageNumber
       return $ toFeedPage startPageNumber <$> dynamoEntry
     toFeedPage :: PageKey -> DynamoReadResult -> FeedPage
     toFeedPage pageNumber readResult =
@@ -151,11 +150,11 @@ getMostRecentPage startPageNumber =
         version = dynamoReadResultVersion readResult
         entries = readPageBody pageValues
       in FeedPage { feedPageNumber = pageNumber, feedPageEntries = entries, feedPageIsVerified = isVerified, feedPageVersion = version }
-    findPage :: Maybe FeedPage -> GlobalFeedWriterStack q (Maybe FeedPage)
+    findPage :: GlobalFeedWriterStack q m => Maybe FeedPage -> m (Maybe FeedPage)
     findPage Nothing = return Nothing
     findPage (Just lastPage) = do
       let nextPage = feedPageNumber lastPage + 1
-      dynamoEntry <- readFromDynamo' $ getPageDynamoKey nextPage
+      dynamoEntry <- readFromDynamo $ getPageDynamoKey nextPage
       let feedPage = toFeedPage nextPage <$> dynamoEntry
       case feedPage of Just _  -> findPage feedPage
                        Nothing -> return (Just lastPage)
@@ -187,21 +186,21 @@ toDynamoKey (StreamId streamId) = DynamoKey (Constants.streamDynamoKeyPrefix <> 
 eventKeyToDynamoKey :: EventKey -> DynamoKey
 eventKeyToDynamoKey (EventKey(streamId, eventNumber)) = toDynamoKey streamId eventNumber
 
-updateItemWithRetry :: DynamoKey -> HashMap Text ValueUpdate -> ExceptT EventStoreActionError (DynamoCmdM q) ()
+updateItemWithRetry :: (MonadEsDsl q m, MonadError EventStoreActionError m) => DynamoKey -> HashMap Text ValueUpdate -> m ()
 updateItemWithRetry key updates = do
-  result <- loopUntilSuccess 100 id (lift $ updateItem' key updates)
+  result <- loopUntilSuccess 100 id (updateItem key updates)
   unless result (throwError $ EventStoreActionErrorUpdateFailure key)
 
-setEventEntryPage :: DynamoKey -> PageKey -> GlobalFeedWriterStack q ()
+setEventEntryPage :: GlobalFeedWriterStack q m => DynamoKey -> PageKey -> m ()
 setEventEntryPage key (PageKey pageNumber) = do
     let updates =
           HM.fromList [
            (Constants.needsPagingKey, ValueUpdateDelete)
            , (Constants.eventPageNumberKey, ValueUpdateSet (set avS (Just (show pageNumber)) attributeValue))
                       ]
-    lift $ updateItemWithRetry key updates
+    updateItemWithRetry key updates
 
-setPageEntryPageNumber :: PageKey -> FeedEntry -> GlobalFeedWriterStack q ()
+setPageEntryPageNumber :: GlobalFeedWriterStack q m => PageKey -> FeedEntry -> m ()
 setPageEntryPageNumber pageNumber feedEntry = do
   let streamId = feedEntryStream feedEntry
   let dynamoKey = toDynamoKey streamId  (feedEntryNumber feedEntry)
@@ -210,24 +209,24 @@ setPageEntryPageNumber pageNumber feedEntry = do
 stringAttributeValue :: Text -> AttributeValue
 stringAttributeValue t = set avS (Just t) attributeValue
 
-verifyPage :: PageKey -> GlobalFeedWriterStack q ()
+verifyPage :: GlobalFeedWriterStack q m => PageKey -> m ()
 verifyPage (PageKey (-1))       = return ()
 verifyPage pageNumber = do
   let pageDynamoKey = getPageDynamoKey pageNumber
   page <- readFromDynamoMustExist pageDynamoKey
   let pageValues = dynamoReadResultValue page
   let pageVersion = dynamoReadResultVersion page
-  log' Debug ("verifyPage " <> show pageNumber <> " go value " <> show pageValues)
+  log Debug ("verifyPage " <> show pageNumber <> " go value " <> show pageValues)
   unless (HM.member Constants.pageIsVerifiedKey pageValues) $ do
     let entries = readPageBody pageValues
-    log' Debug ("setPageEntry for " <> show entries)
+    log Debug ("setPageEntry for " <> show entries)
     void $ traverse (setPageEntryPageNumber pageNumber) entries
     let newValues = HM.insert Constants.pageIsVerifiedKey (stringAttributeValue "Verified") pageValues
-    lift . void $ dynamoWriteWithRetry pageDynamoKey newValues (pageVersion + 1)
+    void (dynamoWriteWithRetry pageDynamoKey newValues (pageVersion + 1))
 
-readFromDynamoMustExist :: DynamoKey -> GlobalFeedWriterStack q DynamoReadResult
+readFromDynamoMustExist :: GlobalFeedWriterStack q m => DynamoKey -> m DynamoReadResult
 readFromDynamoMustExist key = do
-  r <- readFromDynamo' key
+  r <- readFromDynamo key
   case r of Just x -> return x
             Nothing -> throwError $ EventStoreActionErrorEventDoesNotExist key
 
@@ -237,11 +236,10 @@ emptyFeedPage pageNumber = FeedPage { feedPageNumber = pageNumber, feedPageEntri
 pageSizeCutoff :: Int
 pageSizeCutoff = 10
 
-getCurrentPage :: GlobalFeedWriterStack q FeedPage
+getCurrentPage :: GlobalFeedWriterStack q m => m FeedPage
 getCurrentPage = do
   mostRecentKnownPage <- gets globalFeedWriterStateCurrentPage
-  let storedRecentPage = headDataCurrentPage <$> readHeadData
-  mostRecentPage <- getMostRecentPage =<< maybe storedRecentPage return mostRecentKnownPage
+  mostRecentPage <- getMostRecentPage =<< maybe (headDataCurrentPage <$> readHeadData) return mostRecentKnownPage
   modify (\s -> s { globalFeedWriterStateCurrentPage = feedPageNumber <$> mostRecentPage})
   let mostRecentPageNumber = maybe (PageKey (-1)) feedPageNumber mostRecentPage
   let startNewPage = maybe True (\page -> (length . feedPageEntries) page >= pageSizeCutoff) mostRecentPage
@@ -260,14 +258,14 @@ readResultToDynamoKey DynamoReadResult {..} = dynamoReadResultKey
 readResultToEventKey :: DynamoReadResult -> EventKey
 readResultToEventKey = dynamoKeyToEventKey . readResultToDynamoKey
 
-writePage :: PageKey -> Seq FeedEntry -> DynamoVersion -> GlobalFeedWriterStack q DynamoWriteResult
+writePage :: GlobalFeedWriterStack q m => PageKey -> Seq FeedEntry -> DynamoVersion -> m DynamoWriteResult
 writePage pageNumber entries version = do
   let feedEntry = itemToJsonByteString entries
   let dynamoKey = getPageDynamoKey pageNumber
   let body = HM.singleton Constants.pageBodyKey (set avB (Just feedEntry) attributeValue)
-  lift $ dynamoWriteWithRetry dynamoKey body version
+  dynamoWriteWithRetry dynamoKey body version
 
-readItems :: [EventKey] -> GlobalFeedWriterStack q [DynamoReadResult]
+readItems :: GlobalFeedWriterStack q m => [EventKey] -> m [DynamoReadResult]
 readItems keys =
   sequence $ readFromDynamoMustExist . eventKeyToDynamoKey <$> keys
 
@@ -277,24 +275,24 @@ feedEntryToDynamoKey = eventKeyToDynamoKey . feedEntryToEventKey
 feedEntryToEventKey :: FeedEntry -> EventKey
 feedEntryToEventKey FeedEntry{..} = EventKey (feedEntryStream, feedEntryNumber )
 
-getUnpagedPreviousEntries :: [EventKey] -> GlobalFeedWriterStack q [EventKey]
+getUnpagedPreviousEntries :: GlobalFeedWriterStack q m => [EventKey] -> m [EventKey]
 getUnpagedPreviousEntries keys =
   join <$> sequence (getPreviousEntryIfUnpaged <$> keys)
   where
-    getPreviousEntryIfUnpaged :: EventKey -> GlobalFeedWriterStack q [EventKey]
+    getPreviousEntryIfUnpaged :: GlobalFeedWriterStack q m => EventKey -> m [EventKey]
     getPreviousEntryIfUnpaged (EventKey (_, 0)) = return []
     getPreviousEntryIfUnpaged eventKey = do
       let key = eventKeyToDynamoKey eventKey
       let DynamoKey{..} = key
-      result <- lift $ queryTable' QueryDirectionBackward dynamoKeyKey 1 (Just dynamoKeyEventNumber)
+      result <- queryTable QueryDirectionBackward dynamoKeyKey 1 (Just dynamoKeyEventNumber)
       case result of [] -> throwError $ EventstoreActionErrorCouldNotFindPreviousEntry key
                      (x:_xs) -> if entryIsPaged x then return [] else return [readResultToEventKey x]
 
-collectItemsToPage :: Set EventKey -> Set EventKey -> Set EventKey -> GlobalFeedWriterStack q (Set EventKey)
+collectItemsToPage :: (GlobalFeedWriterStack q m) => Set EventKey -> Set EventKey -> Set EventKey -> m (Set EventKey)
 collectItemsToPage _ acc newItems | null newItems = return acc
 collectItemsToPage currentPage acc newItems = do
   let itemsNotInCurrentPage = Set.difference newItems currentPage
-  lift $ log' Debug ("acc:" <> show acc <> "currentPage: " <> show currentPage <> " newItems: " <> show newItems <> " itemsNotInCurrentPage: " <> show itemsNotInCurrentPage)
+  log Debug ("acc:" <> show acc <> "currentPage: " <> show currentPage <> " newItems: " <> show newItems <> " itemsNotInCurrentPage: " <> show itemsNotInCurrentPage)
   previousUnpaged <- Set.fromList <$> getUnpagedPreviousEntries (toList itemsNotInCurrentPage)
   let previousUnpageNotInCurrentPage = Set.difference previousUnpaged acc
   collectItemsToPage currentPage (Set.union itemsNotInCurrentPage acc) previousUnpageNotInCurrentPage
@@ -305,16 +303,16 @@ dynamoKeyToEventKey DynamoKey{..} =
     streamId = StreamId $ T.drop (T.length Constants.streamDynamoKeyPrefix) dynamoKeyKey
   in EventKey (streamId, dynamoKeyEventNumber)
 
-readResultToFeedEntry :: DynamoReadResult -> GlobalFeedWriterStack q FeedEntry
+readResultToFeedEntry :: (GlobalFeedWriterStack q m) => DynamoReadResult -> m FeedEntry
 readResultToFeedEntry readResult@DynamoReadResult{dynamoReadResultKey=DynamoKey{..}} = do
   itemEventCount <- entryEventCount readResult
   let (EventKey(streamId, eventNumber)) = readResultToEventKey readResult
   return $ FeedEntry streamId eventNumber itemEventCount
 
-addItemsToGlobalFeed :: [DynamoKey] -> GlobalFeedWriterStack q ()
+addItemsToGlobalFeed :: (GlobalFeedWriterStack q m) => [DynamoKey] -> m ()
 addItemsToGlobalFeed [] = return ()
 addItemsToGlobalFeed dynamoItemKeys = do
-  log' Debug ("addItemsToGlobalFeed: " <> show dynamoItemKeys)
+  log Debug ("addItemsToGlobalFeed: " <> show dynamoItemKeys)
   currentPage <- getCurrentPage
   let currentPageFeedEntries = feedPageEntries currentPage
   let currentPageEventKeys = Set.fromList . toList $ feedEntryToEventKey <$> currentPageFeedEntries
@@ -325,15 +323,15 @@ addItemsToGlobalFeed dynamoItemKeys = do
   newFeedEntries <- Seq.fromList <$> sequence (readResultToFeedEntry <$> unpagedItems)
   let version = feedPageVersion currentPage + 1
   let pageNumber = feedPageNumber currentPage
-  log' Debug ("writing to page: " <> show pageNumber <> " - currentFeedPageEntries: " <> show currentPageFeedEntries <> " newFeedEntries: " <> show newFeedEntries)
+  log Debug ("writing to page: " <> show pageNumber <> " - currentFeedPageEntries: " <> show currentPageFeedEntries <> " newFeedEntries: " <> show newFeedEntries)
   let newEntrySequence = currentPageFeedEntries <> newFeedEntries
   pageResult <- writePage pageNumber newEntrySequence version
   onPageResult pageNumber pageResult newEntrySequence
   return ()
   where
-    onPageResult :: PageKey -> DynamoWriteResult -> Seq FeedEntry -> GlobalFeedWriterStack q ()
+    onPageResult :: GlobalFeedWriterStack q m => PageKey -> DynamoWriteResult -> Seq FeedEntry -> m ()
     onPageResult _ DynamoWriteWrongVersion _ = do
-      log' Debug "Got wrong version writing page"
+      log Debug "Got wrong version writing page"
       addItemsToGlobalFeed dynamoItemKeys
     onPageResult pageNumber DynamoWriteSuccess newEntrySequence =
       let
@@ -352,19 +350,12 @@ emptyGlobalFeedWriterState = GlobalFeedWriterState {
   globalFeedWriterStateCurrentPage = Nothing
                                                    }
 
-type GlobalFeedWriterStack q = StateT GlobalFeedWriterState (ExceptT EventStoreActionError (DynamoCmdM q))
+type GlobalFeedWriterStack q m = (MonadEsDsl q m, MonadError EventStoreActionError m, MonadState GlobalFeedWriterState m)
 
-runLoop :: GlobalFeedWriterStack q ()
-runLoop = do
-  scanResult <- lift scanNeedsPaging'
-  addItemsToGlobalFeed scanResult
-  when (null scanResult) (wait' 1000)
-  setPulseStatus' $ case scanResult of [] -> False
-                                       _  -> True
-main :: DynamoCmdM q (Either EventStoreActionError ())
+main :: (GlobalFeedWriterStack q m) => m ()
 main = do
-  result <- runExceptT $ evalStateT runLoop emptyGlobalFeedWriterState
-  case result of (Left errMsg) -> do
-                                   log' Debug ("Terminating with error: " <> show errMsg)
-                                   return $ Left errMsg
-                 (Right ())    -> main
+  scanResult <- scanNeedsPaging
+  addItemsToGlobalFeed scanResult
+  when (null scanResult) (wait 1000)
+  setPulseStatus $ case scanResult of [] -> False
+                                      _  -> True

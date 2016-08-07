@@ -1,10 +1,11 @@
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE FlexibleContexts    #-}
 
 module Main where
 
-import           BasicPrelude
+import           BasicPrelude hiding (log)
 import           Control.Concurrent.STM.TQueue
 import           Control.Lens                           hiding (children,
                                                          element)
@@ -415,7 +416,7 @@ start Config { configCommand = SpeedTest } = do
   print result
   return ()
 
-writePages :: DynamoCmdM q ()
+writePages :: DynamoCmdM TQueue ()
 writePages = do
   _ <- runExceptT $ evalStateT (mapM_ go [0..1000]) GlobalFeedWriter.emptyGlobalFeedWriterState
   return ()
@@ -426,7 +427,7 @@ writePages = do
       feedEntryCount = 1 }
     feedEntries = Seq.fromList $ replicate 1000 testFeedEntry
     go pageNumber = do
-      lift $ log' Debug ("Writing page" <> show pageNumber)
+      log Debug ("Writing page" <> show pageNumber)
       GlobalFeedWriter.writePage (PageKey pageNumber) feedEntries 0
 
 runMyAws :: (MyAwsStack a -> ExceptT InterpreterError IO a) -> Text -> DynamoCmdM TQueue a -> ExceptT InterpreterError IO a

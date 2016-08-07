@@ -140,8 +140,8 @@ potentialFailure failurePercent onFailure onSuccess = do
      then onFailure
      else onSuccess
 
-updateItem :: DynamoKey -> HashMap Text ValueUpdate -> (Bool -> n) -> InterpreterOperationStack m a n
-updateItem key values next =
+runUpdateItemCmd :: DynamoKey -> HashMap Text ValueUpdate -> (Bool -> n) -> InterpreterOperationStack m a n
+runUpdateItemCmd key values next =
   potentialFailure 25 onFailure onSuccess
   where
     onFailure =
@@ -152,8 +152,8 @@ updateItem key values next =
       (loopStateTestState . testStateDynamo) .= newDb
       return $ next True
 
-writeToDynamo :: DynamoKey -> DynamoValues -> DynamoVersion -> (DynamoWriteResult -> n) -> InterpreterOperationStack m a n
-writeToDynamo key values version next =
+runWriteToDynamoCmd :: DynamoKey -> DynamoValues -> DynamoVersion -> (DynamoWriteResult -> n) -> InterpreterOperationStack m a n
+runWriteToDynamoCmd key values version next =
   potentialFailure 25 onFailure onSuccess
   where
     onFailure =
@@ -167,28 +167,28 @@ writeToDynamo key values version next =
       (loopStateTestState . testStateDynamo) .= newDb
       return $ next result
 
-getReadResult :: DynamoKey -> (Maybe DynamoReadResult -> n) -> InterpreterOperationStack m a n
-getReadResult key n = do
+getGetReadResultCmd :: DynamoKey -> (Maybe DynamoReadResult -> n) -> InterpreterOperationStack m a n
+getGetReadResultCmd key n = do
   addIops TableRead IopsGetItem 1
   db <- use (testState . testStateDynamo)
   return $ n $ MemDb.readDb key db
 
-queryTable :: QueryDirection -> Text -> Natural -> Maybe Int64 -> ([DynamoReadResult] -> n) -> InterpreterOperationStack m a n
-queryTable direction streamId maxEvents startEvent r =  do
+runQueryTableCmd :: QueryDirection -> Text -> Natural -> Maybe Int64 -> ([DynamoReadResult] -> n) -> InterpreterOperationStack m a n
+runQueryTableCmd direction streamId maxEvents startEvent r =  do
   results <- uses (loopStateTestState . testStateDynamo) runQuery
   addIops TableRead IopsQuery $ length results
   return $ r results
   where
     runQuery = MemDb.queryDb direction streamId maxEvents startEvent
 
-scanNeedsPaging :: ([DynamoKey] -> n) -> InterpreterOperationStack m a n
-scanNeedsPaging n = do
+runScanNeedsPagingCmd :: ([DynamoKey] -> n) -> InterpreterOperationStack m a n
+runScanNeedsPagingCmd n = do
    results <- uses (testState . testStateDynamo) MemDb.scanNeedsPagingDb
    addIops UnpagedRead IopsScanUnpaged $ length results
    return $ n results
 
-setPulseStatus :: Bool -> InterpreterOperationStack m a ()
-setPulseStatus isActive = do
+runSetPulseStateCmd :: Bool -> InterpreterOperationStack m a ()
+runSetPulseStateCmd isActive = do
   programId <- ask
   allInactiveState <- uses loopStatePrograms initialAllInactive
   loopStateActivity %= updatePulseStatus programId (LoopAllIdle allInactiveState) isActive
@@ -204,21 +204,21 @@ setPulseStatus isActive = do
     updatePulseStatus _ _ True LoopAllIdle { _loopAllIdleIterationsRemaining = _idleRemaining } = LoopActive mempty
     updatePulseStatus programId _ False LoopAllIdle { _loopAllIdleIterationsRemaining = idleRemaining } = LoopAllIdle $ Map.adjust (\x -> x - 1) programId idleRemaining
 
-writeQueue :: Typeable b => MemQ.Queue b -> b -> InterpreterOperationStack m a ()
-writeQueue q x = do
+runWriteQueueCmd :: Typeable b => MemQ.Queue b -> b -> InterpreterOperationStack m a ()
+runWriteQueueCmd q x = do
   qs <- use (loopStateTestState . testStateQueues)
   let qs' = MemQ.writeToQueue qs q x
   (loopStateTestState . testStateQueues) .= qs'
 
-readQueue :: Typeable b => MemQ.Queue b -> (Maybe b -> n) -> InterpreterOperationStack m a n
-readQueue q n = do
+runReadQueueCmd :: Typeable b => MemQ.Queue b -> (Maybe b -> n) -> InterpreterOperationStack m a n
+runReadQueueCmd q n = do
   qs <- use (loopStateTestState . testStateQueues)
   let (x, qs') = MemQ.tryReadFromQueue qs q
   (loopStateTestState . testStateQueues) .= qs'
   return $ n x
 
-newQueue :: Typeable b => (MemQ.Queue b -> n) -> InterpreterOperationStack m a n
-newQueue n = do
+runNewQueueCmd :: Typeable b => (MemQ.Queue b -> n) -> InterpreterOperationStack m a n
+runNewQueueCmd n = do
   qs <- use (loopStateTestState . testStateQueues)
   let (x, qs') = MemQ.newQueue qs
   (loopStateTestState . testStateQueues) .= qs'
@@ -227,16 +227,16 @@ newQueue n = do
 runCmd :: DynamoCmdMFree r -> InterpreterOperationStack m r (Either r (DynamoCmdMFree r))
 runCmd (Free.Pure r) = return $ Left r
 runCmd (Free.Free (Wait' _ r)) = Right <$> return r
-runCmd (Free.Free (WriteQueue' q x r)) = Right <$> (writeQueue q x >> return r)
-runCmd (Free.Free (NewQueue' r)) = Right <$> newQueue r
-runCmd (Free.Free (TryReadQueue' q r)) = Right <$> readQueue q r
-runCmd (Free.Free (QueryTable' direction key maxEvents start r)) = Right <$> queryTable direction key maxEvents start r
-runCmd (Free.Free (WriteToDynamo' key values version r)) = Right <$> writeToDynamo key values version r
-runCmd (Free.Free (UpdateItem' key values r)) = Right <$> updateItem key values r
-runCmd (Free.Free (ReadFromDynamo' key r)) = Right <$> getReadResult key r
+runCmd (Free.Free (WriteQueue' q x r)) = Right <$> (runWriteQueueCmd q x >> return r)
+runCmd (Free.Free (NewQueue' r)) = Right <$> runNewQueueCmd r
+runCmd (Free.Free (TryReadQueue' q r)) = Right <$> runReadQueueCmd q r
+runCmd (Free.Free (QueryTable' direction key maxEvents start r)) = Right <$> runQueryTableCmd direction key maxEvents start r
+runCmd (Free.Free (WriteToDynamo' key values version r)) = Right <$> runWriteToDynamoCmd key values version r
+runCmd (Free.Free (UpdateItem' key values r)) = Right <$> runUpdateItemCmd key values r
+runCmd (Free.Free (ReadFromDynamo' key r)) = Right <$> getGetReadResultCmd key r
 runCmd (Free.Free (Log' _ msg r)) = Right <$> (addLog msg >> return r)
-runCmd (Free.Free (SetPulseStatus' isActive r)) = Right <$> (setPulseStatus isActive >> return r)
-runCmd (Free.Free (ScanNeedsPaging' r)) = Right <$> scanNeedsPaging r
+runCmd (Free.Free (SetPulseStatus' isActive r)) = Right <$> (runSetPulseStateCmd isActive >> return r)
+runCmd (Free.Free (ScanNeedsPaging' r)) = Right <$> runScanNeedsPagingCmd r
 
 stepProgram :: ProgramId -> RunningProgramState r -> InterpreterApp m r ()
 stepProgram programId ps = do

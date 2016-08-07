@@ -224,7 +224,7 @@ runCmd tn (UpdateItem' DynamoKey { dynamoKeyKey = streamId, dynamoKeyEventNumber
               else ["REMOVE " ++ (T.intercalate ", " removeKeys)]
         let updateExpression = T.intercalate " " (setExpression ++ removeExpression)
         let req0 =
-              updateItem tn
+              Network.AWS.DynamoDB.updateItem tn
               & set uiKey key
               & set uiUpdateExpression (Just updateExpression)
               & if (not . HM.null) expressionAttributeValues then

@@ -9,6 +9,7 @@ import           Control.Concurrent
 import           Control.Concurrent.STM.TQueue
 import           Control.Lens
 import           Control.Monad.Except
+import           Control.Monad.State
 import           Control.Monad.Trans.AWS
 import qualified Control.Monad.Trans.AWS                as AWS
 import qualified Data.Text                              as T
@@ -50,11 +51,12 @@ printEvent a = do
 buildActionRunner :: (forall a. DynamoCmdM TQueue a -> ExceptT InterpreterError IO a) -> EventStoreActionRunner
 buildActionRunner runner =
   EventStoreActionRunner {
-    eventStoreActionRunnerPostEvent = (\req -> liftIO $ runExceptT $ (PostEventResult <$> runner (postEventRequestProgram req)))
-    , eventStoreActionRunnerReadEvent = (\req -> liftIO $ runExceptT $ (ReadEventResult <$> runner (getReadEventRequestProgram req)))
-    , eventStoreActionRunnerReadStream = (\req -> liftIO $ runExceptT $ (ReadStreamResult <$> runner (getReadStreamRequestProgram req)))
-    , eventStoreActionRunnerReadAll = (\req -> liftIO $ runExceptT $ (ReadAllResult <$> runner (getReadAllRequestProgram req)))
+    eventStoreActionRunnerPostEvent = (\req -> liftIO $ runExceptT $ (PostEventResult <$> runWithState (postEventRequestProgram req)))
+    , eventStoreActionRunnerReadEvent = (\req -> liftIO $ runExceptT $ (ReadEventResult <$> runWithState (getReadEventRequestProgram req)))
+    , eventStoreActionRunnerReadStream = (\req -> liftIO $ runExceptT $ (ReadStreamResult <$> runWithState (getReadStreamRequestProgram req)))
+    , eventStoreActionRunnerReadAll = (\req -> liftIO $ runExceptT $ (ReadAllResult <$> runWithState (getReadAllRequestProgram req)))
   }
+  where runWithState p = runner $ runExceptT $ evalStateT p GlobalFeedWriter.emptyGlobalFeedWriterState
 
 data Config = Config
   { configTableName     :: String,
@@ -115,7 +117,7 @@ printError err = putStrLn $ "Error: " <> show err
 forkGlobalFeedWriter :: (forall a. DynamoCmdM TQueue a -> ExceptT InterpreterError IO a) -> IO ()
 forkGlobalFeedWriter runner =
   forkAndSupervise "GlobalFeedWriter" $ do
-    result <- runExceptT $ runner GlobalFeedWriter.main
+    result <- runExceptT $ runner $ runExceptT $ evalStateT GlobalFeedWriter.main GlobalFeedWriter.emptyGlobalFeedWriterState
     case result of (Left err)         -> printError (ApplicationErrorInterpreter err)
                    (Right (Left err)) -> printError (ApplicationErrorGlobalFeedWriter err)
                    _                  -> return ()
