@@ -353,7 +353,7 @@ emptyGlobalFeedWriterState = GlobalFeedWriterState {
 type GlobalFeedWriterStack q m = (MonadEsDsl q m, MonadError EventStoreActionError m, MonadState GlobalFeedWriterState m)
 
 main :: (GlobalFeedWriterStack q m) => m ()
-main = do
+main = forever $ do
   scanResult <- scanNeedsPaging
   addItemsToGlobalFeed scanResult
   when (null scanResult) (wait 1000)

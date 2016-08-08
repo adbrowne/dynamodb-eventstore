@@ -38,10 +38,22 @@ import           Test.Tasty.QuickCheck                   (testProperty, (===))
 import qualified Test.Tasty.QuickCheck                   as QC
 
 import           DynamoDbEventStore.DynamoCmdInterpreter
-import           DynamoDbEventStore.EventStoreActions
+import qualified DynamoDbEventStore.EventStoreActions
+import           DynamoDbEventStore.EventStoreActions (PostEventRequest(..),EventEntry(..),EventWriteResult(..),EventStartPosition(..),FeedDirection(..),StreamResult(..),GlobalStartPosition(..),GlobalFeedPosition(..),GlobalStreamResult(..),StreamOffset,ReadStreamRequest(..),ReadAllRequest(..),EventType(..),EventTime(..),unEventTime,ReadEventRequest(..),recordedEventProducerBackward)
 import           DynamoDbEventStore.EventStoreCommands
 import           DynamoDbEventStore.GlobalFeedWriter     (EventStoreActionError (..))
 import qualified DynamoDbEventStore.GlobalFeedWriter     as GlobalFeedWriter
+
+postEventRequestProgram :: PostEventRequest -> DynamoCmdM MemQ.Queue (Either EventStoreActionError EventWriteResult)
+postEventRequestProgram = runExceptT . DynamoDbEventStore.EventStoreActions.postEventRequestProgram
+getReadAllRequestProgram :: ReadAllRequest -> DynamoCmdM MemQ.Queue (Either EventStoreActionError GlobalStreamResult)
+getReadAllRequestProgram = runExceptT . DynamoDbEventStore.EventStoreActions.getReadAllRequestProgram
+getReadEventRequestProgram :: ReadEventRequest -> DynamoCmdM MemQ.Queue (Either EventStoreActionError (Maybe RecordedEvent))
+getReadEventRequestProgram = runExceptT . DynamoDbEventStore.EventStoreActions.getReadEventRequestProgram
+getReadStreamRequestProgram :: ReadStreamRequest -> DynamoCmdM MemQ.Queue (Either EventStoreActionError (Maybe StreamResult))
+getReadStreamRequestProgram = runExceptT . DynamoDbEventStore.EventStoreActions.getReadStreamRequestProgram
+globalFeedWriterProgram :: DynamoCmdM MemQ.Queue (Either EventStoreActionError ())
+globalFeedWriterProgram = runExceptT (evalStateT GlobalFeedWriter.main GlobalFeedWriter.emptyGlobalFeedWriterState)
 
 type UploadItem = (Text,Int64,NonEmpty EventEntry)
 newtype UploadList = UploadList [UploadItem] deriving (Show)
@@ -180,8 +192,8 @@ prop_EventShouldAppearInGlobalFeedInStreamOrder newUploadList =
     uploadList = buildUploadListItems newUploadList
     programs = Map.fromList [
       ("Publisher", (publisher uploadList,100))
-      , ("GlobalFeedWriter1", (GlobalFeedWriter.main, 100))
-      , ("GlobalFeedWriter2", (GlobalFeedWriter.main, 100))
+      , ("GlobalFeedWriter1", (globalFeedWriterProgram, 100))
+      , ("GlobalFeedWriter2", (globalFeedWriterProgram, 100))
       ]
   in QC.forAll (runPrograms programs) (check uploadList)
      where
@@ -194,8 +206,8 @@ prop_SingleEventIsIndexedCorrectly =
     uploadList = [("MyStream",-1, sampleEventEntry :| [])]
     programs = Map.fromList [
       ("Publisher", (publisher uploadList,100))
-      , ("GlobalFeedWriter1", (GlobalFeedWriter.main, 100))
-      , ("GlobalFeedWriter2", (GlobalFeedWriter.main, 100))
+      , ("GlobalFeedWriter1", (globalFeedWriterProgram, 100))
+      , ("GlobalFeedWriter2", (globalFeedWriterProgram, 100))
       ]
   in QC.forAll (runPrograms programs) (check uploadList)
      where
@@ -327,8 +339,8 @@ prop_EventsShouldAppearInTheirSteamsInOrder (UploadList uploadList) =
   let
     programs = Map.fromList [
       ("Publisher", (publisher uploadList,100)),
-      ("GlobalFeedWriter1", (GlobalFeedWriter.main, 100)),
-      ("GlobalFeedWriter2", (GlobalFeedWriter.main, 100)) ]
+      ("GlobalFeedWriter1", (globalFeedWriterProgram, 100)),
+      ("GlobalFeedWriter2", (globalFeedWriterProgram, 100)) ]
   in QC.forAll (runPrograms programs) check
      where
        check (_, testRunState) = runReadEachStream testRunState === (Right $ globalFeedFromUploadList uploadList)
@@ -339,8 +351,8 @@ prop_ScanUnpagedShouldBeEmpty (UploadList uploadList) =
   let
     programs = Map.fromList [
       ("Publisher", (publisher uploadList,100)),
-      ("GlobalFeedWriter1", (GlobalFeedWriter.main, 100)),
-      ("GlobalFeedWriter2", (GlobalFeedWriter.main, 100)) ]
+      ("GlobalFeedWriter1", (globalFeedWriterProgram, 100)),
+      ("GlobalFeedWriter2", (globalFeedWriterProgram, 100)) ]
   in QC.forAll (runPrograms programs) check
      where
        check (_, testRunState) = scanUnpaged testRunState === []
@@ -405,7 +417,7 @@ prop_NoWriteRequestCanCausesAFatalErrorInGlobalFeedWriter events =
   let
     programs = Map.fromList [
       ("Publisher", (Right <$> forM_ events postEventRequestProgram, 100))
-      , ("GlobalFeedWriter1", (GlobalFeedWriter.main, 100))
+      , ("GlobalFeedWriter1", (globalFeedWriterProgram, 100))
       ]
   in QC.forAll (runPrograms programs) check
      where
@@ -667,7 +679,7 @@ streamLinkTests =
 whenIndexing1000ItemsIopsIsMinimal :: Assertion
 whenIndexing1000ItemsIopsIsMinimal =
   let
-    afterIndexState = execProgramUntilIdle "indexer" GlobalFeedWriter.main (testStateItems 1000)
+    afterIndexState = execProgramUntilIdle "indexer" globalFeedWriterProgram (testStateItems 1000)
     afterReadState = execProgramUntilIdle "globalFeedReader" (pageThroughGlobalFeed 10) (view testState afterIndexState)
     expectedWriteState = Map.fromList [
       ((UnpagedRead,IopsScanUnpaged,"indexer"),1000)
