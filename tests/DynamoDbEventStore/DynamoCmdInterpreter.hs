@@ -237,6 +237,7 @@ runCmd (Free.Free (ReadFromDynamo' key r)) = Right <$> getGetReadResultCmd key r
 runCmd (Free.Free (Log' _ msg r)) = Right <$> (addLog msg >> return r)
 runCmd (Free.Free (SetPulseStatus' isActive r)) = Right <$> (runSetPulseStateCmd isActive >> return r)
 runCmd (Free.Free (ScanNeedsPaging' r)) = Right <$> runScanNeedsPagingCmd r
+runCmd (Free.Free (ForkChild' _ _)) = undefined -- todo
 
 stepProgram :: ProgramId -> RunningProgramState r -> InterpreterApp m r ()
 stepProgram programId ps = do

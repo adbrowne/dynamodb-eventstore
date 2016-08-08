@@ -150,6 +150,7 @@ timeAction getPair action = do
   return a
 
 runCmd :: Text -> DynamoCmd TQueue (MyAwsStack a) -> MyAwsStack a
+runCmd _ (ForkChild' _ _) = undefined -- todo
 runCmd _ (NewQueue' n) = do
   queue <- liftIO newTQueueIO
   n queue
