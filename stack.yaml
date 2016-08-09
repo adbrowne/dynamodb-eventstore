@@ -4,3 +4,4 @@ packages:
 resolver: lts-6.10
 extra-deps:
  - aeson-diff-1.0.0.0
+ - haskell-src-exts-1.18.2
