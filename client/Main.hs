@@ -406,15 +406,21 @@ start Config { configCommand = SpeedTest } = do
   logger <- liftIO $ AWS.newLogger AWS.Error System.IO.stdout
   awsEnv <- set AWS.envLogger logger <$> AWS.newEnv AWS.Sydney AWS.Discover
   thisCompletePageQueue <- newTQueueIO
+  let tableName = "estest2"
   let runtimeEnvironment = RuntimeEnvironment {
         _runtimeEnvironmentMetricLogs = nullMetrics,
         _runtimeEnvironmentCompletePageQueue = thisCompletePageQueue,
-        _runtimeEnvironmentAmazonkaEnv = awsEnv }
+        _runtimeEnvironmentAmazonkaEnv = awsEnv,
+        _runtimeEnvironmentRunChild = runChild tableName }
   let runner = toExceptT $ runDynamoCloud runtimeEnvironment
-  let runner' = runMyAws runner "estest2"
+  let runner' = runMyAws runner tableName
   result <- runExceptT $ runner' writePages
   print result
   return ()
+
+runChild :: Text -> RuntimeEnvironment -> DynamoCmdM TQueue a -> IO (Either InterpreterError a)
+runChild tableName runtimeEnvironment program = do
+  runExceptT $ runMyAws (toExceptT $ runDynamoCloud runtimeEnvironment) tableName program
 
 writePages :: DynamoCmdM TQueue ()
 writePages = do

@@ -29,6 +29,7 @@ module DynamoDbEventStore.EventStoreCommands(
   writeQueue',
   tryReadQueue',
   readField,
+  forkChild',
   MonadEsDsl(..),
   DynamoCmdM,
   DynamoVersion,
@@ -216,7 +217,7 @@ data DynamoCmd q next where
   NewQueue' :: Typeable a => (q a -> next) -> DynamoCmd q next
   WriteQueue' :: Typeable a => q a -> a -> next -> DynamoCmd q next
   TryReadQueue' :: Typeable a => q a ->  (Maybe a -> next) -> DynamoCmd q next
-  ForkChild' :: DynamoCmd q () -> next -> DynamoCmd q next
+  ForkChild' :: F (DynamoCmd q) () -> next -> DynamoCmd q next
   Wait' :: Int -> next -> DynamoCmd q next
   SetPulseStatus' :: Bool -> next -> DynamoCmd q next
   Log' :: LogLevel -> Text -> next -> DynamoCmd q next
@@ -248,6 +249,9 @@ instance (MonadFree (DynamoCmd q) m) => (MonadEsDsl q) m where
   scanNeedsPaging = scanNeedsPaging'
   wait = wait'
   setPulseStatus = setPulseStatus'
+
+forkChild' :: (MonadFree (DynamoCmd q) m) => F (DynamoCmd q) () -> m ()
+forkChild' p = liftF $ ForkChild' p ()
 
 newQueue' :: (MonadFree (DynamoCmd q) m, Typeable a) => m (q a)
 newQueue' = liftF $ NewQueue' id

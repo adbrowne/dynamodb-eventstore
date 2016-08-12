@@ -27,6 +27,7 @@ module DynamoDbEventStore.AmazonkaInterpreter (
 import           BasicPrelude
 import           Control.Concurrent                    (threadDelay)
 import           Control.Concurrent.STM
+import           Control.Concurrent.Async
 import           Control.Exception.Lens
 import           Control.Lens
 import           Control.Monad.Catch
@@ -131,7 +132,8 @@ data MetricLogs = MetricLogs {
 data RuntimeEnvironment = RuntimeEnvironment {
   _runtimeEnvironmentMetricLogs        :: MetricLogs,
   _runtimeEnvironmentCompletePageQueue :: TQueue (PageKey, Seq FeedEntry),
-  _runtimeEnvironmentAmazonkaEnv       :: Env}
+  _runtimeEnvironmentAmazonkaEnv       :: Env,
+  _runtimeEnvironmentRunChild          :: (forall a. RuntimeEnvironment -> DynamoCmdM TQueue a -> IO (Either InterpreterError a))}
 
 $(makeLenses ''RuntimeEnvironment)
 
@@ -150,7 +152,11 @@ timeAction getPair action = do
   return a
 
 runCmd :: Text -> DynamoCmd TQueue (MyAwsStack a) -> MyAwsStack a
-runCmd _ (ForkChild' _ _) = undefined -- todo
+runCmd _ (ForkChild' p n) = do
+  runChild <- view runtimeEnvironmentRunChild
+  runtimeEnv <- ask
+  void . liftIO $ async $ runChild runtimeEnv p
+  n
 runCmd _ (NewQueue' n) = do
   queue <- liftIO newTQueueIO
   n queue
@@ -307,7 +313,8 @@ evalProgram metrics program = do
   let runtimeEnvironment = RuntimeEnvironment {
         _runtimeEnvironmentMetricLogs = metrics,
         _runtimeEnvironmentCompletePageQueue = thisCompletePageQueue,
-        _runtimeEnvironmentAmazonkaEnv = awsEnv }
+        _runtimeEnvironmentAmazonkaEnv = awsEnv,
+        _runtimeEnvironmentRunChild = \r p -> runLocalDynamo r $ runProgram tableName p }
   _ <- runLocalDynamo runtimeEnvironment $ buildTable tableName
   runLocalDynamo runtimeEnvironment $ runProgram tableName program
 

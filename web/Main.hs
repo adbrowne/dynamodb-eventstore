@@ -39,6 +39,10 @@ runDynamoLocal env x = do
 runDynamoCloud :: RuntimeEnvironment -> MyAwsStack a -> IO (Either InterpreterError a)
 runDynamoCloud env x = runResourceT $ runAWST env $ runExceptT x
 
+runChild :: Text -> (RuntimeEnvironment -> MyAwsStack a -> IO (Either InterpreterError a)) -> RuntimeEnvironment -> DynamoCmdM TQueue a -> IO (Either InterpreterError a)
+runChild tableName runner runtimeEnvironment program = do
+  runner runtimeEnvironment $ runProgram tableName program
+
 runMyAws :: (MyAwsStack a -> ExceptT InterpreterError IO a) -> Text -> DynamoCmdM TQueue a -> ExceptT InterpreterError IO a
 runMyAws runner tableName program =
   runner $ runProgram tableName program
@@ -159,16 +163,17 @@ start parsedConfig = do
   logger <- liftIO $ newLogger AWS.Error stdout
   awsEnv <- set envLogger logger <$> newEnv Sydney Discover
   thisCompletePageQueue <- lift newTQueueIO
+  let interperter = (if configLocalDynamoDB parsedConfig then runDynamoLocal else runDynamoCloud) 
   let runtimeEnvironment = RuntimeEnvironment {
         _runtimeEnvironmentMetricLogs = metrics,
         _runtimeEnvironmentCompletePageQueue = thisCompletePageQueue,
-        _runtimeEnvironmentAmazonkaEnv = awsEnv }
-  let interperter = (if configLocalDynamoDB parsedConfig then runDynamoLocal else runDynamoCloud) runtimeEnvironment
-  let runner = toExceptT interperter
-  tableAlreadyExists <- toApplicationError interperter $ doesTableExist tableName
+        _runtimeEnvironmentAmazonkaEnv = awsEnv,
+        _runtimeEnvironmentRunChild = runChild tableName interperter }
+  let runner = toExceptT $ interperter runtimeEnvironment
+  tableAlreadyExists <- toApplicationError (interperter runtimeEnvironment) $ doesTableExist tableName
   let shouldCreateTable = configCreateTable parsedConfig
   when (not tableAlreadyExists && shouldCreateTable)
-    (putStrLn "Creating table..." >> toApplicationError interperter (buildTable tableName) >> putStrLn "Table created")
+    (putStrLn "Creating table..." >> toApplicationError (interperter runtimeEnvironment) (buildTable tableName) >> putStrLn "Table created")
   if tableAlreadyExists || shouldCreateTable then runApp runner tableName else failNoTable
   where
    runApp :: (forall a. MyAwsStack a -> ExceptT InterpreterError IO a) -> Text -> ExceptT ApplicationError IO ()

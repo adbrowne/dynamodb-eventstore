@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes        #-}
+{-# LANGUAGE FlexibleContexts  #-}
 
 module DynamoCmdAmazonkaTests where
 
@@ -32,10 +33,29 @@ testWrite = writeToDynamo' testKey
 sampleRead :: DynamoCmdM q (Maybe DynamoReadResult)
 sampleRead = readFromDynamo' testKey
 
+waitForItem :: (Typeable a) => q a -> DynamoCmdM q a
+waitForItem q = go Nothing
+  where go Nothing  = tryReadQueue' q >>= go
+        go (Just x) = return x
+
 tests :: (forall a. DynamoCmdM q a -> IO (Either InterpreterError a)) -> [TestTree]
 tests evalProgram =
   [
-    testCase "Can write and read to complete page queue" $
+      testCase "Can spawn a new thread" $
+        let
+          queueItem = (PageKey 1, Seq.fromList ['a'])
+          childThread q = do
+            writeQueue' q queueItem
+          actions = do
+            q <- newQueue'
+            forkChild' (childThread q)
+            waitForItem q
+          evt = evalProgram actions
+          expected = Right queueItem
+        in do
+          r <- evt
+          assertEqual "Queue item is read back" expected r
+    , testCase "Can write and read to complete page queue" $
         let
           queueItem = (PageKey 1, Seq.fromList ['a'])
           actions = do
