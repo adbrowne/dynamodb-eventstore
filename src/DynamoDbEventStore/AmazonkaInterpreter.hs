@@ -40,6 +40,8 @@ import           Data.List.NonEmpty                    (NonEmpty (..))
 import qualified Data.Text                             as T
 import qualified DynamoDbEventStore.Constants          as Constants
 import           DynamoDbEventStore.EventStoreCommands hiding (readField)
+import           DynamoDbEventStore.Types
+import           DynamoDbEventStore.AmazonkaImplementation
 import qualified DynamoDbEventStore.EventStoreCommands as EventStoreCommands
 import           System.CPUTime
 import           System.Random
@@ -60,12 +62,7 @@ fieldPagingRequired = Constants.needsPagingKey
 unpagedIndexName :: Text
 unpagedIndexName = "unpagedIndex"
 
-data InterpreterError =
-  FieldMissing Text |
-  EventNumberFormat Text |
-  EventVersionFormat Text
-  deriving (Show, Eq)
-
+{-
 getDynamoKeyForEvent :: DynamoKey -> HM.HashMap Text AttributeValue
 getDynamoKeyForEvent (DynamoKey hashKey rangeKey) =
     HM.fromList [
@@ -117,28 +114,6 @@ allErrors l =
 eitherToExcept :: (MonadError e m) => Either e a -> m a
 eitherToExcept (Left s) = throwError s
 eitherToExcept (Right a) = return a
-
-data MetricLogsPair = MetricLogsPair {
-  metricLogsPairCount  :: IO (),
-  metricLogsPairTimeMs :: Double -> IO () }
-
-data MetricLogs = MetricLogs {
-  metricLogsReadItem   :: MetricLogsPair,
-  metricLogsWriteItem  :: MetricLogsPair,
-  metricLogsQuery      :: MetricLogsPair,
-  metricLogsUpdateItem :: MetricLogsPair,
-  metricLogsScan       :: MetricLogsPair }
-
-data RuntimeEnvironment = RuntimeEnvironment {
-  _runtimeEnvironmentMetricLogs        :: MetricLogs,
-  _runtimeEnvironmentCompletePageQueue :: TQueue (PageKey, Seq FeedEntry),
-  _runtimeEnvironmentAmazonkaEnv       :: Env,
-  _runtimeEnvironmentRunChild          :: (forall a. RuntimeEnvironment -> DynamoCmdM TQueue a -> IO (Either InterpreterError a))}
-
-$(makeLenses ''RuntimeEnvironment)
-
-instance HasEnv RuntimeEnvironment where
-  environment = runtimeEnvironmentAmazonkaEnv
 
 timeAction :: (MonadIO m, MonadReader RuntimeEnvironment m) => (MetricLogs -> MetricLogsPair) -> m a -> m a
 timeAction getPair action = do
@@ -273,9 +248,10 @@ runCmd _tn (SetPulseStatus' _ n) = n
 runCmd _tn (Log' _level msg n) = do
   liftIO $ print msg
   n
+-}
 
-buildTable :: Text -> MyAwsStack ()
-buildTable tableName = do
+buildTable :: Text -> MyAwsM ()
+buildTable tableName = MyAwsM $ do
   let unpagedGlobalSecondary = globalSecondaryIndex
           unpagedIndexName
           (keySchemaElement fieldPagingRequired Hash :| [])
@@ -295,7 +271,7 @@ buildTable tableName = do
   _ <- await (tableExists { _waitDelay = 4 }) (describeTable tableName)
   return ()
 
-doesTableExist :: Text -> MyAwsStack Bool
+doesTableExist :: Text -> MyAwsM Bool
 doesTableExist tableName =
   catches describe [handler _ResourceNotFoundException (const $ return False)]
   where
@@ -304,7 +280,7 @@ doesTableExist tableName =
       let tableDesc = view drsTable resp
       return $ isJust tableDesc
 
-evalProgram :: MetricLogs -> DynamoCmdM TQueue a -> IO (Either InterpreterError a)
+evalProgram :: MetricLogs -> MyAwsM a -> IO (Either InterpreterError a)
 evalProgram metrics program = do
   tableNameId :: Int <- getStdRandom (randomR (1,9999999999))
   let tableName = "testtable-" ++ show tableNameId
@@ -314,18 +290,18 @@ evalProgram metrics program = do
         _runtimeEnvironmentMetricLogs = metrics,
         _runtimeEnvironmentCompletePageQueue = thisCompletePageQueue,
         _runtimeEnvironmentAmazonkaEnv = awsEnv,
-        _runtimeEnvironmentRunChild = \r p -> runLocalDynamo r $ runProgram tableName p }
+        _runtimeEnvironmentTableName = tableName }
   _ <- runLocalDynamo runtimeEnvironment $ buildTable tableName
-  runLocalDynamo runtimeEnvironment $ runProgram tableName program
+  runLocalDynamo runtimeEnvironment program 
 
-runLocalDynamo :: RuntimeEnvironment -> MyAwsStack b -> IO (Either InterpreterError b)
+runLocalDynamo :: RuntimeEnvironment -> MyAwsM b -> IO (Either InterpreterError b)
 runLocalDynamo runtimeEnvironment x = do
   let dynamo = setEndpoint False "localhost" 8000 dynamoDB
   env <- newEnv Sydney (FromEnv "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" Nothing)
   let runtimeEnvironment' = runtimeEnvironment { _runtimeEnvironmentAmazonkaEnv = env }
-  runResourceT $ runAWST runtimeEnvironment' $ reconfigure dynamo $ runExceptT x
+  runResourceT $ runAWST runtimeEnvironment' $ reconfigure dynamo $ runExceptT (unMyAwsM x)
 
 type MyAwsStack = ((ExceptT InterpreterError) (AWST' RuntimeEnvironment (ResourceT IO)))
 
-runProgram :: Text -> DynamoCmdM TQueue a -> MyAwsStack a
-runProgram tableName = iterM (runCmd tableName)
+runProgram :: Text -> MyAwsM a -> MyAwsStack a
+runProgram tableName program = unMyAwsM program

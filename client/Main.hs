@@ -35,6 +35,7 @@ import qualified Data.UUID                              (UUID)
 import           DynamoDbEventStore.AmazonkaInterpreter
 import           DynamoDbEventStore.EventStoreCommands
 import qualified DynamoDbEventStore.GlobalFeedWriter    as GlobalFeedWriter
+import           Control.Monad.Trans.Resource
 import           Network.Wreq
 import qualified Options.Applicative                    as Opt
 import qualified Prelude                                as P
@@ -411,18 +412,12 @@ start Config { configCommand = SpeedTest } = do
         _runtimeEnvironmentMetricLogs = nullMetrics,
         _runtimeEnvironmentCompletePageQueue = thisCompletePageQueue,
         _runtimeEnvironmentAmazonkaEnv = awsEnv,
-        _runtimeEnvironmentRunChild = runChild tableName }
-  let runner = toExceptT $ runDynamoCloud runtimeEnvironment
-  let runner' = runMyAws runner tableName
-  result <- runExceptT $ runner' writePages
+        _runtimeEnvironmentTableName = tableName }
+  result <- runDynamoCloud runtimeEnvironment $ unMyAwsM writePages
   print result
   return ()
 
-runChild :: Text -> RuntimeEnvironment -> DynamoCmdM TQueue a -> IO (Either InterpreterError a)
-runChild tableName runtimeEnvironment program = do
-  runExceptT $ runMyAws (toExceptT $ runDynamoCloud runtimeEnvironment) tableName program
-
-writePages :: DynamoCmdM TQueue ()
+writePages :: MyAwsM ()
 writePages = do
   _ <- runExceptT $ evalStateT (mapM_ go [0..1000]) GlobalFeedWriter.emptyGlobalFeedWriterState
   return ()
@@ -432,13 +427,10 @@ writePages = do
       feedEntryNumber = 0,
       feedEntryCount = 1 }
     feedEntries = Seq.fromList $ replicate 1000 testFeedEntry
+    go :: Int64 -> (StateT GlobalFeedWriter.GlobalFeedWriterState (ExceptT GlobalFeedWriter.EventStoreActionError MyAwsM)) DynamoWriteResult
     go pageNumber = do
       log Debug ("Writing page" <> show pageNumber)
       GlobalFeedWriter.writePage (PageKey pageNumber) feedEntries 0
-
-runMyAws :: (MyAwsStack a -> ExceptT InterpreterError IO a) -> Text -> DynamoCmdM TQueue a -> ExceptT InterpreterError IO a
-runMyAws runner tableName program =
-  runner $ runProgram tableName program
 
 toExceptT :: forall a. (MyAwsStack a -> IO (Either InterpreterError a)) -> (MyAwsStack a -> ExceptT InterpreterError IO a)
 toExceptT runner a = do

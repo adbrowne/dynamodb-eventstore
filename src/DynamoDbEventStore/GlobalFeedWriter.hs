@@ -13,6 +13,7 @@ module DynamoDbEventStore.GlobalFeedWriter (
   getPageDynamoKey,
   getLatestStoredPage,
   emptyGlobalFeedWriterState,
+  GlobalFeedWriterState(..),
   DynamoCmdWithErrors,
   GlobalFeedPosition(..),
   EventStoreActionError(..)) where
@@ -31,6 +32,7 @@ import qualified Data.Set                              as Set
 import qualified Data.Text                             as T
 import qualified DynamoDbEventStore.Constants          as Constants
 import           DynamoDbEventStore.EventStoreCommands 
+import           DynamoDbEventStore.Types 
 import           Network.AWS.DynamoDB hiding (updateItem)
 import           Safe
 import qualified Test.QuickCheck                       as QC
@@ -104,7 +106,7 @@ readExcept err t =
   in case parsed of Nothing  -> throwError $ err t
                     (Just a) -> return a
 
-type DynamoCmdWithErrors q m = (MonadEsDsl q m, MonadError EventStoreActionError m)
+type DynamoCmdWithErrors q m = (MonadEsDsl m, MonadError EventStoreActionError m)
 
 readHeadData :: DynamoCmdWithErrors q m => m HeadData
 readHeadData = do
@@ -186,7 +188,7 @@ toDynamoKey (StreamId streamId) = DynamoKey (Constants.streamDynamoKeyPrefix <> 
 eventKeyToDynamoKey :: EventKey -> DynamoKey
 eventKeyToDynamoKey (EventKey(streamId, eventNumber)) = toDynamoKey streamId eventNumber
 
-updateItemWithRetry :: (MonadEsDsl q m, MonadError EventStoreActionError m) => DynamoKey -> HashMap Text ValueUpdate -> m ()
+updateItemWithRetry :: (MonadEsDsl m, MonadError EventStoreActionError m) => DynamoKey -> HashMap Text ValueUpdate -> m ()
 updateItemWithRetry key updates = do
   result <- loopUntilSuccess 100 id (updateItem key updates)
   unless result (throwError $ EventStoreActionErrorUpdateFailure key)
@@ -350,7 +352,7 @@ emptyGlobalFeedWriterState = GlobalFeedWriterState {
   globalFeedWriterStateCurrentPage = Nothing
                                                    }
 
-type GlobalFeedWriterStack q m = (MonadEsDsl q m, MonadError EventStoreActionError m, MonadState GlobalFeedWriterState m)
+type GlobalFeedWriterStack q m = (MonadEsDsl m, MonadError EventStoreActionError m, MonadState GlobalFeedWriterState m)
 
 main :: (GlobalFeedWriterStack q m) => m ()
 main = forever $ do

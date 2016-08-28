@@ -24,7 +24,9 @@ library
                        DynamoDbEventStore.GlobalFeedWriter,
                        DynamoDbEventStore.Constants,
                        DynamoDbEventStore.Feed,
-                       DynamoDbEventStore.AmazonkaInterpreter
+                       DynamoDbEventStore.AmazonkaInterpreter,
+                       DynamoDbEventStore.AmazonkaImplementation,
+                       DynamoDbEventStore.Types
   default-extensions:          NoImplicitPrelude
   build-depends:       base >=4.8 && <4.9,
                        basic-prelude,
@@ -34,6 +36,7 @@ library
                        cereal,
                        async,
                        stm,
+                       dodgerblue,
                        vector,
                        adjunctions,
                        either,
@@ -112,6 +115,7 @@ executable client
                        text >= 1.2,
                        aeson >= 0.8,
                        async,
+                       resourcet,
                        stm,
                        taggy,
                        taggy-lens,

@@ -31,28 +31,30 @@ import qualified System.Metrics.Distribution            as Distribution
 import           System.Remote.Monitoring
 import           Web.Scotty
 
-runDynamoLocal :: RuntimeEnvironment -> MyAwsStack a -> IO (Either InterpreterError a)
+runDynamoLocal :: RuntimeEnvironment -> MyAwsM a -> IO (Either InterpreterError a)
 runDynamoLocal env x = do
   let dynamo = setEndpoint False "localhost" 8000 dynamoDB
-  runResourceT $ runAWST env $ reconfigure dynamo $ runExceptT x
+  runResourceT $ runAWST env $ reconfigure dynamo $ runExceptT (unMyAwsM x)
 
-runDynamoCloud :: RuntimeEnvironment -> MyAwsStack a -> IO (Either InterpreterError a)
-runDynamoCloud env x = runResourceT $ runAWST env $ runExceptT x
+runDynamoCloud :: RuntimeEnvironment -> MyAwsM a -> IO (Either InterpreterError a)
+runDynamoCloud env x = runResourceT $ runAWST env $ runExceptT (unMyAwsM x)
 
-runChild :: Text -> (RuntimeEnvironment -> MyAwsStack a -> IO (Either InterpreterError a)) -> RuntimeEnvironment -> DynamoCmdM TQueue a -> IO (Either InterpreterError a)
+{- runChild :: Text -> (RuntimeEnvironment -> MyAwsStack a -> IO (Either InterpreterError a)) -> RuntimeEnvironment -> MyAwsM a -> IO (Either InterpreterError a)
 runChild tableName runner runtimeEnvironment program = do
-  runner runtimeEnvironment $ runProgram tableName program
+  runner runtimeEnvironment $ runProgram tableName program -}
 
+{-
 runMyAws :: (MyAwsStack a -> ExceptT InterpreterError IO a) -> Text -> DynamoCmdM TQueue a -> ExceptT InterpreterError IO a
 runMyAws runner tableName program =
   runner $ runProgram tableName program
+-}
 
 printEvent :: (MonadIO m) => EventStoreAction -> m EventStoreAction
 printEvent a = do
   liftIO $ print . show $ a
   return a
 
-buildActionRunner :: (forall a. DynamoCmdM TQueue a -> ExceptT InterpreterError IO a) -> EventStoreActionRunner
+buildActionRunner :: MonadEsDsl m => (forall a. m a -> ExceptT InterpreterError IO a) -> EventStoreActionRunner
 buildActionRunner runner =
   EventStoreActionRunner {
     eventStoreActionRunnerPostEvent = (\req -> liftIO $ runExceptT $ (PostEventResult <$> runWithState (postEventRequestProgram req)))
@@ -92,7 +94,13 @@ toExceptT runner a = do
   case result of Left s -> throwError $ s
                  Right r -> return r
 
-toApplicationError :: forall a. (MyAwsStack a -> IO (Either InterpreterError a)) -> (MyAwsStack a -> ExceptT ApplicationError IO a)
+toExceptT' :: IO (Either e a) -> ExceptT e (IO) a
+toExceptT' p = do
+  a <- lift p
+  case a of Left s  -> throwError $ s
+            Right r -> return r
+
+toApplicationError :: forall a. (MyAwsM a -> IO (Either InterpreterError a)) -> (MyAwsM a -> ExceptT ApplicationError IO a)
 toApplicationError runner a = do
   result <- liftIO $ runner a
   case result of Left s -> throwError . ApplicationErrorInterpreter $ s
@@ -118,7 +126,7 @@ forkAndSupervise processName =
 printError :: (Show a) => a -> IO ()
 printError err = putStrLn $ "Error: " <> show err
 
-forkGlobalFeedWriter :: (forall a. DynamoCmdM TQueue a -> ExceptT InterpreterError IO a) -> IO ()
+forkGlobalFeedWriter :: MonadEsDsl m => (forall a. m a -> ExceptT InterpreterError IO a) -> IO ()
 forkGlobalFeedWriter runner =
   forkAndSupervise "GlobalFeedWriter" $ do
     result <- runExceptT $ runner $ runExceptT $ evalStateT GlobalFeedWriter.main GlobalFeedWriter.emptyGlobalFeedWriterState
@@ -126,7 +134,7 @@ forkGlobalFeedWriter runner =
                    (Right (Left err)) -> printError (ApplicationErrorGlobalFeedWriter err)
                    _                  -> return ()
 
-startWebServer :: (forall a. DynamoCmdM TQueue a -> ExceptT InterpreterError IO a) -> Config -> IO ()
+startWebServer :: MonadEsDsl m => (forall a. m a -> ExceptT InterpreterError IO a) -> Config -> IO ()
 startWebServer runner parsedConfig = do
   let httpPort = configPort parsedConfig
   let warpSettings = setPort httpPort $ setHost (fromString httpHost) defaultSettings
@@ -168,19 +176,19 @@ start parsedConfig = do
         _runtimeEnvironmentMetricLogs = metrics,
         _runtimeEnvironmentCompletePageQueue = thisCompletePageQueue,
         _runtimeEnvironmentAmazonkaEnv = awsEnv,
-        _runtimeEnvironmentRunChild = runChild tableName interperter }
-  let runner = toExceptT $ interperter runtimeEnvironment
+        _runtimeEnvironmentTableName = tableName }
+  let runner p = toExceptT' $ interperter runtimeEnvironment p
   tableAlreadyExists <- toApplicationError (interperter runtimeEnvironment) $ doesTableExist tableName
   let shouldCreateTable = configCreateTable parsedConfig
   when (not tableAlreadyExists && shouldCreateTable)
     (putStrLn "Creating table..." >> toApplicationError (interperter runtimeEnvironment) (buildTable tableName) >> putStrLn "Table created")
   if tableAlreadyExists || shouldCreateTable then runApp runner tableName else failNoTable
   where
-   runApp :: (forall a. MyAwsStack a -> ExceptT InterpreterError IO a) -> Text -> ExceptT ApplicationError IO ()
+   runApp :: (forall a. MyAwsM a -> ExceptT InterpreterError IO a) -> Text -> ExceptT ApplicationError IO ()
    runApp runner tableName = do
-     let runner' = runMyAws runner tableName
-     liftIO $ forkGlobalFeedWriter runner'
-     liftIO $ startWebServer runner' parsedConfig
+     --let runner' = runMyAws runner tableName
+     liftIO $ forkGlobalFeedWriter runner
+     liftIO $ startWebServer runner parsedConfig
    failNoTable = putStrLn "Table does not exist"
 
 checkForFailureOnExit :: ExceptT ApplicationError IO () -> IO ()

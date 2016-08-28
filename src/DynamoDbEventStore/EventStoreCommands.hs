@@ -1,18 +1,16 @@
-{-# LANGUAGE DeriveFunctor              #-}
-{-# LANGUAGE DeriveGeneric              #-}
-{-# LANGUAGE FlexibleContexts           #-}
-{-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE MultiParamTypeClasses      #-}
-{-# LANGUAGE OverloadedStrings          #-}
-{-# LANGUAGE RankNTypes                 #-}
-{-# LANGUAGE RecordWildCards            #-}
-{-# LANGUAGE TemplateHaskell            #-}
-{-# LANGUAGE GADTs                      #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE DeriveFunctor          #-}
+{-# LANGUAGE FlexibleInstances      #-}
+{-# LANGUAGE FlexibleContexts       #-}
 {-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE MultiParamTypeClasses  #-}
+{-# LANGUAGE RankNTypes             #-}
+{-# LANGUAGE TypeFamilies           #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedStrings          #-}
 
 module DynamoDbEventStore.EventStoreCommands(
   StreamId(..),
@@ -25,13 +23,9 @@ module DynamoDbEventStore.EventStoreCommands(
   queryTable',
   updateItem',
   setPulseStatus',
-  newQueue',
-  writeQueue',
-  tryReadQueue',
   readField,
-  forkChild',
   MonadEsDsl(..),
-  DynamoCmdM,
+  MyAwsM(..),
   DynamoVersion,
   QueryDirection(..),
   RecordedEvent(..),
@@ -48,9 +42,15 @@ module DynamoDbEventStore.EventStoreCommands(
   ) where
 import           BasicPrelude
 import           Control.Lens              hiding ((.=))
-import           Control.Monad.Base
 import           Control.Monad.Except
+import           Control.Monad.Reader
+import           Control.Monad.State
+import           Control.Concurrent.STM
+import           Control.Concurrent.Async
 import           Control.Monad.Free.Church
+import qualified DodgerBlue
+import qualified DodgerBlue.Testing
+import qualified DodgerBlue.IO             as DodgerIO
 import           GHC.Natural
 
 import           Data.Aeson
@@ -63,21 +63,15 @@ import qualified Data.UUID                 as UUID
 import qualified Test.QuickCheck           as QC
 import           TextShow.TH
 
+import           DynamoDbEventStore.Types
+import           DynamoDbEventStore.AmazonkaImplementation
 import           Network.AWS.DynamoDB
-
-newtype StreamId = StreamId { unStreamId :: Text } deriving (Ord, Eq, Show, Hashable)
-deriveTextShow ''StreamId
-
-instance QC.Arbitrary StreamId where
-  arbitrary = StreamId . fromString <$> QC.arbitrary
+import           Network.AWS (MonadAWS(..))
+import           Control.Monad.Trans.AWS hiding (LogLevel)
+import           Control.Monad.Trans.Resource
 
 newtype EventKey = EventKey (StreamId, Int64) deriving (Ord, Eq, Show)
 deriveTextShow ''EventKey
-newtype PageKey = PageKey { unPageKey :: Int64 } deriving (Ord, Eq, Num, Enum)
-
-instance Show PageKey where
-  showsPrec precendence (PageKey p) = showsPrec precendence p
-
 data PageStatus = Version Int | Full | Verified deriving (Eq, Show, Generic)
 
 newtype EventId = EventId { unEventId :: UUID.UUID } deriving (Show, Eq, Ord, Generic)
@@ -132,13 +126,6 @@ instance ToJSON RecordedEvent where
 instance FromJSON PageStatus
 instance ToJSON PageStatus
 
-instance FromJSON StreamId where
-  parseJSON (String v) =
-    return $ StreamId v
-  parseJSON _ = mzero
-instance ToJSON StreamId where
-  toJSON (StreamId streamId) =
-    String streamId
 instance FromJSON EventKey where
   parseJSON (Object v) =
     EventKey <$>
@@ -151,83 +138,24 @@ instance ToJSON EventKey where
            , "eventNumber" .= eventNumber
            ]
 
-data FeedEntry = FeedEntry {
-  feedEntryStream :: StreamId,
-  feedEntryNumber :: Int64,
-  feedEntryCount  :: Int
-} deriving (Eq, Show)
+data DynamoCmd next =
+  ReadFromDynamo' DynamoKey (Maybe DynamoReadResult -> next)
+  | WriteToDynamo' DynamoKey DynamoValues DynamoVersion (DynamoWriteResult -> next)
+  | QueryTable' QueryDirection Text Natural (Maybe Int64) ([DynamoReadResult] -> next)
+  | UpdateItem' DynamoKey (HashMap Text ValueUpdate) (Bool -> next)
+  | ScanNeedsPaging' ([DynamoKey] -> next)
+  | Wait' Int next
+  | SetPulseStatus' Bool next
+  | Log' LogLevel Text next
 
-instance QC.Arbitrary FeedEntry where
-  arbitrary =
-    FeedEntry <$> QC.arbitrary
-              <*> QC.arbitrary
-              <*> QC.arbitrary
+deriving instance Functor DynamoCmd
 
-instance FromJSON FeedEntry where
-    parseJSON (Object v) = FeedEntry <$>
-                           v .: "s" <*>
-                           v .: "n" <*>
-                           v .: "c"
-    parseJSON _                = mempty
-
-instance ToJSON FeedEntry where
-    toJSON (FeedEntry stream number entryCount) =
-        object ["s" .= stream, "n" .= number, "c" .=entryCount]
-
-data DynamoKey = DynamoKey {
-  dynamoKeyKey         :: Text,
-  dynamoKeyEventNumber :: Int64
-} deriving (Show, Eq, Ord)
-
-type DynamoValues = HM.HashMap Text AttributeValue
-data DynamoReadResult = DynamoReadResult {
-  dynamoReadResultKey     :: DynamoKey,
-  dynamoReadResultVersion :: Int,
-  dynamoReadResultValue   :: DynamoValues
-} deriving (Show, Eq)
-
-type DynamoVersion = Int
-
-data DynamoWriteResult =
-  DynamoWriteSuccess |
-  DynamoWriteFailure |
-  DynamoWriteWrongVersion deriving (Eq, Show)
-
-data LogLevel =
-  Debug |
-  Info |
-  Warn |
-  Error
-
-data ValueUpdate =
-  ValueUpdateSet AttributeValue
-  | ValueUpdateDelete
-
-data QueryDirection =
-  QueryDirectionForward
-  | QueryDirectionBackward
-  deriving (Show, Eq)
-
-data DynamoCmd q next where
-  ReadFromDynamo' :: DynamoKey -> (Maybe DynamoReadResult -> next) -> DynamoCmd q next
-  WriteToDynamo' :: DynamoKey -> DynamoValues -> DynamoVersion -> (DynamoWriteResult -> next) -> DynamoCmd q next
-  QueryTable' :: QueryDirection -> Text -> Natural -> Maybe Int64 -> ([DynamoReadResult] -> next) -> DynamoCmd q next
-  UpdateItem' :: DynamoKey -> (HashMap Text ValueUpdate) -> (Bool -> next) -> DynamoCmd q next
-  ScanNeedsPaging' :: ([DynamoKey] -> next) -> DynamoCmd q next
-  NewQueue' :: Typeable a => (q a -> next) -> DynamoCmd q next
-  WriteQueue' :: Typeable a => q a -> a -> next -> DynamoCmd q next
-  TryReadQueue' :: Typeable a => q a ->  (Maybe a -> next) -> DynamoCmd q next
-  ForkChild' :: F (DynamoCmd q) () -> next -> DynamoCmd q next
-  Wait' :: Int -> next -> DynamoCmd q next
-  SetPulseStatus' :: Bool -> next -> DynamoCmd q next
-  Log' :: LogLevel -> Text -> next -> DynamoCmd q next
-
-deriving instance Functor (DynamoCmd q)
-
-class Monad m => MonadEsDsl q m | m -> q where
-  newQueue :: forall a. Typeable a => m (q a)
-  writeQueue :: forall a. Typeable a => q a -> a -> m ()
-  tryReadQueue :: forall a. Typeable a => q a -> m (Maybe a)
+class Monad m => MonadEsDsl m  where
+  type QueueType m :: * -> *
+  newQueue :: forall a. Typeable a => m (QueueType m a)
+  writeQueue :: forall a. Typeable a => QueueType m a -> a -> m ()
+  readQueue :: forall a. Typeable a => QueueType m a -> m a
+  tryReadQueue :: forall a. Typeable a => QueueType m a -> m (Maybe a)
   readFromDynamo :: DynamoKey -> m (Maybe DynamoReadResult)
   writeToDynamo :: DynamoKey -> DynamoValues -> DynamoVersion -> m (DynamoWriteResult)
   queryTable :: QueryDirection -> Text -> Natural -> Maybe Int64 -> m [DynamoReadResult]
@@ -235,12 +163,40 @@ class Monad m => MonadEsDsl q m | m -> q where
   log :: LogLevel -> Text -> m ()
   scanNeedsPaging :: m [DynamoKey]
   wait :: Int -> m ()
+  forkChild :: m () -> m ()
   setPulseStatus :: Bool -> m ()
 
-instance (MonadFree (DynamoCmd q) m) => (MonadEsDsl q) m where
-  newQueue = newQueue'
-  writeQueue = writeQueue'
-  tryReadQueue = tryReadQueue'
+wait' :: (MonadFree (DodgerBlue.CustomDsl q DynamoCmd) m) => Int -> m ()
+wait' seconds = DodgerBlue.Testing.customCmd $ Wait' seconds ()
+
+setPulseStatus' :: (MonadFree (DodgerBlue.CustomDsl q DynamoCmd) m) => Bool -> m ()
+setPulseStatus' active = DodgerBlue.Testing.customCmd $ SetPulseStatus' active ()
+
+log' :: (MonadFree (DodgerBlue.CustomDsl q DynamoCmd) m) => LogLevel -> Text -> m ()
+log' level message = DodgerBlue.Testing.customCmd $ Log' level message ()
+
+scanNeedsPaging' :: (MonadFree (DodgerBlue.CustomDsl q DynamoCmd) m) => m ([DynamoKey])
+scanNeedsPaging' = DodgerBlue.Testing.customCmd $ ScanNeedsPaging' id
+
+updateItem' :: (MonadFree (DodgerBlue.CustomDsl q DynamoCmd) m) => DynamoKey -> (HashMap Text ValueUpdate) -> m (Bool)
+updateItem' key updates = DodgerBlue.Testing.customCmd $ UpdateItem' key updates id
+
+readFromDynamo' :: (MonadFree (DodgerBlue.CustomDsl q DynamoCmd) m) => DynamoKey -> m (Maybe DynamoReadResult)
+readFromDynamo' key = DodgerBlue.Testing.customCmd $ ReadFromDynamo' key id
+
+writeToDynamo' :: (MonadFree (DodgerBlue.CustomDsl q DynamoCmd) m) => DynamoKey -> DynamoValues -> DynamoVersion -> m (DynamoWriteResult)
+writeToDynamo' key values version = DodgerBlue.Testing.customCmd $ WriteToDynamo' key values version id
+
+queryTable' :: (MonadFree (DodgerBlue.CustomDsl q DynamoCmd) m) => QueryDirection -> Text -> Natural -> Maybe Int64 -> m ([DynamoReadResult])
+queryTable' direction hashKey maxEvents startEvent = DodgerBlue.Testing.customCmd $ QueryTable' direction hashKey maxEvents startEvent id
+
+instance MonadEsDsl (F (DodgerBlue.CustomDsl q DynamoCmd)) where
+  type QueueType (F (DodgerBlue.CustomDsl q DynamoCmd)) = q
+  newQueue = DodgerBlue.newQueue
+  writeQueue = DodgerBlue.writeQueue
+  readQueue = DodgerBlue.readQueue
+  tryReadQueue = DodgerBlue.tryReadQueue
+  forkChild = DodgerBlue.forkChild
   readFromDynamo = readFromDynamo'
   writeToDynamo = writeToDynamo'
   updateItem = updateItem'
@@ -250,51 +206,32 @@ instance (MonadFree (DynamoCmd q) m) => (MonadEsDsl q) m where
   wait = wait'
   setPulseStatus = setPulseStatus'
 
-forkChild' :: (MonadFree (DynamoCmd q) m) => F (DynamoCmd q) () -> m ()
-forkChild' p = liftF $ ForkChild' p ()
+--type MyAwsStack = ((ExceptT InterpreterError) (AWST' RuntimeEnvironment (ResourceT IO)))
 
-newQueue' :: (MonadFree (DynamoCmd q) m, Typeable a) => m (q a)
-newQueue' = liftF $ NewQueue' id
+forkChildIO :: MyAwsM () -> MyAwsM ()
+forkChildIO (MyAwsM c) = MyAwsM $ do
+  runtimeEnv <- ask
+  _ <- lift $ allocate (async (runResourceT $ runAWST runtimeEnv (runExceptT c))) cancel
+  return ()
 
-writeQueue' :: (MonadFree (DynamoCmd q) m, Typeable a) => q a -> a -> m ()
-writeQueue' queue item = liftF $ WriteQueue' queue item ()
+instance MonadEsDsl MyAwsM where
+  type QueueType MyAwsM = TQueue
+  newQueue = MyAwsM $ DodgerIO.newQueue
+  writeQueue q a = MyAwsM $ DodgerIO.writeQueue q a
+  readQueue = MyAwsM . DodgerIO.readQueue
+  tryReadQueue = MyAwsM . DodgerIO.tryReadQueue
+  forkChild c = forkChildIO c
+  readFromDynamo = readFromDynamoAws
+  writeToDynamo = writeToDynamoAws
+  updateItem = updateItemAws
+  queryTable = queryTableAws
+  log = logAws
+  scanNeedsPaging = scanNeedsPagingAws
+  wait = waitAws
+  setPulseStatus = setPulseStatusAws
 
-tryReadQueue' :: (MonadFree (DynamoCmd q) m, Typeable a) => q a -> m (Maybe a)
-tryReadQueue' queue = liftF $ TryReadQueue' queue id
-
-wait' :: (MonadFree (DynamoCmd q) m) => Int -> m ()
-wait' seconds = liftF $ Wait' seconds ()
-
-setPulseStatus' :: (MonadFree (DynamoCmd q) m) => Bool -> m ()
-setPulseStatus' active = liftF $ SetPulseStatus' active ()
-
-log' :: (MonadFree (DynamoCmd a) m) => LogLevel -> Text -> m ()
-log' level message = liftF $ Log' level message ()
-
-scanNeedsPaging' :: (MonadFree (DynamoCmd q) m) => m ([DynamoKey])
-scanNeedsPaging' = liftF $ ScanNeedsPaging' id
-
-updateItem' :: (MonadFree (DynamoCmd q) m) => DynamoKey -> (HashMap Text ValueUpdate) -> m (Bool)
-updateItem' key updates = liftF $ UpdateItem' key updates id
-
-readFromDynamo' :: (MonadFree (DynamoCmd q) m) => DynamoKey -> m (Maybe DynamoReadResult)
-readFromDynamo' key = liftF $ ReadFromDynamo' key id
-
-writeToDynamo' :: (MonadFree (DynamoCmd q) m) => DynamoKey -> DynamoValues -> DynamoVersion -> m (DynamoWriteResult)
-writeToDynamo' key values version = liftF $ WriteToDynamo' key values version id
-
-queryTable' :: (MonadFree (DynamoCmd q) m) => QueryDirection -> Text -> Natural -> Maybe Int64 -> m ([DynamoReadResult])
-queryTable' direction hashKey maxEvents startEvent = liftF $ QueryTable' direction hashKey maxEvents startEvent id
-
-type DynamoCmdM q = F (DynamoCmd q)
-
-instance MonadBase (F (DynamoCmd q)) (F (DynamoCmd q)) where
-  liftBase = id
-
+instance MonadEsDsl m => MonadEsDsl (StateT s m) where
+instance MonadEsDsl m => MonadEsDsl (ExceptT e m) where
+  
 readField :: (MonadError e m) => (Text -> e) -> Text -> Lens' AttributeValue (Maybe a) -> DynamoValues -> m a
-readField toError fieldName fieldType values =
-   let fieldValue = values ^? ix fieldName
-   in maybeToEither $ fieldValue >>= view fieldType
-   where
-     maybeToEither Nothing  = throwError $ toError fieldName
-     maybeToEither (Just x) = return x
+readField = readFieldGeneric
