@@ -40,13 +40,13 @@ module DynamoDbEventStore.EventStoreCommands(
   PageKey(..),
   FeedEntry(..)
   ) where
-import           BasicPrelude
+import           BasicPrelude hiding (log)
 import           Control.Lens              hiding ((.=))
 import           Control.Monad.Except
 import           Control.Monad.Reader
 import           Control.Monad.State
 import           Control.Concurrent.STM
-import           Control.Concurrent.Async
+import           Control.Concurrent.Async hiding (wait)
 import           Control.Monad.Free.Church
 import qualified DodgerBlue
 import qualified DodgerBlue.Testing
@@ -65,7 +65,7 @@ import           TextShow.TH
 
 import           DynamoDbEventStore.Types
 import           DynamoDbEventStore.AmazonkaImplementation
-import           Network.AWS.DynamoDB
+import           Network.AWS.DynamoDB hiding (updateItem)
 import           Network.AWS (MonadAWS(..))
 import           Control.Monad.Trans.AWS hiding (LogLevel)
 import           Control.Monad.Trans.Resource
@@ -152,6 +152,7 @@ deriving instance Functor DynamoCmd
 
 class Monad m => MonadEsDsl m  where
   type QueueType m :: * -> *
+  type MonadBase m :: * -> *
   newQueue :: forall a. Typeable a => m (QueueType m a)
   writeQueue :: forall a. Typeable a => QueueType m a -> a -> m ()
   readQueue :: forall a. Typeable a => QueueType m a -> m a
@@ -163,7 +164,7 @@ class Monad m => MonadEsDsl m  where
   log :: LogLevel -> Text -> m ()
   scanNeedsPaging :: m [DynamoKey]
   wait :: Int -> m ()
-  forkChild :: m () -> m ()
+  forkChild :: MonadBase m () -> m ()
   setPulseStatus :: Bool -> m ()
 
 wait' :: (MonadFree (DodgerBlue.CustomDsl q DynamoCmd) m) => Int -> m ()
@@ -192,6 +193,7 @@ queryTable' direction hashKey maxEvents startEvent = DodgerBlue.Testing.customCm
 
 instance MonadEsDsl (F (DodgerBlue.CustomDsl q DynamoCmd)) where
   type QueueType (F (DodgerBlue.CustomDsl q DynamoCmd)) = q
+  type MonadBase (F (DodgerBlue.CustomDsl q DynamoCmd)) = (F (DodgerBlue.CustomDsl q DynamoCmd))
   newQueue = DodgerBlue.newQueue
   writeQueue = DodgerBlue.writeQueue
   readQueue = DodgerBlue.readQueue
@@ -216,6 +218,7 @@ forkChildIO (MyAwsM c) = MyAwsM $ do
 
 instance MonadEsDsl MyAwsM where
   type QueueType MyAwsM = TQueue
+  type MonadBase MyAwsM = MyAwsM
   newQueue = MyAwsM $ DodgerIO.newQueue
   writeQueue q a = MyAwsM $ DodgerIO.writeQueue q a
   readQueue = MyAwsM . DodgerIO.readQueue
@@ -231,7 +234,38 @@ instance MonadEsDsl MyAwsM where
   setPulseStatus = setPulseStatusAws
 
 instance MonadEsDsl m => MonadEsDsl (StateT s m) where
+  type QueueType (StateT s m) = QueueType m
+  type MonadBase (StateT s m) = MonadBase m
+  newQueue = lift newQueue
+  writeQueue q a = lift $ writeQueue q a
+  readQueue = lift . readQueue
+  tryReadQueue = lift . tryReadQueue
+  forkChild = lift . forkChild
+  readFromDynamo = lift . readFromDynamo
+  writeToDynamo a b c = lift $ writeToDynamo a b c
+  updateItem a b = lift $ updateItem a b
+  queryTable a b c d = lift $ queryTable a b c d
+  log a b = lift $ log a b
+  scanNeedsPaging = scanNeedsPagingAws
+  wait = lift . wait
+  setPulseStatus = lift . setPulseStatus
+
 instance MonadEsDsl m => MonadEsDsl (ExceptT e m) where
-  
+  type QueueType (ExceptT e m) = QueueType m
+  type MonadBase (ExceptT e m) = MonadBase m
+  newQueue = lift newQueue
+  writeQueue q a = lift $ writeQueue q a
+  readQueue = lift . readQueue
+  tryReadQueue = lift . tryReadQueue
+  forkChild = lift . forkChild
+  readFromDynamo = lift . readFromDynamo
+  writeToDynamo a b c = lift $ writeToDynamo a b c
+  updateItem a b = lift $ updateItem a b
+  queryTable a b c d = lift $ queryTable a b c d
+  log a b = lift $ log a b
+  scanNeedsPaging = scanNeedsPagingAws
+  wait = lift . wait
+  setPulseStatus = lift . setPulseStatus
+
 readField :: (MonadError e m) => (Text -> e) -> Text -> Lens' AttributeValue (Maybe a) -> DynamoValues -> m a
 readField = readFieldGeneric
