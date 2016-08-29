@@ -34,7 +34,7 @@ import           Data.Time.Clock                        (UTCTime)
 import qualified Data.Time.Clock                        as Time
 import           Data.Time.Format
 import qualified Data.UUID                              as UUID
-import           DynamoDbEventStore.AmazonkaInterpreter
+import           DynamoDbEventStore.AmazonkaImplementation
 import           DynamoDbEventStore.EventStoreActions
 import           DynamoDbEventStore.EventStoreCommands
 import           DynamoDbEventStore.Feed

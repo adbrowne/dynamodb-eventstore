@@ -32,7 +32,6 @@ import qualified Data.Set                              as Set
 import qualified Data.Text                             as T
 import qualified DynamoDbEventStore.Constants          as Constants
 import           DynamoDbEventStore.EventStoreCommands 
-import           DynamoDbEventStore.Types 
 import           Network.AWS.DynamoDB hiding (updateItem)
 import           Safe
 import qualified Test.QuickCheck                       as QC

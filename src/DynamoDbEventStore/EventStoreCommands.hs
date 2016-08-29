@@ -22,9 +22,9 @@ module DynamoDbEventStore.EventStoreCommands(
   scanNeedsPaging',
   queryTable',
   updateItem',
-  setPulseStatus',
   readField,
   MonadEsDsl(..),
+  MonadEsDslWithFork(..),
   MyAwsM(..),
   DynamoVersion,
   QueryDirection(..),
@@ -32,6 +32,7 @@ module DynamoDbEventStore.EventStoreCommands(
   EventKey(..),
   EventId(..),
   DynamoCmd(..),
+  DynamoCmdM,
   DynamoKey(..),
   DynamoWriteResult(..),
   DynamoReadResult(..),
@@ -56,7 +57,6 @@ import           GHC.Natural
 import           Data.Aeson
 import           GHC.Generics
 
-import qualified Data.HashMap.Strict       as HM
 import qualified Data.Serialize            as Serialize
 import           Data.Time.Clock
 import qualified Data.UUID                 as UUID
@@ -66,7 +66,6 @@ import           TextShow.TH
 import           DynamoDbEventStore.Types
 import           DynamoDbEventStore.AmazonkaImplementation
 import           Network.AWS.DynamoDB hiding (updateItem)
-import           Network.AWS (MonadAWS(..))
 import           Control.Monad.Trans.AWS hiding (LogLevel)
 import           Control.Monad.Trans.Resource
 
@@ -75,12 +74,6 @@ deriveTextShow ''EventKey
 data PageStatus = Version Int | Full | Verified deriving (Eq, Show, Generic)
 
 newtype EventId = EventId { unEventId :: UUID.UUID } deriving (Show, Eq, Ord, Generic)
-
-instance QC.Arbitrary PageKey where
-  arbitrary =
-    let
-      positiveToPageKey (QC.Positive p) = PageKey p
-    in positiveToPageKey <$> QC.arbitrary
 
 instance Serialize.Serialize EventId where
   put (EventId uuid) = do
@@ -145,14 +138,15 @@ data DynamoCmd next =
   | UpdateItem' DynamoKey (HashMap Text ValueUpdate) (Bool -> next)
   | ScanNeedsPaging' ([DynamoKey] -> next)
   | Wait' Int next
-  | SetPulseStatus' Bool next
   | Log' LogLevel Text next
 
 deriving instance Functor DynamoCmd
 
+class MonadEsDsl m => MonadEsDslWithFork m where
+  forkChild :: m () -> m ()
+  
 class Monad m => MonadEsDsl m  where
   type QueueType m :: * -> *
-  type MonadBase m :: * -> *
   newQueue :: forall a. Typeable a => m (QueueType m a)
   writeQueue :: forall a. Typeable a => QueueType m a -> a -> m ()
   readQueue :: forall a. Typeable a => QueueType m a -> m a
@@ -164,14 +158,10 @@ class Monad m => MonadEsDsl m  where
   log :: LogLevel -> Text -> m ()
   scanNeedsPaging :: m [DynamoKey]
   wait :: Int -> m ()
-  forkChild :: MonadBase m () -> m ()
   setPulseStatus :: Bool -> m ()
 
 wait' :: (MonadFree (DodgerBlue.CustomDsl q DynamoCmd) m) => Int -> m ()
-wait' seconds = DodgerBlue.Testing.customCmd $ Wait' seconds ()
-
-setPulseStatus' :: (MonadFree (DodgerBlue.CustomDsl q DynamoCmd) m) => Bool -> m ()
-setPulseStatus' active = DodgerBlue.Testing.customCmd $ SetPulseStatus' active ()
+wait' waitSeconds = DodgerBlue.Testing.customCmd $ Wait' waitSeconds ()
 
 log' :: (MonadFree (DodgerBlue.CustomDsl q DynamoCmd) m) => LogLevel -> Text -> m ()
 log' level message = DodgerBlue.Testing.customCmd $ Log' level message ()
@@ -191,14 +181,14 @@ writeToDynamo' key values version = DodgerBlue.Testing.customCmd $ WriteToDynamo
 queryTable' :: (MonadFree (DodgerBlue.CustomDsl q DynamoCmd) m) => QueryDirection -> Text -> Natural -> Maybe Int64 -> m ([DynamoReadResult])
 queryTable' direction hashKey maxEvents startEvent = DodgerBlue.Testing.customCmd $ QueryTable' direction hashKey maxEvents startEvent id
 
+type DynamoCmdM q = F (DodgerBlue.CustomDsl q DynamoCmd)
+
 instance MonadEsDsl (F (DodgerBlue.CustomDsl q DynamoCmd)) where
   type QueueType (F (DodgerBlue.CustomDsl q DynamoCmd)) = q
-  type MonadBase (F (DodgerBlue.CustomDsl q DynamoCmd)) = (F (DodgerBlue.CustomDsl q DynamoCmd))
   newQueue = DodgerBlue.newQueue
   writeQueue = DodgerBlue.writeQueue
   readQueue = DodgerBlue.readQueue
   tryReadQueue = DodgerBlue.tryReadQueue
-  forkChild = DodgerBlue.forkChild
   readFromDynamo = readFromDynamo'
   writeToDynamo = writeToDynamo'
   updateItem = updateItem'
@@ -206,7 +196,10 @@ instance MonadEsDsl (F (DodgerBlue.CustomDsl q DynamoCmd)) where
   log = log'
   scanNeedsPaging = scanNeedsPaging'
   wait = wait'
-  setPulseStatus = setPulseStatus'
+  setPulseStatus = DodgerBlue.setPulseStatus
+
+instance MonadEsDslWithFork (F (DodgerBlue.CustomDsl q DynamoCmd)) where
+  forkChild = DodgerBlue.forkChild
 
 --type MyAwsStack = ((ExceptT InterpreterError) (AWST' RuntimeEnvironment (ResourceT IO)))
 
@@ -218,12 +211,10 @@ forkChildIO (MyAwsM c) = MyAwsM $ do
 
 instance MonadEsDsl MyAwsM where
   type QueueType MyAwsM = TQueue
-  type MonadBase MyAwsM = MyAwsM
   newQueue = MyAwsM $ DodgerIO.newQueue
   writeQueue q a = MyAwsM $ DodgerIO.writeQueue q a
   readQueue = MyAwsM . DodgerIO.readQueue
   tryReadQueue = MyAwsM . DodgerIO.tryReadQueue
-  forkChild c = forkChildIO c
   readFromDynamo = readFromDynamoAws
   writeToDynamo = writeToDynamoAws
   updateItem = updateItemAws
@@ -233,37 +224,36 @@ instance MonadEsDsl MyAwsM where
   wait = waitAws
   setPulseStatus = setPulseStatusAws
 
+instance MonadEsDslWithFork MyAwsM where
+  forkChild c = forkChildIO c
+
 instance MonadEsDsl m => MonadEsDsl (StateT s m) where
   type QueueType (StateT s m) = QueueType m
-  type MonadBase (StateT s m) = MonadBase m
   newQueue = lift newQueue
   writeQueue q a = lift $ writeQueue q a
   readQueue = lift . readQueue
   tryReadQueue = lift . tryReadQueue
-  forkChild = lift . forkChild
   readFromDynamo = lift . readFromDynamo
   writeToDynamo a b c = lift $ writeToDynamo a b c
   updateItem a b = lift $ updateItem a b
   queryTable a b c d = lift $ queryTable a b c d
   log a b = lift $ log a b
-  scanNeedsPaging = scanNeedsPagingAws
+  scanNeedsPaging = lift $ scanNeedsPaging
   wait = lift . wait
   setPulseStatus = lift . setPulseStatus
 
 instance MonadEsDsl m => MonadEsDsl (ExceptT e m) where
   type QueueType (ExceptT e m) = QueueType m
-  type MonadBase (ExceptT e m) = MonadBase m
   newQueue = lift newQueue
   writeQueue q a = lift $ writeQueue q a
   readQueue = lift . readQueue
   tryReadQueue = lift . tryReadQueue
-  forkChild = lift . forkChild
   readFromDynamo = lift . readFromDynamo
   writeToDynamo a b c = lift $ writeToDynamo a b c
   updateItem a b = lift $ updateItem a b
   queryTable a b c d = lift $ queryTable a b c d
   log a b = lift $ log a b
-  scanNeedsPaging = scanNeedsPagingAws
+  scanNeedsPaging = lift $ scanNeedsPaging
   wait = lift . wait
   setPulseStatus = lift . setPulseStatus
 

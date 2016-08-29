@@ -4,20 +4,20 @@ module Main where
 
 import           BasicPrelude
 import qualified DynamoCmdAmazonkaTests
-import qualified DynamoDbEventStore.AmazonkaInterpreter  as Ai
+import qualified DynamoDbEventStore.AmazonkaImplementation  as Ai
 import qualified DynamoDbEventStore.DynamoCmdInterpreter as TestInterpreter
 import           DynamoDbEventStore.EventStoreCommands
 import           DynamoDbEventStore.FeedOutputSpec       as FeedOutputSpec
 import           DynamoDbEventStore.GlobalFeedWriterSpec as GlobalFeedWriterSpec
-import qualified DynamoDbEventStore.InMemoryQueues      as MemQ
 
 import           Test.Tasty
 import           Test.Tasty.Hspec
 import qualified WebserverInternalSpec
 import           WebserverSpec
+import           DodgerBlue.Testing
 
 
-testInterpreter :: DynamoCmdM MemQ.Queue a -> IO (Either Ai.InterpreterError a)
+testInterpreter :: DynamoCmdM Queue a -> IO (Either Ai.InterpreterError a)
 testInterpreter program =
   return $ Right $ TestInterpreter.evalProgram "Test Program" program TestInterpreter.emptyTestState
 

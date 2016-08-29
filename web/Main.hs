@@ -13,7 +13,7 @@ import           Control.Monad.State
 import           Control.Monad.Trans.AWS
 import qualified Control.Monad.Trans.AWS                as AWS
 import qualified Data.Text                              as T
-import           DynamoDbEventStore.AmazonkaInterpreter
+import           DynamoDbEventStore.AmazonkaImplementation
 import           DynamoDbEventStore.EventStoreActions
 import           DynamoDbEventStore.EventStoreCommands
 import           DynamoDbEventStore.GlobalFeedWriter    (EventStoreActionError (..))
@@ -35,19 +35,6 @@ runDynamoLocal :: RuntimeEnvironment -> MyAwsM a -> IO (Either InterpreterError 
 runDynamoLocal env x = do
   let dynamo = setEndpoint False "localhost" 8000 dynamoDB
   runResourceT $ runAWST env $ reconfigure dynamo $ runExceptT (unMyAwsM x)
-
-runDynamoCloud :: RuntimeEnvironment -> MyAwsM a -> IO (Either InterpreterError a)
-runDynamoCloud env x = runResourceT $ runAWST env $ runExceptT (unMyAwsM x)
-
-{- runChild :: Text -> (RuntimeEnvironment -> MyAwsStack a -> IO (Either InterpreterError a)) -> RuntimeEnvironment -> MyAwsM a -> IO (Either InterpreterError a)
-runChild tableName runner runtimeEnvironment program = do
-  runner runtimeEnvironment $ runProgram tableName program -}
-
-{-
-runMyAws :: (MyAwsStack a -> ExceptT InterpreterError IO a) -> Text -> DynamoCmdM TQueue a -> ExceptT InterpreterError IO a
-runMyAws runner tableName program =
-  runner $ runProgram tableName program
--}
 
 printEvent :: (MonadIO m) => EventStoreAction -> m EventStoreAction
 printEvent a = do
@@ -88,12 +75,6 @@ config = Config
 httpHost :: String
 httpHost = "127.0.0.1"
 
-toExceptT :: forall a. (MyAwsStack a -> IO (Either InterpreterError a)) -> (MyAwsStack a -> ExceptT InterpreterError IO a)
-toExceptT runner a = do
-  result <- liftIO $ runner a
-  case result of Left s -> throwError $ s
-                 Right r -> return r
-
 toExceptT' :: IO (Either e a) -> ExceptT e (IO) a
 toExceptT' p = do
   a <- lift p
@@ -110,8 +91,6 @@ data ApplicationError =
   ApplicationErrorInterpreter InterpreterError |
   ApplicationErrorGlobalFeedWriter EventStoreActionError
   deriving Show
-
-type AwsRunner = (forall a. MyAwsStack a -> ExceptT InterpreterError IO a)
 
 forkAndSupervise :: Text -> IO () -> IO ()
 forkAndSupervise processName =
@@ -185,7 +164,7 @@ start parsedConfig = do
   if tableAlreadyExists || shouldCreateTable then runApp runner tableName else failNoTable
   where
    runApp :: (forall a. MyAwsM a -> ExceptT InterpreterError IO a) -> Text -> ExceptT ApplicationError IO ()
-   runApp runner tableName = do
+   runApp runner _tableName = do
      --let runner' = runMyAws runner tableName
      liftIO $ forkGlobalFeedWriter runner
      liftIO $ startWebServer runner parsedConfig

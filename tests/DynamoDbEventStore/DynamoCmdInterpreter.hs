@@ -20,47 +20,41 @@ module DynamoDbEventStore.DynamoCmdInterpreter(
   execProgram,
   execProgramUntilIdle,
   LoopState(..),
+  loopStateDodgerState,
   testState,
   iopCounts,
   IopsCategory(..),
   IopsOperation(..)) where
 
 import           BasicPrelude
+import           DodgerBlue.Testing
 import           Control.Lens
-import qualified Control.Monad.Free                     as Free
-import qualified Control.Monad.Free.Church              as Church
 import           Control.Monad.Reader
 import           Control.Monad.State
 import           Data.Functor                           (($>))
 import qualified Data.Map.Strict                        as Map
 import qualified DynamoDbEventStore.InMemoryDynamoTable as MemDb
-import qualified DynamoDbEventStore.InMemoryQueues      as MemQ
 import           GHC.Natural
 import qualified Prelude                                as P
 import qualified Test.Tasty.QuickCheck                  as QC
 
 import           DynamoDbEventStore.EventStoreCommands
 
-type DynamoCmdMFree = Free.Free (DynamoCmd MemQ.Queue)
-
-data RunningProgramState r = RunningProgramState {
-  runningProgramStateNext    :: DynamoCmdMFree r,
-  runningProgramStateMaxIdle :: Int
-}
-
-data LoopActivity =
-  LoopActive { _loopActiveIdleCount :: Map ProgramId Bool } |
-  LoopAllIdle { _loopAllIdleIterationsRemaining :: Map ProgramId Int }
+newtype ProgramId = ProgramId { unProgramId :: Text } deriving (Eq, Show, Ord, IsString)
 
 data LoopState r = LoopState {
-  _loopStateIterations     :: Int,
-  _loopStateActivity       :: LoopActivity,
   _loopStateTestState      :: TestState,
-  _loopStatePrograms       :: Map ProgramId (RunningProgramState r),
-  _loopStateProgramResults :: Map ProgramId r
+  _loopStateDodgerState      :: EvalState
 }
 
-newtype ProgramId = ProgramId Text deriving (Eq, Show, Ord, IsString)
+data TestState = TestState {
+  _testStateDynamo    :: MemDb.InMemoryDynamoTable,
+  _testStateLog       :: Seq Text,
+  _testStateIopCounts :: IopsTable
+} -- deriving (Eq)
+
+emptyTestState :: TestState
+emptyTestState = TestState MemDb.emptyDynamoTable mempty mempty
 
 data IopsCategory = UnpagedRead | UnpagedWrite | TableRead | TableWrite deriving (Eq, Show, Ord)
 
@@ -68,91 +62,60 @@ data IopsOperation = IopsScanUnpaged | IopsGetItem | IopsQuery | IopsWrite deriv
 
 type IopsTable = Map (IopsCategory, IopsOperation, ProgramId) Int
 
-data TestState = TestState {
-  _testStateDynamo    :: MemDb.InMemoryDynamoTable,
-  _testStateQueues    :: MemQ.Queues,
-  _testStateLog       :: Seq Text,
-  _testStateIopCounts :: IopsTable
-} -- deriving (Eq)
-
-instance P.Show TestState where
-  show a =
-    "Dynamo: \n" <> P.show (_testStateDynamo a) <> "\n" <> "Log: \n" <> foldl' (\s l -> s <> "\n" <> P.show l) "" (_testStateLog a)
-
-$(makeFields ''TestState)
 $(makeFields ''LoopState)
-$(makeLenses ''TestState)
 $(makeLenses ''LoopState)
-
-instance HasIopCounts (LoopState a) IopsTable where
-  iopCounts = loopStateTestState . testStateIopCounts
+$(makeFields ''TestState)
+$(makeLenses ''TestState)
 
 addIops :: (MonadState s m, HasIopCounts s IopsTable, MonadReader ProgramId m) => IopsCategory -> IopsOperation -> Int -> m ()
 addIops category operation i = do
   (programId :: ProgramId) <- ask
   iopCounts %= Map.insertWith (+) (category, operation, programId) i
 
-emptyTestState :: TestState
-emptyTestState = TestState MemDb.emptyDynamoTable MemQ.emptyQueues mempty mempty
+instance HasIopCounts (LoopState a) IopsTable where
+  iopCounts = loopStateTestState . testStateIopCounts
 
-type InterpreterApp m a r = RandomFailure m => (StateT (LoopState a) m) r
-
-type InterpreterOperationStack m a r = RandomFailure m => ReaderT ProgramId (StateT (LoopState a) m) r
-
-maxIterations :: Int
-maxIterations = 100000
-
-isComplete :: (MonadState (LoopState a) m) => m Bool
-isComplete = do
-  allProgramsComplete <- uses loopStatePrograms Map.null
-  tooManyIterations <- uses loopStateIterations (> maxIterations)
-  allProgramsOverMaxIdle <- uses loopStateActivity allOverMaxIdle
-  return $ allProgramsComplete || tooManyIterations || allProgramsOverMaxIdle
-  where
-    allOverMaxIdle :: LoopActivity -> Bool
-    allOverMaxIdle (LoopActive _) = False
-    allOverMaxIdle (LoopAllIdle status) = Map.filter (>0) status == mempty
-
-addLog :: Text -> InterpreterOperationStack m a ()
-addLog m = do
-  (ProgramId programId) <- ask
-  let appendMessage = flip (|>) (programId <> ": " <> m)
-  (loopStateTestState . testStateLog) %= appendMessage
+instance P.Show TestState where
+  show a =
+    "Dynamo: \n" <> P.show (_testStateDynamo a) <> "\n" <> "Log: \n" <> foldl' (\s l -> s <> "\n" <> P.show l) "" (_testStateLog a)
 
 class Monad m => RandomFailure m where
   checkFail :: Double -> m Bool
+
+instance RandomFailure Identity where
+  checkFail _ = return False
 
 instance RandomFailure QC.Gen where
   checkFail failurePercent = do
      r <- QC.choose (0, 99)
      return $ r < failurePercent
 
-instance RandomFailure Identity where
-   checkFail _ = return False
+instance RandomFailure m => RandomFailure (StateT s m) where
+   checkFail = lift . checkFail
 
-instance (Monad m, RandomFailure m) => RandomFailure (ReaderT ProgramId (StateT (LoopState a) m)) where
-   checkFail p = lift . lift $ checkFail p
+instance RandomFailure m => RandomFailure (ReaderT r m) where
+   checkFail = lift . checkFail
 
-potentialFailure :: Double -> InterpreterOperationStack m a r -> InterpreterOperationStack m a r -> InterpreterOperationStack m a r
+getGetReadResultCmd :: (MonadState TestState m, MonadReader ProgramId m) => DynamoKey -> (Maybe DynamoReadResult -> a) -> m a
+getGetReadResultCmd key n = do
+  addIops TableRead IopsGetItem 1
+  db <- use (testStateDynamo)
+  return $ n $ MemDb.readDb key db
+
+addLog :: (MonadReader ProgramId m, MonadState TestState m) => Text -> m ()
+addLog m = do
+  (ProgramId programId) <- ask
+  let appendMessage = flip (|>) (programId <> ": " <> m)
+  testStateLog %= appendMessage
+
+potentialFailure :: RandomFailure m => Double -> m a -> m a -> m a
 potentialFailure failurePercent onFailure onSuccess = do
    didFail <- checkFail failurePercent
    if didFail
      then onFailure
      else onSuccess
 
-runUpdateItemCmd :: DynamoKey -> HashMap Text ValueUpdate -> (Bool -> n) -> InterpreterOperationStack m a n
-runUpdateItemCmd key values next =
-  potentialFailure 25 onFailure onSuccess
-  where
-    onFailure =
-      addLog "Random updateItem failure" $> next False
-    onSuccess = do
-      addIops TableWrite IopsWrite 1
-      newDb <- MemDb.updateDb key values <$> use (loopStateTestState . testStateDynamo)
-      (loopStateTestState . testStateDynamo) .= newDb
-      return $ next True
-
-runWriteToDynamoCmd :: DynamoKey -> DynamoValues -> DynamoVersion -> (DynamoWriteResult -> n) -> InterpreterOperationStack m a n
+runWriteToDynamoCmd :: (RandomFailure m, MonadState TestState m, MonadReader ProgramId m) => DynamoKey -> DynamoValues -> DynamoVersion -> (DynamoWriteResult -> n) -> m n
 runWriteToDynamoCmd key values version next =
   potentialFailure 25 onFailure onSuccess
   where
@@ -160,161 +123,95 @@ runWriteToDynamoCmd key values version next =
       addLog "Random write failure" $> next DynamoWriteFailure
     onSuccess = do
       addIops TableWrite IopsWrite 1
-      (result, newDb) <- MemDb.writeDb key values version <$> use (loopStateTestState . testStateDynamo)
+      (result, newDb) <- MemDb.writeDb key values version <$> use testStateDynamo
       case result of DynamoWriteWrongVersion -> addLog $ "Wrong version writing: " ++ show version
                      DynamoWriteSuccess -> addLog $ "Performing write: " ++ show key ++ " " ++ show values ++ " " ++ show version
                      DynamoWriteFailure -> addLog $ "Write failure: " ++ show key ++ " " ++ show values ++ " " ++ show version
-      (loopStateTestState . testStateDynamo) .= newDb
+      testStateDynamo .= newDb
       return $ next result
 
-getGetReadResultCmd :: DynamoKey -> (Maybe DynamoReadResult -> n) -> InterpreterOperationStack m a n
-getGetReadResultCmd key n = do
-  addIops TableRead IopsGetItem 1
-  db <- use (testState . testStateDynamo)
-  return $ n $ MemDb.readDb key db
-
-runQueryTableCmd :: QueryDirection -> Text -> Natural -> Maybe Int64 -> ([DynamoReadResult] -> n) -> InterpreterOperationStack m a n
+runQueryTableCmd :: (MonadState TestState m, MonadReader ProgramId m) => QueryDirection -> Text -> Natural -> Maybe Int64 -> ([DynamoReadResult] -> n) -> m n
 runQueryTableCmd direction streamId maxEvents startEvent r =  do
-  results <- uses (loopStateTestState . testStateDynamo) runQuery
+  results <- uses testStateDynamo runQuery
   addIops TableRead IopsQuery $ length results
   return $ r results
   where
     runQuery = MemDb.queryDb direction streamId maxEvents startEvent
 
-runScanNeedsPagingCmd :: ([DynamoKey] -> n) -> InterpreterOperationStack m a n
+runUpdateItemCmd :: (MonadState TestState m, MonadReader ProgramId m, RandomFailure m) => DynamoKey -> HashMap Text ValueUpdate -> (Bool -> n) -> m n
+runUpdateItemCmd key values next =
+  potentialFailure 25 onFailure onSuccess
+  where
+    onFailure =
+      addLog "Random updateItem failure" $> next False
+    onSuccess = do
+      addIops TableWrite IopsWrite 1
+      newDb <- MemDb.updateDb key values <$> use testStateDynamo
+      testStateDynamo .= newDb
+      return $ next True
+
+runScanNeedsPagingCmd :: (MonadState TestState m, MonadReader ProgramId m) => ([DynamoKey] -> n) -> m n
 runScanNeedsPagingCmd n = do
-   results <- uses (testState . testStateDynamo) MemDb.scanNeedsPagingDb
+   results <- uses testStateDynamo MemDb.scanNeedsPagingDb
    addIops UnpagedRead IopsScanUnpaged $ length results
    return $ n results
 
-runSetPulseStateCmd :: Bool -> InterpreterOperationStack m a ()
-runSetPulseStateCmd isActive = do
-  programId <- ask
-  allInactiveState <- uses loopStatePrograms initialAllInactive
-  loopStateActivity %= updatePulseStatus programId (LoopAllIdle allInactiveState) isActive
+interpretDslCommand ::
+  (MonadState TestState m, RandomFailure m) =>
+  Text ->
+  Text ->
+  DynamoCmd a ->
+  m a
+interpretDslCommand _node threadName cmd =
+  runReaderT (go cmd) (ProgramId threadName)
   where
-    allInactive :: Map ProgramId Bool -> Bool
-    allInactive m = Map.filter id m == mempty
-    initialAllInactive :: Map ProgramId (RunningProgramState a) -> Map ProgramId Int
-    initialAllInactive = fmap runningProgramStateMaxIdle
-    updatePulseStatus :: ProgramId -> LoopActivity -> Bool -> LoopActivity -> LoopActivity
-    updatePulseStatus programId allInactiveState _ LoopActive { _loopActiveIdleCount = idleCount } =
-      let updated = Map.alter (const (Just isActive)) programId idleCount
-      in if allInactive updated then allInactiveState else LoopActive updated
-    updatePulseStatus _ _ True LoopAllIdle { _loopAllIdleIterationsRemaining = _idleRemaining } = LoopActive mempty
-    updatePulseStatus programId _ False LoopAllIdle { _loopAllIdleIterationsRemaining = idleRemaining } = LoopAllIdle $ Map.adjust (\x -> x - 1) programId idleRemaining
+    go :: (MonadState TestState m, RandomFailure m, MonadReader ProgramId m) => DynamoCmd a -> m a
+    go (ReadFromDynamo' key n) =
+      getGetReadResultCmd key n
+    go (WriteToDynamo' key values version n) =
+      runWriteToDynamoCmd key values version n
+    go (QueryTable' direction key maxEvents startEvent n) =
+      runQueryTableCmd direction key maxEvents startEvent n
+    go (UpdateItem' key values n) = runUpdateItemCmd key values n
+    go (ScanNeedsPaging' n) = runScanNeedsPagingCmd n
+    go (Wait' _milliseconds n) = return n
+    go (Log' _logLevel msg n) = (addLog msg >> return n)
 
-runWriteQueueCmd :: Typeable b => MemQ.Queue b -> b -> InterpreterOperationStack m a ()
-runWriteQueueCmd q x = do
-  qs <- use (loopStateTestState . testStateQueues)
-  let qs' = MemQ.writeToQueue qs q x
-  (loopStateTestState . testStateQueues) .= qs'
+runStateProgram :: ProgramId -> DynamoCmdM Queue a -> TestState -> (a,TestState)
+runStateProgram (ProgramId programId) p initialTestState = runState (evalDslTest interpretDslCommand programId programId p) initialTestState
 
-runReadQueueCmd :: Typeable b => MemQ.Queue b -> (Maybe b -> n) -> InterpreterOperationStack m a n
-runReadQueueCmd q n = do
-  qs <- use (loopStateTestState . testStateQueues)
-  let (x, qs') = MemQ.tryReadFromQueue qs q
-  (loopStateTestState . testStateQueues) .= qs'
-  return $ n x
+evalProgram :: ProgramId -> DynamoCmdM Queue a -> TestState -> a
+evalProgram programId p initialTestState = fst $ runStateProgram programId p initialTestState
 
-runNewQueueCmd :: Typeable b => (MemQ.Queue b -> n) -> InterpreterOperationStack m a n
-runNewQueueCmd n = do
-  qs <- use (loopStateTestState . testStateQueues)
-  let (x, qs') = MemQ.newQueue qs
-  (loopStateTestState . testStateQueues) .= qs'
-  return $ n x
+execProgram :: ProgramId -> DynamoCmdM Queue a -> TestState -> TestState
+execProgram programId p initialTestState = snd $ runStateProgram programId p initialTestState
 
-runCmd :: DynamoCmdMFree r -> InterpreterOperationStack m r (Either r (DynamoCmdMFree r))
-runCmd (Free.Pure r) = return $ Left r
-runCmd (Free.Free (Wait' _ r)) = Right <$> return r
-runCmd (Free.Free (WriteQueue' q x r)) = Right <$> (runWriteQueueCmd q x >> return r)
-runCmd (Free.Free (NewQueue' r)) = Right <$> runNewQueueCmd r
-runCmd (Free.Free (TryReadQueue' q r)) = Right <$> runReadQueueCmd q r
-runCmd (Free.Free (QueryTable' direction key maxEvents start r)) = Right <$> runQueryTableCmd direction key maxEvents start r
-runCmd (Free.Free (WriteToDynamo' key values version r)) = Right <$> runWriteToDynamoCmd key values version r
-runCmd (Free.Free (UpdateItem' key values r)) = Right <$> runUpdateItemCmd key values r
-runCmd (Free.Free (ReadFromDynamo' key r)) = Right <$> getGetReadResultCmd key r
-runCmd (Free.Free (Log' _ msg r)) = Right <$> (addLog msg >> return r)
-runCmd (Free.Free (SetPulseStatus' isActive r)) = Right <$> (runSetPulseStateCmd isActive >> return r)
-runCmd (Free.Free (ScanNeedsPaging' r)) = Right <$> runScanNeedsPagingCmd r
-runCmd (Free.Free (ForkChild' _ _)) = undefined -- todo
+execProgramUntilIdle :: ProgramId -> DynamoCmdM Queue a -> TestState -> TestState
+execProgramUntilIdle = execProgram
 
-stepProgram :: ProgramId -> RunningProgramState r -> InterpreterApp m r ()
-stepProgram programId ps = do
-  cmdResult <- runReaderT (runCmd $ runningProgramStateNext ps) programId
-  bigBanana cmdResult
+runPrograms' :: ExecutionTree (TestProgram DynamoCmd a) -> QC.Gen (ExecutionTree (ThreadResult a), TestState)
+runPrograms' t =
+  let
+    interpretDslCommand' = interpretDslCommand :: Text -> Text -> DynamoCmd a -> StateT TestState QC.Gen a
+  in runStateT (evalMultiDslTest interpretDslCommand' emptyEvalState t) emptyTestState
+
+runPrograms :: Map ProgramId (DynamoCmdM Queue a, Int) -> QC.Gen (Map ProgramId a, TestState)
+runPrograms programs =
+  let
+    startExecutionTree = ExecutionTree $ Map.singleton "node" $ (Map.mapKeys unProgramId $ fst <$> programs)
+    mapResult (ExecutionTree t) = Map.foldr accOuter Map.empty t
+  in do
+    over _1 mapResult <$> (runPrograms' startExecutionTree)
   where
-    bigBanana :: Either r (DynamoCmdMFree r) -> InterpreterApp m r ()
-    bigBanana next = do
-      let result = fmap setNextProgram next
-      updateLoopState programId result
-    setNextProgram :: DynamoCmdMFree r -> RunningProgramState r
-    setNextProgram n = ps { runningProgramStateNext = n }
+    accOuter :: Map Text (ThreadResult a) -> Map ProgramId a -> Map ProgramId a
+    accOuter v z = Map.foldrWithKey accInner z v
+    accInner :: Text -> ThreadResult a -> Map ProgramId a -> Map ProgramId a
+    accInner threadName (ThreadResult a) m = Map.insert (ProgramId threadName) a m
+    accInner _threadName ThreadBlocked m = m
+    accInner _threadName ThreadIdle m = m
 
-updateLoopState :: ProgramId -> Either r (RunningProgramState r) -> InterpreterApp m r ()
-updateLoopState programName result =
-  loopStatePrograms %= updateProgramEntry result >>
-  loopStateProgramResults %= updateProgramResults result
-  where
-    updateProgramEntry (Left _)         = Map.delete programName
-    updateProgramEntry (Right newState) = Map.adjust (const newState) programName
-    updateProgramResults (Left r)       = Map.insert programName r
-    updateProgramResults (Right _)        = id
+runProgramGenerator :: ProgramId -> DynamoCmdM Queue a -> TestState -> QC.Gen a
+runProgramGenerator (ProgramId programId) p initialTestState = fst <$> runStateT (evalDslTest interpretDslCommand programId programId p) initialTestState 
 
-iterateApp :: InterpreterApp QC.Gen a ()
-iterateApp = do
- p <- use loopStatePrograms
- (programId, programState) <- lift . QC.elements $ Map.toList p
- stepProgram programId programState
-
-runPrograms :: Map ProgramId (DynamoCmdM MemQ.Queue a, Int) -> QC.Gen (Map ProgramId a, TestState)
-runPrograms ps =
-  over _2 (view loopStateTestState) <$> runStateT loop initialState
-  where
-        runningPrograms = fmap (\(p,maxIdleIterations) -> RunningProgramState (Church.fromF p) maxIdleIterations) ps
-        initialState = LoopState 0 (LoopActive mempty) emptyTestState runningPrograms mempty
-        loop :: InterpreterApp QC.Gen a (Map ProgramId a)
-        loop = do
-          complete <- isComplete
-          if complete
-             then use loopStateProgramResults
-             else iterateApp >> loopStateIterations += 1 >> loop
-
-runProgramGenerator :: ProgramId -> DynamoCmdM MemQ.Queue a -> TestState -> QC.Gen a
-runProgramGenerator programId program initialTestState =
-  evalStateT (runReaderT (loop $ Right (Church.fromF program)) programId) initialState
-  where
-        runningPrograms = Map.singleton programId (RunningProgramState (Church.fromF program) 0)
-        initialState = LoopState 0 (LoopActive mempty) initialTestState runningPrograms mempty
-        loop :: Either r (DynamoCmdMFree r) -> InterpreterOperationStack QC.Gen r r
-        loop (Left x) = return x
-        loop (Right n) = runCmd n >>= loop
-
-runProgram :: ProgramId -> DynamoCmdM MemQ.Queue a -> TestState -> (a, LoopState a)
-runProgram programId program initialTestState =
-  runIdentity $ runStateT (runReaderT (loop $ Right (Church.fromF program)) programId) initialState
-  where
-        runningPrograms = Map.singleton programId (RunningProgramState (Church.fromF program) 0)
-        initialState = LoopState 0 (LoopActive mempty) initialTestState runningPrograms mempty
-        loop :: Either r (DynamoCmdMFree r) -> InterpreterOperationStack Identity r r
-        loop (Left x) = return x
-        loop (Right n) = runCmd n >>= loop
-
-execProgramUntilIdle :: ProgramId -> DynamoCmdM MemQ.Queue a -> TestState -> LoopState a
-execProgramUntilIdle programId program initialTestState =
-  runIdentity $ execStateT (runReaderT (loop $ Right (Church.fromF program)) programId) initialState
-  where
-        runningPrograms = Map.singleton programId (RunningProgramState (Church.fromF program) 0)
-        initialState = LoopState 0 (LoopActive mempty) initialTestState runningPrograms mempty
-        loop :: Either r (DynamoCmdMFree r) -> InterpreterOperationStack Identity r (Maybe r)
-        loop (Left x) = return $ Just x
-        loop (Right n) = do
-          complete <- isComplete
-          if complete
-              then return Nothing
-              else runCmd n >>= loop
-
-evalProgram :: ProgramId -> DynamoCmdM MemQ.Queue a -> TestState -> a
-evalProgram programId program initialTestState = fst $ runProgram programId program initialTestState
-execProgram :: ProgramId -> DynamoCmdM MemQ.Queue a -> TestState -> LoopState a
-execProgram programId program initialTestState = snd $ runProgram programId program initialTestState
+runProgram :: ProgramId -> DynamoCmdM Queue a -> TestState -> (a, LoopState a)
+runProgram = error "todo runProgram"

@@ -24,7 +24,6 @@ library
                        DynamoDbEventStore.GlobalFeedWriter,
                        DynamoDbEventStore.Constants,
                        DynamoDbEventStore.Feed,
-                       DynamoDbEventStore.AmazonkaInterpreter,
                        DynamoDbEventStore.AmazonkaImplementation,
                        DynamoDbEventStore.Types
   default-extensions:          NoImplicitPrelude
@@ -162,6 +161,7 @@ Test-Suite tasty
                        QuickCheck,
                        safe,
                        quickcheck-instances,
+                       dodgerblue,
                        cereal,
                        time,
                        uuid,

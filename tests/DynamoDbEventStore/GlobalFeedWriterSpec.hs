@@ -13,7 +13,7 @@ import           Control.Monad.Except
 import           Control.Monad.Loops
 import           Control.Monad.Random
 import           Control.Monad.State
-import qualified DynamoDbEventStore.InMemoryQueues       as MemQ
+import           DodgerBlue.Testing
 import qualified Data.Aeson                              as Aeson
 import qualified Data.ByteString.Lazy                    as BL
 import           Data.Either.Combinators
@@ -44,15 +44,15 @@ import           DynamoDbEventStore.EventStoreCommands
 import           DynamoDbEventStore.GlobalFeedWriter     (EventStoreActionError (..))
 import qualified DynamoDbEventStore.GlobalFeedWriter     as GlobalFeedWriter
 
-postEventRequestProgram :: PostEventRequest -> DynamoCmdM MemQ.Queue (Either EventStoreActionError EventWriteResult)
+postEventRequestProgram :: MonadEsDsl m => PostEventRequest -> m (Either EventStoreActionError EventWriteResult)
 postEventRequestProgram = runExceptT . DynamoDbEventStore.EventStoreActions.postEventRequestProgram
-getReadAllRequestProgram :: ReadAllRequest -> DynamoCmdM MemQ.Queue (Either EventStoreActionError GlobalStreamResult)
+getReadAllRequestProgram :: MonadEsDsl m => ReadAllRequest -> m (Either EventStoreActionError GlobalStreamResult)
 getReadAllRequestProgram = runExceptT . DynamoDbEventStore.EventStoreActions.getReadAllRequestProgram
-getReadEventRequestProgram :: ReadEventRequest -> DynamoCmdM MemQ.Queue (Either EventStoreActionError (Maybe RecordedEvent))
+getReadEventRequestProgram :: MonadEsDsl m => ReadEventRequest -> m (Either EventStoreActionError (Maybe RecordedEvent))
 getReadEventRequestProgram = runExceptT . DynamoDbEventStore.EventStoreActions.getReadEventRequestProgram
-getReadStreamRequestProgram :: ReadStreamRequest -> DynamoCmdM MemQ.Queue (Either EventStoreActionError (Maybe StreamResult))
+getReadStreamRequestProgram :: MonadEsDsl m => ReadStreamRequest -> m (Either EventStoreActionError (Maybe StreamResult))
 getReadStreamRequestProgram = runExceptT . DynamoDbEventStore.EventStoreActions.getReadStreamRequestProgram
-globalFeedWriterProgram :: DynamoCmdM MemQ.Queue (Either EventStoreActionError ())
+globalFeedWriterProgram :: MonadEsDsl m => m (Either EventStoreActionError ())
 globalFeedWriterProgram = runExceptT (evalStateT GlobalFeedWriter.main GlobalFeedWriter.emptyGlobalFeedWriterState)
 
 type UploadItem = (Text,Int64,NonEmpty EventEntry)
@@ -158,12 +158,12 @@ instance QC.Arbitrary UploadList where
         (p :: [()]) <- cappedList 100
         mapM (\_ -> (:|) <$> QC.arbitrary <*> cappedList 9) p
 
-writeEvent :: (Text, Int64, NonEmpty EventEntry) -> DynamoCmdM MemQ.Queue (Either EventStoreActionError EventWriteResult)
+writeEvent :: (Text, Int64, NonEmpty EventEntry) -> DynamoCmdM Queue (Either EventStoreActionError EventWriteResult)
 writeEvent (stream, eventNumber, eventEntries) = do
   log' Debug "Writing Item"
   postEventRequestProgram (PostEventRequest stream (Just eventNumber) eventEntries)
 
-publisher :: [(Text, Int64, NonEmpty EventEntry)] -> DynamoCmdM MemQ.Queue (Either EventStoreActionError ())
+publisher :: [(Text, Int64, NonEmpty EventEntry)] -> DynamoCmdM Queue (Either EventStoreActionError ())
 publisher xs = Right <$> forM_ xs writeEvent
 
 globalFeedFromUploadList :: [UploadItem] -> Map.Map Text (Seq.Seq Int64)
@@ -228,7 +228,7 @@ prop_CanReadAnySectionOfAStreamForward (UploadList uploadList) =
   let
     writeState = execProgram "publisher" (publisher uploadList) emptyTestState
     expectedStreamEvents = globalFeedFromUploadList uploadList
-    readStreamEvents streamId startEvent maxItems = fmap3 recordedEventNumber $ fmap2 streamResultEvents $ evalProgram "ReadStream" (getReadStreamRequestProgram (ReadStreamRequest streamId startEvent maxItems FeedDirectionForward)) (view testState writeState)
+    readStreamEvents streamId startEvent maxItems = fmap3 recordedEventNumber $ fmap2 streamResultEvents $ evalProgram "ReadStream" (getReadStreamRequestProgram (ReadStreamRequest streamId startEvent maxItems FeedDirectionForward)) writeState
     expectedEvents streamId startEvent maxItems = take (fromIntegral maxItems) $ drop (fromMaybe 0 startEvent) $ toList $ expectedStreamEvents ! streamId
     check (streamId, startEvent, maxItems) = readStreamEvents (StreamId streamId) ((fromIntegral . unpositive) <$> startEvent) maxItems === Right (Just (expectedEvents streamId (unpositive <$> startEvent) maxItems))
   in QC.forAll ((,,) <$> (QC.elements . Map.keys) expectedStreamEvents <*> QC.arbitrary <*> QC.arbitrary) check
@@ -238,10 +238,10 @@ prop_CanReadAnySectionOfAStreamBackward (UploadList uploadList) =
   let
     writeState = execProgram "publisher" (publisher uploadList) emptyTestState
     expectedStreamEvents = globalFeedFromUploadList uploadList
-    readStreamEvents streamId startEvent maxItems = fmap3 recordedEventNumber $ fmap2 streamResultEvents $ evalProgram "ReadStream" (getReadStreamRequestProgram (ReadStreamRequest streamId startEvent maxItems FeedDirectionBackward)) (view testState writeState)
+    readStreamEvents streamId startEvent maxItems = fmap3 recordedEventNumber $ fmap2 streamResultEvents $ evalProgram "ReadStream" (getReadStreamRequestProgram (ReadStreamRequest streamId startEvent maxItems FeedDirectionBackward)) writeState
     expectedEvents streamId Nothing maxItems = take (fromIntegral maxItems) $ reverse $ toList $ expectedStreamEvents ! streamId
     expectedEvents streamId (Just startEvent) maxItems = takeWhile (> startEvent - fromIntegral maxItems) $ dropWhile (> startEvent) $ reverse $ toList $ expectedStreamEvents ! streamId
-    check (streamId, startEvent, maxItems) = QC.counterexample (T.unpack $ show $ view testState writeState) $ readStreamEvents (StreamId streamId) ((fromIntegral . unpositive) <$> startEvent) maxItems === Right (Just (expectedEvents streamId (fromIntegral . unpositive <$> startEvent) maxItems))
+    check (streamId, startEvent, maxItems) = QC.counterexample (T.unpack $ show $ writeState) $ readStreamEvents (StreamId streamId) ((fromIntegral . unpositive) <$> startEvent) maxItems === Right (Just (expectedEvents streamId (fromIntegral . unpositive <$> startEvent) maxItems))
   in QC.forAll ((,,) <$> (QC.elements . Map.keys) expectedStreamEvents <*> QC.arbitrary <*> QC.arbitrary) check
 
 expectedEventsFromUploadList :: UploadList -> [RecordedEvent]
@@ -284,7 +284,7 @@ prop_ConflictingWritesWillNotSucceed =
        sumIfSuccess s (Right WriteSuccess) = s + 1
        sumIfSuccess s _            = s
 
-pageThroughGlobalFeed :: Natural -> DynamoCmdM MemQ.Queue (Either EventStoreActionError [RecordedEvent])
+pageThroughGlobalFeed :: Natural -> DynamoCmdM Queue (Either EventStoreActionError [RecordedEvent])
 pageThroughGlobalFeed pageSize =
   go [] Nothing
   where
@@ -294,7 +294,7 @@ pageThroughGlobalFeed pageSize =
         readAllRequestStartPosition = nextPosition,
         readAllRequestMaxItems = pageSize }
       either (return . Left) (processResult acc) result
-    processResult :: [RecordedEvent] -> GlobalStreamResult -> DynamoCmdM MemQ.Queue (Either EventStoreActionError [RecordedEvent])
+    processResult :: [RecordedEvent] -> GlobalStreamResult -> DynamoCmdM Queue (Either EventStoreActionError [RecordedEvent])
     processResult acc GlobalStreamResult{globalStreamResultNext = Nothing} = (return . Right) acc
     processResult acc GlobalStreamResult{globalStreamResultNext = Just(_,nextPosition,_),..} =
       go (globalStreamResultEvents ++ acc) (convertGlobalStartPosition nextPosition)
@@ -302,12 +302,12 @@ pageThroughGlobalFeed pageSize =
     convertGlobalStartPosition (GlobalStartPosition x) = Just x
 
 
-getStreamRecordedEvents :: Text -> ExceptT EventStoreActionError (DynamoCmdM MemQ.Queue) [RecordedEvent]
+getStreamRecordedEvents :: Text -> ExceptT EventStoreActionError (DynamoCmdM Queue) [RecordedEvent]
 getStreamRecordedEvents streamId = do
    recordedEvents <- concat <$> unfoldrM getEventSet Nothing
    return $ reverse recordedEvents
    where
-    getEventSet :: Maybe Int64 -> ExceptT EventStoreActionError (DynamoCmdM MemQ.Queue) (Maybe ([RecordedEvent], Maybe Int64))
+    getEventSet :: Maybe Int64 -> ExceptT EventStoreActionError (DynamoCmdM Queue) (Maybe ([RecordedEvent], Maybe Int64))
     getEventSet startEvent =
       if ((< 0) <$> startEvent) == Just True then
         return Nothing
@@ -319,15 +319,15 @@ getStreamRecordedEvents streamId = do
         else
           return $ (\recordedEvents -> (recordedEvents, (Just . (\x -> x - 1) . recordedEventNumber . last) recordedEvents)) <$> result
 
-readEachStream :: [UploadItem] -> ExceptT EventStoreActionError (DynamoCmdM MemQ.Queue) (Map.Map Text (Seq.Seq Int64))
+readEachStream :: [UploadItem] -> ExceptT EventStoreActionError (DynamoCmdM Queue) (Map.Map Text (Seq.Seq Int64))
 readEachStream uploadItems =
   foldM readStream Map.empty streams
   where
-    readStream :: Map.Map Text (Seq.Seq Int64) -> Text -> ExceptT EventStoreActionError (DynamoCmdM MemQ.Queue) (Map.Map Text (Seq.Seq Int64))
+    readStream :: Map.Map Text (Seq.Seq Int64) -> Text -> ExceptT EventStoreActionError (DynamoCmdM Queue) (Map.Map Text (Seq.Seq Int64))
     readStream m streamId = do
       eventIds <- getEventIds streamId
       return $ Map.insert streamId eventIds m
-    getEventIds :: Text -> ExceptT EventStoreActionError (DynamoCmdM MemQ.Queue) (Seq.Seq Int64)
+    getEventIds :: Text -> ExceptT EventStoreActionError (DynamoCmdM Queue) (Seq.Seq Int64)
     getEventIds streamId = do
        (recordedEvents :: [RecordedEvent]) <- P.toListM $ recordedEventProducerBackward (StreamId streamId) Nothing 10
        return $ Seq.fromList . reverse $ (recordedEventNumber <$> recordedEvents)
@@ -358,7 +358,7 @@ prop_ScanUnpagedShouldBeEmpty (UploadList uploadList) =
        check (_, testRunState) = scanUnpaged testRunState === []
        scanUnpaged = evalProgram "scanUnpaged" scanNeedsPaging'
 
-type EventWriter = StreamId -> [(Text, EventId, LByteString)] -> DynamoCmdM MemQ.Queue ()
+type EventWriter = StreamId -> [(Text, EventId, LByteString)] -> DynamoCmdM Queue ()
 
 writeEventsWithExplicitExpectedVersions :: EventWriter
 writeEventsWithExplicitExpectedVersions (StreamId streamId) events =
@@ -378,7 +378,7 @@ writeEventsWithNoExpectedVersions (StreamId streamId) events =
       result <- postEventRequestProgram (PostEventRequest streamId Nothing (EventEntry ed (EventType et) eventId sampleTime False :| []))
       when (result /= Right WriteSuccess) $ error "Bad write result"
 
-writeThenRead :: StreamId -> [(Text, EventId, LByteString)] -> EventWriter -> ExceptT EventStoreActionError (DynamoCmdM MemQ.Queue) [RecordedEvent]
+writeThenRead :: StreamId -> [(Text, EventId, LByteString)] -> EventWriter -> ExceptT EventStoreActionError (DynamoCmdM Queue) [RecordedEvent]
 writeThenRead (StreamId streamId) events writer = do
   lift $ writer (StreamId streamId) events
   getStreamRecordedEvents streamId
@@ -473,8 +473,8 @@ testStateItems itemCount =
     pages = zip  [0..] (Seq.fromList <$> groupByFibs feedEntries)
     writePage' (pageNumber, pageEntries) = GlobalFeedWriter.writePage pageNumber pageEntries 0
     writePagesProgram = runExceptT $ evalStateT (forM_ pages writePage') GlobalFeedWriter.emptyGlobalFeedWriterState
-    globalFeedCreatedState = execProgram "writeGlobalFeed" writePagesProgram (view testState writeState)
-  in view testState globalFeedCreatedState
+    globalFeedCreatedState = execProgram "writeGlobalFeed" writePagesProgram writeState
+  in globalFeedCreatedState
 
 getSampleItems :: Maybe Int64 -> Natural -> FeedDirection -> Either EventStoreActionError (Maybe StreamResult)
 getSampleItems startEvent maxItems direction =
@@ -500,7 +500,7 @@ groupByFibs as =
     acc (x:xs, ys) = Just (take x ys, (xs, drop x ys))
   in unfoldr acc (fibs,as)
 
-readStreamProgram :: Text -> Natural -> FeedDirection -> DynamoCmdM MemQ.Queue [Int64]
+readStreamProgram :: Text -> Natural -> FeedDirection -> DynamoCmdM Queue [Int64]
 readStreamProgram streamId pageSize direction =
   let
     streamResultLink =
@@ -518,7 +518,7 @@ readStreamProgram streamId pageSize direction =
       (recordedEventNumber <$> streamResultEvents, streamResultLink streamResult)
     start :: Maybe StreamOffset
     start = Just $ (FeedDirectionBackward, EventStartHead, pageSize)
-    acc :: Maybe StreamOffset -> DynamoCmdM MemQ.Queue (Maybe ([Int64], Maybe StreamOffset))
+    acc :: Maybe StreamOffset -> DynamoCmdM Queue (Maybe ([Int64], Maybe StreamOffset))
     acc Nothing = return Nothing
     acc (Just (_, position, _)) =
       either (const Nothing) (fmap getResultEventNumbers) <$> getReadStreamRequestProgram (positionToRequest position)
@@ -680,7 +680,7 @@ whenIndexing1000ItemsIopsIsMinimal :: Assertion
 whenIndexing1000ItemsIopsIsMinimal =
   let
     afterIndexState = execProgramUntilIdle "indexer" globalFeedWriterProgram (testStateItems 1000)
-    afterReadState = execProgramUntilIdle "globalFeedReader" (pageThroughGlobalFeed 10) (view testState afterIndexState)
+    afterReadState = execProgramUntilIdle "globalFeedReader" (pageThroughGlobalFeed 10) afterIndexState
     expectedWriteState = Map.fromList [
       ((UnpagedRead,IopsScanUnpaged,"indexer"),1000)
      ,((TableRead,IopsGetItem,"indexer"),1019)
@@ -702,7 +702,7 @@ errorThrownIfTryingToWriteAnEventInAMultipleGap =
     result = evalProgram "writeEvents" (postEventRequestProgram multiPostEventRequest >> postEventRequestProgram subsequentPostEventRequest) emptyTestState
   in assertEqual "Should return failure" (Right EventExists) result
 
-postTwoEventWithTheSameEventId :: DynamoCmdM MemQ.Queue (Either EventStoreActionError EventWriteResult)
+postTwoEventWithTheSameEventId :: DynamoCmdM Queue (Either EventStoreActionError EventWriteResult)
 postTwoEventWithTheSameEventId =
   let
     postEventRequest = PostEventRequest { perStreamId = "MyStream", perExpectedVersion = Nothing, perEvents = sampleEventEntry :| [] }

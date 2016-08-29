@@ -32,10 +32,9 @@ import           Data.Text.Encoding.Error               (lenientDecode)
 import qualified Data.Text.Lazy                         as TL
 import           Data.Text.Lazy.Encoding                as TL
 import qualified Data.UUID                              (UUID)
-import           DynamoDbEventStore.AmazonkaInterpreter
 import           DynamoDbEventStore.EventStoreCommands
+import           DynamoDbEventStore.AmazonkaImplementation
 import qualified DynamoDbEventStore.GlobalFeedWriter    as GlobalFeedWriter
-import           Control.Monad.Trans.Resource
 import           Network.Wreq
 import qualified Options.Applicative                    as Opt
 import qualified Prelude                                as P
@@ -413,7 +412,7 @@ start Config { configCommand = SpeedTest } = do
         _runtimeEnvironmentCompletePageQueue = thisCompletePageQueue,
         _runtimeEnvironmentAmazonkaEnv = awsEnv,
         _runtimeEnvironmentTableName = tableName }
-  result <- runDynamoCloud runtimeEnvironment $ unMyAwsM writePages
+  result <- runDynamoCloud runtimeEnvironment writePages
   print result
   return ()
 
@@ -431,16 +430,6 @@ writePages = do
     go pageNumber = do
       log Debug ("Writing page" <> show pageNumber)
       GlobalFeedWriter.writePage (PageKey pageNumber) feedEntries 0
-
-toExceptT :: forall a. (MyAwsStack a -> IO (Either InterpreterError a)) -> (MyAwsStack a -> ExceptT InterpreterError IO a)
-toExceptT runner a = do
-  result <- liftIO $ runner a
-  case result of Left s -> throwError s
-                 Right r -> return r
-
-runDynamoCloud :: RuntimeEnvironment -> MyAwsStack a -> IO (Either InterpreterError a)
-runDynamoCloud runtimeEnvironment x =
-  AWS.runResourceT $ AWS.runAWST runtimeEnvironment $ runExceptT x
 
 main :: IO ()
 main = Opt.execParser opts >>= start

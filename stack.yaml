@@ -2,8 +2,8 @@ flags: {}
 packages:
  - '.'
  - location:
-    git: git@github.com:adbrowne/dodgerblue.git
-    commit: 623eb478aa35f57588fcbec5ca19f906a432c503
+    git: https://github.com/adbrowne/dodgerblue.git
+    commit: 27edb775526da9e6b42b0d89261c2c490623faba
 resolver: lts-6.10
 extra-deps:
  - aeson-diff-1.0.0.0

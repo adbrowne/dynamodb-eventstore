@@ -8,10 +8,10 @@ import           BasicPrelude
 import           Control.Lens
 import qualified Data.HashMap.Lazy                      as HM
 import qualified Data.Sequence                          as Seq
-import           DynamoDbEventStore.AmazonkaInterpreter (InterpreterError)
+import           DynamoDbEventStore.AmazonkaImplementation (InterpreterError)
 import qualified DynamoDbEventStore.Constants           as Constants
 import           DynamoDbEventStore.EventStoreCommands
-import           Network.AWS.DynamoDB
+import           Network.AWS.DynamoDB hiding (updateItem)
 import           Test.Tasty
 import           Test.Tasty.HUnit
 
@@ -27,28 +27,29 @@ sampleValuesNeedsPaging = HM.singleton "Body" (set avS (Just "Andrew") attribute
 sampleValuesNoPaging :: DynamoValues
 sampleValuesNoPaging = HM.singleton "Body" (set avS (Just "Andrew") attributeValue)
 
-testWrite :: DynamoValues -> DynamoVersion -> DynamoCmdM q DynamoWriteResult
-testWrite = writeToDynamo' testKey
+testWrite :: MonadEsDsl m => DynamoValues -> DynamoVersion -> m DynamoWriteResult
+testWrite = writeToDynamo testKey
 
-sampleRead :: DynamoCmdM q (Maybe DynamoReadResult)
-sampleRead = readFromDynamo' testKey
+sampleRead :: MonadEsDsl m => m (Maybe DynamoReadResult)
+sampleRead = readFromDynamo testKey
 
-waitForItem :: (Typeable a) => q a -> DynamoCmdM q a
+waitForItem :: (MonadEsDslWithFork m, Typeable a) => QueueType m a -> m a
 waitForItem q = go Nothing
-  where go Nothing  = tryReadQueue' q >>= go
+  where go Nothing  = tryReadQueue q >>= go
         go (Just x) = return x
 
-tests :: (forall a. DynamoCmdM q a -> IO (Either InterpreterError a)) -> [TestTree]
+tests :: MonadEsDslWithFork m => (forall a. m a -> IO (Either InterpreterError a)) -> [TestTree]
 tests evalProgram =
   [
       testCase "Can spawn a new thread" $
         let
           queueItem = (PageKey 1, Seq.fromList ['a'])
+          childThread :: MonadEsDsl m => QueueType m (PageKey, Seq Char) -> m ()
           childThread q = do
-            writeQueue' q queueItem
+            writeQueue q queueItem
           actions = do
-            q <- newQueue'
-            forkChild' (childThread q)
+            q <- newQueue
+            forkChild (childThread q)
             waitForItem q
           evt = evalProgram actions
           expected = Right queueItem
@@ -59,8 +60,8 @@ tests evalProgram =
         let
           queueItem = (PageKey 1, Seq.fromList ['a'])
           actions = do
-            q <- newQueue'
-            writeQueue' q queueItem >> tryReadQueue' q
+            q <- newQueue
+            writeQueue q queueItem >> tryReadQueue q
           evt = evalProgram actions
           expected = Right . Just $ queueItem
         in do
@@ -90,7 +91,7 @@ tests evalProgram =
           myKeyValue = set avS (Just "testValue") attributeValue
           actions = do
             _ <- testWrite sampleValuesNoPaging 0
-            _ <- updateItem' testKey (HM.singleton "MyKey" (ValueUpdateSet myKeyValue))
+            _ <- updateItem testKey (HM.singleton "MyKey" (ValueUpdateSet myKeyValue))
             sampleRead
           readResult = evalProgram actions
         in do
@@ -101,7 +102,7 @@ tests evalProgram =
         let
           actions = do
             _ <- testWrite sampleValuesNeedsPaging 0
-            _ <- updateItem' testKey (HM.singleton Constants.needsPagingKey ValueUpdateDelete)
+            _ <- updateItem testKey (HM.singleton Constants.needsPagingKey ValueUpdateDelete)
             sampleRead
           readResult = evalProgram actions
         in do
@@ -121,7 +122,7 @@ tests evalProgram =
       let
         actions = do
           _ <- testWrite sampleValuesNeedsPaging 0
-          scanNeedsPaging'
+          scanNeedsPaging
         evtList = evalProgram actions
       in do
         r <- evtList
@@ -131,7 +132,7 @@ tests evalProgram =
         actions = do
           _ <- testWrite sampleValuesNeedsPaging 0
           _ <- testWrite sampleValuesNoPaging 1
-          scanNeedsPaging'
+          scanNeedsPaging
         evtList = evalProgram actions
       in do
         r <- evtList
@@ -139,9 +140,9 @@ tests evalProgram =
     , testCase "Can read events backward" $
         let
           actions = do
-            _ <- writeToDynamo' (DynamoKey testStreamId 0) sampleValuesNeedsPaging 0
-            _ <- writeToDynamo' (DynamoKey testStreamId 1) sampleValuesNeedsPaging 0
-            queryTable' QueryDirectionBackward testStreamId 10 Nothing
+            _ <- writeToDynamo (DynamoKey testStreamId 0) sampleValuesNeedsPaging 0
+            _ <- writeToDynamo (DynamoKey testStreamId 1) sampleValuesNeedsPaging 0
+            queryTable QueryDirectionBackward testStreamId 10 Nothing
           evt = evalProgram actions
           expected = Right [
             DynamoReadResult (DynamoKey testStreamId 1) 0 sampleValuesNeedsPaging,
@@ -152,9 +153,9 @@ tests evalProgram =
     , testCase "Read events respects max items " $
         let
           actions = do
-            _ <- writeToDynamo' (DynamoKey testStreamId 0) sampleValuesNeedsPaging 0
-            _ <- writeToDynamo' (DynamoKey testStreamId 1) sampleValuesNeedsPaging 0
-            queryTable' QueryDirectionBackward testStreamId 1 Nothing
+            _ <- writeToDynamo (DynamoKey testStreamId 0) sampleValuesNeedsPaging 0
+            _ <- writeToDynamo (DynamoKey testStreamId 1) sampleValuesNeedsPaging 0
+            queryTable QueryDirectionBackward testStreamId 1 Nothing
           evt = evalProgram actions
           expected = Right [
             DynamoReadResult (DynamoKey testStreamId 1) 0 sampleValuesNeedsPaging ]
@@ -164,9 +165,9 @@ tests evalProgram =
     , testCase "Can read events backward starting at offset" $
         let
           actions = do
-            _ <- writeToDynamo' (DynamoKey testStreamId 0) sampleValuesNeedsPaging 0
-            _ <- writeToDynamo' (DynamoKey testStreamId 1) sampleValuesNeedsPaging 0
-            queryTable' QueryDirectionBackward testStreamId 10 (Just 1)
+            _ <- writeToDynamo (DynamoKey testStreamId 0) sampleValuesNeedsPaging 0
+            _ <- writeToDynamo (DynamoKey testStreamId 1) sampleValuesNeedsPaging 0
+            queryTable QueryDirectionBackward testStreamId 10 (Just 1)
           evt = evalProgram actions
           expected = Right [
             DynamoReadResult (DynamoKey testStreamId 0) 0 sampleValuesNeedsPaging ]
@@ -176,9 +177,9 @@ tests evalProgram =
     , testCase "Can read events forward starting at offset" $
         let
           actions = do
-            _ <- writeToDynamo' (DynamoKey testStreamId 0) sampleValuesNeedsPaging 0
-            _ <- writeToDynamo' (DynamoKey testStreamId 1) sampleValuesNeedsPaging 0
-            queryTable' QueryDirectionForward testStreamId 10 (Just 0)
+            _ <- writeToDynamo (DynamoKey testStreamId 0) sampleValuesNeedsPaging 0
+            _ <- writeToDynamo (DynamoKey testStreamId 1) sampleValuesNeedsPaging 0
+            queryTable QueryDirectionForward testStreamId 10 (Just 0)
           evt = evalProgram actions
           expected = Right [
             DynamoReadResult (DynamoKey testStreamId 1) 0 sampleValuesNeedsPaging ]
