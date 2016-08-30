@@ -23,6 +23,7 @@ import qualified Data.UUID
 import qualified Data.Vector                           as V
 import           DynamoDbEventStore.EventStoreActions
 import           DynamoDbEventStore.EventStoreCommands
+import           DynamoDbEventStore.Types
 import           Network.HTTP.Base
 import           Text.Blaze
 import           Text.Blaze.Internal                   (customLeaf,

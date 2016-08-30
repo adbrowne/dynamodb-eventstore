@@ -38,6 +38,7 @@ import           Test.Tasty.QuickCheck                   (testProperty, (===))
 import qualified Test.Tasty.QuickCheck                   as QC
 
 import           DynamoDbEventStore.DynamoCmdInterpreter
+import           DynamoDbEventStore.Types
 import qualified DynamoDbEventStore.EventStoreActions
 import           DynamoDbEventStore.EventStoreActions (PostEventRequest(..),EventEntry(..),EventWriteResult(..),EventStartPosition(..),FeedDirection(..),StreamResult(..),GlobalStartPosition(..),GlobalFeedPosition(..),GlobalStreamResult(..),StreamOffset,ReadStreamRequest(..),ReadAllRequest(..),EventType(..),EventTime(..),unEventTime,ReadEventRequest(..),recordedEventProducerBackward)
 import           DynamoDbEventStore.EventStoreCommands

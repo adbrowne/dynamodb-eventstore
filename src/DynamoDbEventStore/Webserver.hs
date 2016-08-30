@@ -37,6 +37,7 @@ import qualified Data.UUID                              as UUID
 import           DynamoDbEventStore.AmazonkaImplementation
 import           DynamoDbEventStore.EventStoreActions
 import           DynamoDbEventStore.EventStoreCommands
+import           DynamoDbEventStore.Types
 import           DynamoDbEventStore.Feed
 import           Network.HTTP.Types.Status
 import           Text.Blaze.Renderer.Text

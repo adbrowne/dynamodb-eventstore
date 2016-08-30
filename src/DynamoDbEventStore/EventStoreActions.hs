@@ -54,6 +54,7 @@ import           Data.Time.Clock
 import           Data.Time.Format
 import qualified DynamoDbEventStore.Constants          as Constants
 import           DynamoDbEventStore.EventStoreCommands hiding (readField)
+import           DynamoDbEventStore.Types
 import qualified DynamoDbEventStore.EventStoreCommands as EventStoreCommands
 import           DynamoDbEventStore.GlobalFeedWriter   (EventStoreActionError (..),
                                                         GlobalFeedPosition (..),

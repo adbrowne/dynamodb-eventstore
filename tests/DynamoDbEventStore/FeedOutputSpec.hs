@@ -10,6 +10,7 @@ import           Data.Time.Format
 import qualified Data.UUID                             as UUID
 import           DynamoDbEventStore.EventStoreActions
 import           DynamoDbEventStore.EventStoreCommands
+import           DynamoDbEventStore.Types
 import           DynamoDbEventStore.Feed
 import           DynamoDbEventStore.Webserver
 import           Test.Tasty
