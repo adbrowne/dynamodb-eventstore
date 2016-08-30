@@ -4,7 +4,7 @@ packages:
  - location:
     git: https://github.com/adbrowne/dodgerblue.git
     commit: 27edb775526da9e6b42b0d89261c2c490623faba
-resolver: lts-6.10
+resolver: lts-6.14
 extra-deps:
  - aeson-diff-1.0.0.0
  - haskell-src-exts-1.18.2
