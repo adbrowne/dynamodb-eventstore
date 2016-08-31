@@ -53,7 +53,7 @@ getReadEventRequestProgram :: MonadEsDsl m => ReadEventRequest -> m (Either Even
 getReadEventRequestProgram = runExceptT . DynamoDbEventStore.EventStoreActions.getReadEventRequestProgram
 getReadStreamRequestProgram :: MonadEsDsl m => ReadStreamRequest -> m (Either EventStoreActionError (Maybe StreamResult))
 getReadStreamRequestProgram = runExceptT . DynamoDbEventStore.EventStoreActions.getReadStreamRequestProgram
-globalFeedWriterProgram :: MonadEsDsl m => m (Either EventStoreActionError ())
+globalFeedWriterProgram :: MonadEsDslWithFork m => m (Either EventStoreActionError ())
 globalFeedWriterProgram = runExceptT (evalStateT GlobalFeedWriter.main GlobalFeedWriter.emptyGlobalFeedWriterState)
 
 type UploadItem = (Text,Int64,NonEmpty EventEntry)
