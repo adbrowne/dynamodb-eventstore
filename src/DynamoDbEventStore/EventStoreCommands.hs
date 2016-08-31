@@ -129,8 +129,6 @@ instance MonadEsDsl (F (DodgerBlue.CustomDsl q DynamoCmd)) where
 instance MonadEsDslWithFork (F (DodgerBlue.CustomDsl q DynamoCmd)) where
   forkChild = DodgerBlue.forkChild
 
---type MyAwsStack = ((ExceptT InterpreterError) (AWST' RuntimeEnvironment (ResourceT IO)))
-
 forkChildIO :: MyAwsM () -> MyAwsM ()
 forkChildIO (MyAwsM c) = MyAwsM $ do
   runtimeEnv <- ask

@@ -354,8 +354,14 @@ emptyGlobalFeedWriterState = GlobalFeedWriterState {
 
 type GlobalFeedWriterStack q m = (MonadEsDsl m, MonadError EventStoreActionError m, MonadState GlobalFeedWriterState m)
 
-main :: (GlobalFeedWriterStack q m) => m ()
+testChildThread :: MonadEsDsl m => m ()
+testChildThread = do
+  log Debug "Test message"
+  return ()
+
+main :: MonadEsDslWithFork m => StateT GlobalFeedWriterState (ExceptT EventStoreActionError m) ()
 main = forever $ do
+  lift $ lift $ forkChild testChildThread
   scanResult <- scanNeedsPaging
   addItemsToGlobalFeed scanResult
   when (null scanResult) (wait 1000)

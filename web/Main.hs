@@ -140,7 +140,7 @@ printError
 printError err = putStrLn $ "Error: " <> show err
 
 forkGlobalFeedWriter
-  :: MonadEsDsl m
+  :: MonadEsDslWithFork m
   => (forall a. m a -> ExceptT InterpreterError IO a) -> IO ()
 forkGlobalFeedWriter runner =
   forkAndSupervise "GlobalFeedWriter" $
