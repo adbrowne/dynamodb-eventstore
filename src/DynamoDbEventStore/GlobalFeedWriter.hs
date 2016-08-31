@@ -365,5 +365,5 @@ main = forever $ do
   scanResult <- scanNeedsPaging
   addItemsToGlobalFeed scanResult
   when (null scanResult) (wait 1000)
-  setPulseStatus $ case scanResult of [] -> False
-                                      _  -> True
+  let isActive = if null scanResult then False else True
+  setPulseStatus isActive
