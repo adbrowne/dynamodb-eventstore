@@ -271,9 +271,6 @@ readItems :: GlobalFeedWriterStack q m => [EventKey] -> m [DynamoReadResult]
 readItems keys =
   sequence $ readFromDynamoMustExist . eventKeyToDynamoKey <$> keys
 
-feedEntryToDynamoKey :: FeedEntry -> DynamoKey
-feedEntryToDynamoKey = eventKeyToDynamoKey . feedEntryToEventKey
-
 feedEntryToEventKey :: FeedEntry -> EventKey
 feedEntryToEventKey FeedEntry{..} = EventKey (feedEntryStream, feedEntryNumber )
 
