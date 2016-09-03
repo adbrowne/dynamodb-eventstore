@@ -148,6 +148,14 @@ executable client
 Test-Suite tasty
   GHC-Options: -Wall
   default-extensions:          NoImplicitPrelude
+  other-modules:       DynamoCmdAmazonkaTests
+                       , DynamoDbEventStore.DynamoCmdInterpreter
+                       , DynamoDbEventStore.FeedOutputSpec
+                       , DynamoDbEventStore.GlobalFeedWriterSpec
+                       , DynamoDbEventStore.InMemoryCache
+                       , DynamoDbEventStore.InMemoryDynamoTable
+                       , WebserverInternalSpec
+                       , WebserverSpec
   type:                exitcode-stdio-1.0
   main-is:             tastytests.hs
   hs-source-dirs:      tests

@@ -354,14 +354,14 @@ readEachStream uploadItems =
 prop_EventsShouldAppearInTheirSteamsInOrder :: UploadList -> QC.Property
 prop_EventsShouldAppearInTheirSteamsInOrder (UploadList uploadList) =
   let
+    expectedGlobalFeed = Right $ globalFeedFromUploadList uploadList
     programs = Map.fromList [
       ("Publisher", (publisher uploadList,100)),
       ("GlobalFeedWriter1", (globalFeedWriterProgram, 100)),
       ("GlobalFeedWriter2", (globalFeedWriterProgram, 100)) ]
+    check (_, testRunState) = runReadEachStream testRunState === expectedGlobalFeed
+    runReadEachStream = evalProgram "readEachStream" (runExceptT (readEachStream uploadList))
   in QC.forAll (runPrograms programs) check
-     where
-       check (_, testRunState) = runReadEachStream testRunState === (Right $ globalFeedFromUploadList uploadList)
-       runReadEachStream = evalProgram "readEachStream" (runExceptT (readEachStream uploadList))
 
 prop_ScanUnpagedShouldBeEmpty :: UploadList -> QC.Property
 prop_ScanUnpagedShouldBeEmpty (UploadList uploadList) =
