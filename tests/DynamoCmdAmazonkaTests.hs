@@ -1,19 +1,19 @@
+{-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE RankNTypes        #-}
 
 module DynamoCmdAmazonkaTests where
 
-import BasicPrelude
-import Control.Lens
-import qualified Data.HashMap.Lazy as HM
-import qualified Data.Sequence as Seq
-import DynamoDbEventStore.AmazonkaImplementation (InterpreterError)
-import qualified DynamoDbEventStore.Constants as Constants
-import DynamoDbEventStore.EventStoreCommands
-import Network.AWS.DynamoDB hiding (updateItem)
-import Test.Tasty
-import Test.Tasty.HUnit
+import           BasicPrelude
+import           Control.Lens
+import qualified Data.HashMap.Lazy                         as HM
+import qualified Data.Sequence                             as Seq
+import           DynamoDbEventStore.AmazonkaImplementation (InterpreterError)
+import qualified DynamoDbEventStore.Constants              as Constants
+import           DynamoDbEventStore.EventStoreCommands
+import           Network.AWS.DynamoDB                      hiding (updateItem)
+import           Test.Tasty
+import           Test.Tasty.HUnit
 
 testStreamId :: Text
 testStreamId = "Brownie"
@@ -76,6 +76,15 @@ tests evalProgram =
         expected = Right . Just $ queueItem
     in do r <- evt
           assertEqual "Queue item is read back" expected r
+  , testCase "Can read from cache" $
+    let actions = do
+          c <- newCache 10
+          cacheInsert c 'a' 'b'
+          cacheLookup c 'a'
+        result = evalProgram actions
+        expected = Right . Just $ 'b'
+    in do r <- result
+          assertEqual "Cache item is read back" expected r
   , testCase "Can read event" $
     let actions = do
           _ <- testWrite sampleValuesNeedsPaging 0
@@ -95,7 +104,7 @@ tests evalProgram =
     let myKeyValue = set avS (Just "testValue") attributeValue
         actions = do
           _ <- testWrite sampleValuesNoPaging 0
-          _ <- 
+          _ <-
             updateItem
               testKey
               (HM.singleton "MyKey" (ValueUpdateSet myKeyValue))
@@ -110,7 +119,7 @@ tests evalProgram =
   , testCase "Delete field removes the field" $
     let actions = do
           _ <- testWrite sampleValuesNeedsPaging 0
-          _ <- 
+          _ <-
             updateItem
               testKey
               (HM.singleton Constants.needsPagingKey ValueUpdateDelete)
@@ -145,9 +154,9 @@ tests evalProgram =
           assertEqual "Should have no items" (Right []) r
   , testCase "Can read events backward" $
     let actions = do
-          _ <- 
+          _ <-
             writeToDynamo (DynamoKey testStreamId 0) sampleValuesNeedsPaging 0
-          _ <- 
+          _ <-
             writeToDynamo (DynamoKey testStreamId 1) sampleValuesNeedsPaging 0
           queryTable QueryDirectionBackward testStreamId 10 Nothing
         evt = evalProgram actions
@@ -159,9 +168,9 @@ tests evalProgram =
           assertEqual "Events are returned in reverse order" expected r
   , testCase "Read events respects max items " $
     let actions = do
-          _ <- 
+          _ <-
             writeToDynamo (DynamoKey testStreamId 0) sampleValuesNeedsPaging 0
-          _ <- 
+          _ <-
             writeToDynamo (DynamoKey testStreamId 1) sampleValuesNeedsPaging 0
           queryTable QueryDirectionBackward testStreamId 1 Nothing
         evt = evalProgram actions
@@ -172,9 +181,9 @@ tests evalProgram =
           assertEqual "Only event 1 should be returned" expected r
   , testCase "Can read events backward starting at offset" $
     let actions = do
-          _ <- 
+          _ <-
             writeToDynamo (DynamoKey testStreamId 0) sampleValuesNeedsPaging 0
-          _ <- 
+          _ <-
             writeToDynamo (DynamoKey testStreamId 1) sampleValuesNeedsPaging 0
           queryTable QueryDirectionBackward testStreamId 10 (Just 1)
         evt = evalProgram actions
@@ -185,9 +194,9 @@ tests evalProgram =
           assertEqual "Only the 0th event is returned" expected r
   , testCase "Can read events forward starting at offset" $
     let actions = do
-          _ <- 
+          _ <-
             writeToDynamo (DynamoKey testStreamId 0) sampleValuesNeedsPaging 0
-          _ <- 
+          _ <-
             writeToDynamo (DynamoKey testStreamId 1) sampleValuesNeedsPaging 0
           queryTable QueryDirectionForward testStreamId 10 (Just 0)
         evt = evalProgram actions

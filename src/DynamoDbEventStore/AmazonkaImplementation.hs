@@ -1,13 +1,13 @@
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE ConstraintKinds #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ConstraintKinds            #-}
+{-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE RankNTypes                 #-}
+{-# LANGUAGE RecordWildCards            #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE StandaloneDeriving         #-}
+{-# LANGUAGE TemplateHaskell            #-}
 
 module DynamoDbEventStore.AmazonkaImplementation
   ( readFromDynamoAws
@@ -26,38 +26,43 @@ module DynamoDbEventStore.AmazonkaImplementation
   , runLocalDynamo
   , runDynamoCloud
   , runProgram
+  , newCacheAws
+  , cacheInsertAws
+  , cacheLookupAws
   , MetricLogsPair(..)
   , MetricLogs(..)
   , InterpreterError(..)
   , MyAwsM(..)
+  , InMemoryCache
   , runtimeEnvironmentAmazonkaEnv
   , runtimeEnvironmentMetricLogs
   , runtimeEnvironmentCompletePageQueue
   , RuntimeEnvironment(..)
   ) where
 
-import BasicPrelude
-import Control.Lens
-import Control.Exception.Lens
-import System.CPUTime
-import System.Random
-import TextShow
-import Data.List.NonEmpty (NonEmpty(..))
-import GHC.Natural
-import qualified Data.Text as T
-import Control.Concurrent (threadDelay)
-import Control.Monad.Except
-import Control.Monad.Base
-import Control.Monad.Catch
-import Control.Monad.Trans.Resource
-import Control.Concurrent.STM
-import DynamoDbEventStore.Types
-import Control.Monad.Reader
+import           BasicPrelude
+import           Control.Concurrent           (threadDelay)
+import           Control.Concurrent.STM
+import           Control.Exception.Lens
+import           Control.Lens
+import           Control.Monad.Base
+import           Control.Monad.Catch
+import           Control.Monad.Except
+import           Control.Monad.Reader
+import           Control.Monad.Trans.AWS      hiding (LogLevel)
+import           Control.Monad.Trans.Resource
+import qualified Data.Cache.LRU               as LRU
+import qualified Data.HashMap.Strict          as HM
+import           Data.List.NonEmpty           (NonEmpty (..))
+import qualified Data.Text                    as T
 import qualified DynamoDbEventStore.Constants as Constants
-import Network.AWS.DynamoDB
-import Control.Monad.Trans.AWS hiding (LogLevel)
-import Network.AWS.Waiter
-import qualified Data.HashMap.Strict as HM
+import           DynamoDbEventStore.Types
+import           GHC.Natural
+import           Network.AWS.DynamoDB
+import           Network.AWS.Waiter
+import           System.CPUTime
+import           System.Random
+import           TextShow
 
 fieldStreamId :: Text
 fieldStreamId = "streamId"
@@ -87,23 +92,23 @@ data InterpreterError
   deriving (Show, Eq)
 
 data MetricLogsPair = MetricLogsPair
-  { metricLogsPairCount :: IO ()
+  { metricLogsPairCount  :: IO ()
   , metricLogsPairTimeMs :: Double -> IO ()
   }
 
 data MetricLogs = MetricLogs
-  { metricLogsReadItem :: MetricLogsPair
-  , metricLogsWriteItem :: MetricLogsPair
-  , metricLogsQuery :: MetricLogsPair
+  { metricLogsReadItem   :: MetricLogsPair
+  , metricLogsWriteItem  :: MetricLogsPair
+  , metricLogsQuery      :: MetricLogsPair
   , metricLogsUpdateItem :: MetricLogsPair
-  , metricLogsScan :: MetricLogsPair
+  , metricLogsScan       :: MetricLogsPair
   }
 
 data RuntimeEnvironment = RuntimeEnvironment
-  { _runtimeEnvironmentMetricLogs :: MetricLogs
+  { _runtimeEnvironmentMetricLogs        :: MetricLogs
   , _runtimeEnvironmentCompletePageQueue :: TQueue (PageKey, Seq FeedEntry)
-  , _runtimeEnvironmentTableName :: Text
-  , _runtimeEnvironmentAmazonkaEnv :: Env
+  , _runtimeEnvironmentTableName         :: Text
+  , _runtimeEnvironmentAmazonkaEnv       :: Env
   }
 
 $(makeLenses ''RuntimeEnvironment)
@@ -275,7 +280,7 @@ queryTableAws direction streamId limit exclusiveStartKey = getBackward
     scanForward = direction == QueryDirectionForward
     getBackward = do
       tn <- view runtimeEnvironmentTableName
-      resp <- 
+      resp <-
         timeAction metricLogsQuery $
         send $
         query tn & setStartKey exclusiveStartKey &
@@ -290,6 +295,30 @@ queryTableAws direction streamId limit exclusiveStartKey = getBackward
       let parsedItems = fmap toDynamoReadResult items
       allErrors parsedItems
 
+newtype InMemoryCache k v = InMemoryCache (TVar (LRU.LRU k v))
+
+newCacheAws :: Ord k => Integer -> MyAwsM (InMemoryCache k v)
+newCacheAws size = do
+  let cache = LRU.newLRU (Just size)
+  tvarCache <- liftIO $ newTVarIO cache
+  return $ InMemoryCache tvarCache
+
+cacheLookupAws :: Ord k => InMemoryCache k v -> k -> MyAwsM (Maybe v)
+cacheLookupAws (InMemoryCache cache) key = do
+  liftIO $ atomically go
+  where
+    go = do
+      lruCache <- readTVar cache
+      let (lruCache', result) = LRU.lookup key lruCache
+      writeTVar cache lruCache'
+      return result
+
+cacheInsertAws :: Ord k => InMemoryCache k v -> k -> v -> MyAwsM ()
+cacheInsertAws (InMemoryCache cache) key value =
+  liftIO $ atomically $ modifyTVar cache go
+  where
+    go = LRU.insert key value
+
 logAws :: LogLevel -> Text -> MyAwsM ()
 logAws _logLeval msg = liftIO $ putStrLn msg
 
@@ -298,7 +327,7 @@ scanNeedsPagingAws = scanUnpaged
   where
     scanUnpaged = do
       tn <- view runtimeEnvironmentTableName
-      resp <- 
+      resp <-
         timeAction metricLogsScan $
         send $ scan tn & set sIndexName (Just unpagedIndexName)
       allErrors (fmap fromAttributesToDynamoKey (view srsItems resp))
@@ -399,7 +428,7 @@ buildTable tableName =
            set ctAttributeDefinitions attributeDefinitions &
            set ctGlobalSecondaryIndexes [unpagedGlobalSecondary]
      _ <- send req0
-     _ <- 
+     _ <-
        await
          (tableExists
           { _waitDelay = 4
@@ -437,7 +466,7 @@ runLocalDynamo :: RuntimeEnvironment
                -> IO (Either InterpreterError b)
 runLocalDynamo runtimeEnvironment x = do
   let dynamo = setEndpoint False "localhost" 8000 dynamoDB
-  env <- 
+  env <-
     newEnv Sydney (FromEnv "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" Nothing)
   let runtimeEnvironment' =
         runtimeEnvironment

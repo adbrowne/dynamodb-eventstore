@@ -1,14 +1,14 @@
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE FlexibleInstances          #-}
+{-# LANGUAGE FunctionalDependencies     #-}
+{-# LANGUAGE GADTs                      #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE GADTs #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE RankNTypes                 #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE TemplateHaskell            #-}
+{-# LANGUAGE TypeFamilies               #-}
 
 module DynamoDbEventStore.DynamoCmdInterpreter
   ( TestState(..)
@@ -27,37 +27,39 @@ module DynamoDbEventStore.DynamoCmdInterpreter
   , IopsOperation(..)
   ) where
 
-import BasicPrelude
-import DodgerBlue.Testing
-import Control.Lens
-import Control.Monad.Reader
-import Control.Monad.State
-import Data.Functor (($>))
-import qualified Data.Map.Strict as Map
+import           BasicPrelude
+import           Control.Lens
+import           Control.Monad.Reader
+import           Control.Monad.State
+import           Data.Functor                           (($>))
+import qualified Data.Map.Strict                        as Map
+import           DodgerBlue.Testing
+import qualified DynamoDbEventStore.InMemoryCache       as MemCache
 import qualified DynamoDbEventStore.InMemoryDynamoTable as MemDb
-import GHC.Natural
-import qualified Prelude as P
-import qualified Test.Tasty.QuickCheck as QC
+import           GHC.Natural
+import qualified Prelude                                as P
+import qualified Test.Tasty.QuickCheck                  as QC
 
-import DynamoDbEventStore.EventStoreCommands
+import           DynamoDbEventStore.EventStoreCommands
 
 newtype ProgramId = ProgramId
   { unProgramId :: Text
   } deriving (Eq, Show, Ord, IsString)
 
 data LoopState r = LoopState
-  { _loopStateTestState :: TestState
+  { _loopStateTestState   :: TestState
   , _loopStateDodgerState :: EvalState
   }
 
 data TestState = TestState
-  { _testStateDynamo :: MemDb.InMemoryDynamoTable
-  , _testStateLog :: Seq Text
+  { _testStateDynamo    :: MemDb.InMemoryDynamoTable
+  , _testStateCache     :: MemCache.Caches
+  , _testStateLog       :: Seq Text
   , _testStateIopCounts :: IopsTable
   } -- deriving (Eq)
 
 emptyTestState :: TestState
-emptyTestState = TestState MemDb.emptyDynamoTable mempty mempty
+emptyTestState = TestState MemDb.emptyDynamoTable MemCache.emptyCache mempty mempty
 
 data IopsCategory
   = UnpagedRead
@@ -203,6 +205,30 @@ runScanNeedsPagingCmd n = do
   addIops UnpagedRead IopsScanUnpaged $ length results
   return $ n results
 
+runNewCacheCmd
+  :: (MonadState TestState m)
+  => Integer -> ((Cache k v) -> n) -> m n
+runNewCacheCmd size n = do
+  (cache', caches') <- uses testStateCache (MemCache.newCache size)
+  testStateCache .= caches'
+  return $ n cache'
+
+runInsertCacheCmd
+  :: (MonadState TestState m, Ord k, Typeable k, Typeable v)
+  => Cache k v -> k -> v -> n -> m n
+runInsertCacheCmd c k v n = do
+  caches' <- uses testStateCache (MemCache.insertCache c k v)
+  testStateCache .= caches'
+  return n
+
+runLookupCacheCmd
+  :: (MonadState TestState m, Ord k, Typeable k, Typeable v)
+  => Cache k v -> k -> (Maybe v -> n) -> m n
+runLookupCacheCmd c k n = do
+  (result, caches') <- uses testStateCache (MemCache.lookupCache c k)
+  testStateCache .= caches'
+  return $ n result
+
 interpretDslCommand
   :: (MonadState TestState m, RandomFailure m)
   => Text -> Text -> DynamoCmd a -> m a
@@ -219,6 +245,9 @@ interpretDslCommand _node threadName cmd =
       runQueryTableCmd direction key maxEvents startEvent n
     go (UpdateItem' key values n) = runUpdateItemCmd key values n
     go (ScanNeedsPaging' n) = runScanNeedsPagingCmd n
+    go (NewCache' size n) = runNewCacheCmd size n
+    go (CacheInsert' c k v n) = runInsertCacheCmd c k v n
+    go (CacheLookup' c k n) = runLookupCacheCmd c k n
     go (Wait' _milliseconds n) = return n
     go (Log' _logLevel msg n) = (addLog msg >> return n)
 
