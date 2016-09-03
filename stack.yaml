@@ -3,7 +3,7 @@ packages:
  - '.'
  - location:
     git: https://github.com/adbrowne/dodgerblue.git
-    commit: 27edb775526da9e6b42b0d89261c2c490623faba
+    commit: 318ff1e0ef3d4ea4d0123401a918f8008cdf6e8b
 resolver: lts-6.14
 extra-deps:
  - aeson-diff-1.0.0.0

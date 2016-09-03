@@ -232,8 +232,8 @@ runLookupCacheCmd c k n = do
 
 interpretDslCommand
   :: (MonadState TestState m, RandomFailure m)
-  => Text -> Text -> DynamoCmd a -> m a
-interpretDslCommand _node threadName cmd =
+  => Text -> DynamoCmd a -> m a
+interpretDslCommand threadName cmd =
   runReaderT (go cmd) (ProgramId threadName)
   where
     go
@@ -257,7 +257,7 @@ runStateProgram :: ProgramId
                 -> TestState
                 -> (a, TestState)
 runStateProgram (ProgramId programId) p initialTestState =
-  runState (evalDslTest interpretDslCommand programId programId p) initialTestState
+  runState (evalDslTest interpretDslCommand programId p) initialTestState
 
 evalProgram :: ProgramId -> DynamoCmdM Queue a -> TestState -> a
 evalProgram programId p initialTestState = fst $ runStateProgram programId p initialTestState
@@ -274,7 +274,7 @@ runPrograms'
   -> QC.Gen (ExecutionTree (ThreadResult a), TestState)
 runPrograms' t startTestState =
   let interpretDslCommand' =
-        interpretDslCommand :: Text -> Text -> DynamoCmd a -> StateT TestState QC.Gen a
+        interpretDslCommand :: Text -> DynamoCmd a -> StateT TestState QC.Gen a
   in runStateT (evalMultiDslTest interpretDslCommand' emptyEvalState t) startTestState
 
 runProgramsWithState :: Map ProgramId (DynamoCmdM Queue a, Int)
@@ -282,13 +282,10 @@ runProgramsWithState :: Map ProgramId (DynamoCmdM Queue a, Int)
             -> QC.Gen (Map ProgramId a, TestState)
 runProgramsWithState programs startTestState =
   let startExecutionTree =
-        ExecutionTree $
-        Map.singleton "node" $ (Map.mapKeys unProgramId $ fst <$> programs)
-      mapResult (ExecutionTree t) = Map.foldr accOuter Map.empty t
+        ExecutionTree $ (Map.mapKeys unProgramId $ fst <$> programs)
+      mapResult (ExecutionTree t) = Map.foldrWithKey accInner Map.empty t
   in do over _1 mapResult <$> (runPrograms' startExecutionTree startTestState)
   where
-    accOuter :: Map Text (ThreadResult a) -> Map ProgramId a -> Map ProgramId a
-    accOuter v z = Map.foldrWithKey accInner z v
     accInner :: Text -> ThreadResult a -> Map ProgramId a -> Map ProgramId a
     accInner threadName (ThreadResult a) m =
       Map.insert (ProgramId threadName) a m
@@ -301,7 +298,7 @@ runPrograms programs = runProgramsWithState programs emptyTestState
 
 runProgramGenerator :: ProgramId -> DynamoCmdM Queue a -> TestState -> QC.Gen a
 runProgramGenerator (ProgramId programId) p initialTestState =
-  fst <$> runStateT (evalDslTest interpretDslCommand programId programId p) initialTestState
+  fst <$> runStateT (evalDslTest interpretDslCommand programId p) initialTestState
 
 runProgram :: ProgramId -> DynamoCmdM Queue a -> TestState -> (a, LoopState a)
 runProgram = error "todo runProgram"
