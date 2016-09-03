@@ -12,6 +12,8 @@
 
 module DynamoDbEventStore.DynamoCmdInterpreter
   ( TestState(..)
+  , LogEvent(..)
+  , ProgramId(..)
   , runPrograms
   , runProgramsWithState
   , runProgramGenerator
@@ -20,9 +22,8 @@ module DynamoDbEventStore.DynamoCmdInterpreter
   , execProgram
   , execProgramUntilIdle
   , LoopState(..)
-  , loopStateDodgerState
   , testState
-  , iopCounts
+  , testStateLog
   , IopsCategory(..)
   , IopsOperation(..)
   ) where
@@ -51,15 +52,19 @@ data LoopState r = LoopState
   , _loopStateDodgerState :: EvalState
   }
 
+data LogEvent =
+  LogEventText LogLevel Text
+  | LogEventIops IopsCategory IopsOperation ProgramId Int
+  deriving (Show)
+
 data TestState = TestState
-  { _testStateDynamo    :: MemDb.InMemoryDynamoTable
-  , _testStateCache     :: MemCache.Caches
-  , _testStateLog       :: Seq Text
-  , _testStateIopCounts :: IopsTable
-  } -- deriving (Eq)
+  { _testStateDynamo :: MemDb.InMemoryDynamoTable
+  , _testStateCache  :: MemCache.Caches
+  , _testStateLog    :: Seq LogEvent
+  }
 
 emptyTestState :: TestState
-emptyTestState = TestState MemDb.emptyDynamoTable MemCache.emptyCache mempty mempty
+emptyTestState = TestState MemDb.emptyDynamoTable MemCache.emptyCache mempty
 
 data IopsCategory
   = UnpagedRead
@@ -75,25 +80,18 @@ data IopsOperation
   | IopsWrite
   deriving (Eq, Show, Ord)
 
-type IopsTable = Map (IopsCategory, IopsOperation, ProgramId) Int
-
 $(makeFields ''LoopState)
-
-$(makeLenses ''LoopState)
 
 $(makeFields ''TestState)
 
 $(makeLenses ''TestState)
 
 addIops
-  :: (MonadState s m, HasIopCounts s IopsTable, MonadReader ProgramId m)
+  :: (MonadState TestState m, MonadReader ProgramId m)
   => IopsCategory -> IopsOperation -> Int -> m ()
 addIops category operation i = do
   (programId :: ProgramId) <- ask
-  iopCounts %= Map.insertWith (+) (category, operation, programId) i
-
-instance HasIopCounts (LoopState a) IopsTable where
-  iopCounts = loopStateTestState . testStateIopCounts
+  addLogEvent $ LogEventIops category operation programId i
 
 instance P.Show TestState where
   show a =
@@ -128,13 +126,19 @@ getGetReadResultCmd key n = do
   db <- use (testStateDynamo)
   return $ n $ MemDb.readDb key db
 
-addLog
+addLogEvent
   :: (MonadReader ProgramId m, MonadState TestState m)
-  => Text -> m ()
-addLog m = do
-  (ProgramId programId) <- ask
-  let appendMessage = flip (|>) (programId <> ": " <> m)
+  => LogEvent -> m ()
+addLogEvent evt = do
+  let appendMessage = flip (|>) evt
   testStateLog %= appendMessage
+
+addTextLog
+  :: (MonadReader ProgramId m, MonadState TestState m)
+  => LogLevel -> Text -> m ()
+addTextLog level m = do
+  (ProgramId programId) <- ask
+  addLogEvent $ LogEventText level (programId <> ": " <> m)
 
 potentialFailure
   :: RandomFailure m
@@ -154,18 +158,18 @@ runWriteToDynamoCmd
   -> m n
 runWriteToDynamoCmd key values version next = potentialFailure 25 onFailure onSuccess
   where
-    onFailure = addLog "Random write failure" $> next DynamoWriteFailure
+    onFailure = addTextLog Debug "Random write failure" $> next DynamoWriteFailure
     onSuccess = do
       addIops TableWrite IopsWrite 1
       (result, newDb) <- MemDb.writeDb key values version <$> use testStateDynamo
       case result of
-        DynamoWriteWrongVersion -> addLog $ "Wrong version writing: " ++ show version
+        DynamoWriteWrongVersion -> addTextLog Debug $ "Wrong version writing: " ++ show version
         DynamoWriteSuccess ->
-          addLog $
+          addTextLog Debug $
           "Performing write: " ++
           show key ++ " " ++ show values ++ " " ++ show version
         DynamoWriteFailure ->
-          addLog $
+          addTextLog Debug $
           "Write failure: " ++ show key ++ " " ++ show values ++ " " ++ show version
       testStateDynamo .= newDb
       return $ next result
@@ -190,7 +194,7 @@ runUpdateItemCmd
   => DynamoKey -> HashMap Text ValueUpdate -> (Bool -> n) -> m n
 runUpdateItemCmd key values next = potentialFailure 25 onFailure onSuccess
   where
-    onFailure = addLog "Random updateItem failure" $> next False
+    onFailure = addTextLog Debug "Random updateItem failure" $> next False
     onSuccess = do
       addIops TableWrite IopsWrite 1
       newDb <- MemDb.updateDb key values <$> use testStateDynamo
@@ -249,7 +253,7 @@ interpretDslCommand threadName cmd =
     go (CacheInsert' c k v n) = runInsertCacheCmd c k v n
     go (CacheLookup' c k n) = runLookupCacheCmd c k n
     go (Wait' _milliseconds n) = return n
-    go (Log' _logLevel msg n) = (addLog msg >> return n)
+    go (Log' _logLevel msg n) = (addTextLog Debug msg >> return n)
 
 runStateProgram :: ProgramId
                 -> DynamoCmdM Queue a

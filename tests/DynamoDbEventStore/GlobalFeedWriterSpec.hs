@@ -15,6 +15,7 @@ import           Control.Monad.Random
 import           Control.Monad.State
 import qualified Data.Aeson                              as Aeson
 import qualified Data.ByteString.Lazy                    as BL
+import           Data.Char                               (isAlpha)
 import           Data.Either.Combinators
 import           Data.Foldable                           hiding (concat)
 import           Data.List.NonEmpty                      (NonEmpty (..))
@@ -692,22 +693,34 @@ streamLinkTests =
     , linkAssert pastEndOfFeedForward streamResultPrevious' Nothing
   ]
 
+addUpIops :: Seq LogEvent -> Map (IopsCategory, IopsOperation, Text) Int
+addUpIops = foldr' acc Map.empty
+  where
+    acc (LogEventIops category operation ProgramId{..} i) s =
+      let
+        normalizedProgramId = T.filter isAlpha unProgramId
+        key = (category, operation, normalizedProgramId)
+      in Map.alter (appendValue i) key s
+    acc _ s = s
+    appendValue a Nothing = Just a
+    appendValue a (Just b) = Just (a + b)
+
 whenIndexing1000ItemsIopsIsMinimal :: Assertion
 whenIndexing1000ItemsIopsIsMinimal =
   let
     afterIndexState = execProgramUntilIdle "indexer" globalFeedWriterProgram (testStateItems 1000)
     afterReadState = execProgramUntilIdle "globalFeedReader" (pageThroughGlobalFeed 10) afterIndexState
     expectedWriteState = Map.fromList [
-      ((UnpagedRead,IopsScanUnpaged,"indexer"),1000)
-     ,((TableRead,IopsGetItem,"indexer"),1019)
-     ,((TableRead,IopsGetItem,"globalFeedReader"),232)
-     ,((TableRead,IopsQuery,"indexer"),1984)
+      ((UnpagedRead,IopsScanUnpaged,"indexer"),1961)
+     ,((TableRead,IopsGetItem,"indexer"),1985)
+     ,((TableRead,IopsGetItem,"globalFeedReader"),233)
+     ,((TableRead,IopsQuery,"indexer"),2945)
      ,((TableRead,IopsQuery,"globalFeedReader"),2184)
      ,((TableRead,IopsQuery,"writeEvents"),999)
-     ,((TableWrite,IopsWrite,"indexer"),1003)
+     ,((TableWrite,IopsWrite,"indexer"),1031)
      ,((TableWrite,IopsWrite,"writeGlobalFeed"),15)
      ,((TableWrite,IopsWrite,"writeEvents"),1000)]
-  in assertEqual "Should be small iops" expectedWriteState (view iopCounts afterReadState)
+  in assertEqual "Should be small iops" expectedWriteState (addUpIops (afterReadState ^. testStateLog))
 
 errorThrownIfTryingToWriteAnEventInAMultipleGap :: Assertion
 errorThrownIfTryingToWriteAnEventInAMultipleGap =

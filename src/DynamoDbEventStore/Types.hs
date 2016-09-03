@@ -1,8 +1,8 @@
-{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings          #-}
-{-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE RecordWildCards            #-}
+{-# LANGUAGE TemplateHaskell            #-}
 module DynamoDbEventStore.Types
   (DynamoKey(..)
   , DynamoValues
@@ -21,14 +21,14 @@ module DynamoDbEventStore.Types
 where
 
 import           BasicPrelude
-import           Network.AWS.DynamoDB
-import           Data.Time.Clock
 import           Data.Aeson
-import qualified Data.Serialize            as Serialize
+import qualified Data.HashMap.Strict  as HM
+import qualified Data.Serialize       as Serialize
+import           Data.Time.Clock
+import qualified Data.UUID            as UUID
 import           GHC.Generics
-import qualified Data.UUID                 as UUID
-import qualified Test.QuickCheck           as QC
-import qualified Data.HashMap.Strict       as HM
+import           Network.AWS.DynamoDB
+import qualified Test.QuickCheck      as QC
 import           TextShow.TH
 
 data DynamoKey = DynamoKey {
@@ -55,6 +55,7 @@ data LogLevel =
   Info |
   Warn |
   Error
+  deriving (Eq, Show)
 
 data ValueUpdate =
   ValueUpdateSet AttributeValue
