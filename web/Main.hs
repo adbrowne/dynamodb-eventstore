@@ -1,39 +1,37 @@
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE FlexibleContexts    #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE RankNTypes          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Main where
 
-import BasicPrelude
-import Control.Concurrent
-import Control.Concurrent.STM.TQueue
-import Control.Lens
-import Control.Monad.Except
-import Control.Monad.State
-import Control.Monad.Trans.AWS
-import qualified Control.Monad.Trans.AWS as AWS
-import qualified Data.Text as T
-import DynamoDbEventStore.AmazonkaImplementation
-import DynamoDbEventStore.EventStoreActions
-import DynamoDbEventStore.EventStoreCommands
-import DynamoDbEventStore.GlobalFeedWriter
-       (EventStoreActionError(..))
-import qualified DynamoDbEventStore.GlobalFeedWriter
-       as GlobalFeedWriter
-import DynamoDbEventStore.Webserver
-       (EventStoreActionRunner(..), app, realRunner)
+import           BasicPrelude
+import           Control.Concurrent
+import           Control.Concurrent.STM.TQueue
+import           Control.Lens
+import           Control.Monad.Except
+import           Control.Monad.State
+import           Control.Monad.Trans.AWS
+import qualified Control.Monad.Trans.AWS                   as AWS
+import qualified Data.Text                                 as T
+import           DynamoDbEventStore.AmazonkaImplementation
+import           DynamoDbEventStore.EventStoreActions
+import           DynamoDbEventStore.EventStoreCommands
+import           DynamoDbEventStore.GlobalFeedWriter       (EventStoreActionError (..))
+import qualified DynamoDbEventStore.GlobalFeedWriter       as GlobalFeedWriter
+import           DynamoDbEventStore.Webserver              (EventStoreActionRunner (..),
+                                                            app, realRunner)
 
-import Network.AWS.DynamoDB
-import Network.Wai.Handler.Warp
-import Options.Applicative as Opt
-import System.Exit
-import System.IO (stdout)
-import System.Metrics hiding (Value)
-import qualified System.Metrics.Counter as Counter
-import qualified System.Metrics.Distribution as Distribution
-import System.Remote.Monitoring
-import Web.Scotty
+import           Network.AWS.DynamoDB
+import           Network.Wai.Handler.Warp
+import           Options.Applicative                       as Opt
+import           System.Exit
+import           System.IO                                 (stdout)
+import           System.Metrics                            hiding (Value)
+import qualified System.Metrics.Counter                    as Counter
+import qualified System.Metrics.Distribution               as Distribution
+import           System.Remote.Monitoring
+import           Web.Scotty
 
 runDynamoLocal :: RuntimeEnvironment
                -> MyAwsM a
@@ -79,10 +77,10 @@ buildActionRunner runner =
     runWithState p = runner $ runExceptT $ evalStateT p GlobalFeedWriter.emptyGlobalFeedWriterState
 
 data Config = Config
-  { configTableName :: String
-  , configPort :: Int
+  { configTableName     :: String
+  , configPort          :: Int
   , configLocalDynamoDB :: Bool
-  , configCreateTable :: Bool
+  , configCreateTable   :: Bool
   }
 
 config :: Parser Config
@@ -111,7 +109,7 @@ toExceptT' p = do
     Right r -> return r
 
 toApplicationError
-  :: forall a. 
+  :: forall a.
      (MyAwsM a -> IO (Either InterpreterError a))
   -> (MyAwsM a -> ExceptT ApplicationError IO a)
 toApplicationError runner a = do
@@ -140,14 +138,15 @@ printError
 printError err = putStrLn $ "Error: " <> show err
 
 forkGlobalFeedWriter
-  :: MonadEsDslWithFork m
-  => (forall a. m a -> ExceptT InterpreterError IO a) -> IO ()
+  :: (forall a. MyAwsM a -> ExceptT InterpreterError IO a) -> IO ()
 forkGlobalFeedWriter runner =
   forkAndSupervise "GlobalFeedWriter" $
-  do result <- 
+  do
+    pageKeyPositionCache <- newCacheAws 10
+    result <-
        runExceptT $
-       runner $ runExceptT $ evalStateT GlobalFeedWriter.main GlobalFeedWriter.emptyGlobalFeedWriterState
-     case result of
+       runner $ runExceptT $ evalStateT (GlobalFeedWriter.main pageKeyPositionCache) GlobalFeedWriter.emptyGlobalFeedWriterState
+    case result of
        (Left err) -> printError (ApplicationErrorInterpreter err)
        (Right (Left err)) -> printError (ApplicationErrorGlobalFeedWriter err)
        _ -> return ()
@@ -185,7 +184,7 @@ startMetrics = do
   where
     createPair store name = do
       theCounter <- createCounter ("dynamodb-eventstore." <> name) store
-      theDistribution <- 
+      theDistribution <-
         createDistribution ("dynamodb-eventstore." <> name <> "_ms") store
       return $
         MetricLogsPair
@@ -211,7 +210,7 @@ start parsedConfig = do
         , _runtimeEnvironmentTableName = tableName
         }
   let runner p = toExceptT' $ interperter runtimeEnvironment p
-  tableAlreadyExists <- 
+  tableAlreadyExists <-
     toApplicationError (interperter runtimeEnvironment) $ doesTableExist tableName
   let shouldCreateTable = configCreateTable parsedConfig
   when

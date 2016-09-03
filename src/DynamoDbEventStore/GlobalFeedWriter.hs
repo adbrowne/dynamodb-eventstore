@@ -14,6 +14,7 @@ module DynamoDbEventStore.GlobalFeedWriter (
   getLatestStoredPage,
   emptyGlobalFeedWriterState,
   GlobalFeedWriterState(..),
+  PageKeyPosition(..),
   DynamoCmdWithErrors,
   GlobalFeedPosition(..),
   EventStoreActionError(..)) where
@@ -361,8 +362,13 @@ forkChild' :: (MonadEsDslWithFork m) => m () -> StateT GlobalFeedWriterState (Ex
 
 forkChild' c = lift $ lift $ forkChild c
 
-main :: MonadEsDslWithFork m => StateT GlobalFeedWriterState (ExceptT EventStoreActionError m) ()
-main = forever $ do
+data PageKeyPosition =
+  PageKeyPositionLastComplete
+  | PageKeyPositionLastVerified
+  deriving (Eq, Ord, Show)
+
+main :: MonadEsDslWithFork m => CacheType m PageKeyPosition PageKey -> StateT GlobalFeedWriterState (ExceptT EventStoreActionError m) ()
+main _pagePositionCache = forever $ do
   markFeedEntryPageQueue <- newQueue
   let startMarkFeedEntryThread = forkChild' (markEventAsPagedThread markFeedEntryPageQueue)
   replicateM_ 25 startMarkFeedEntryThread

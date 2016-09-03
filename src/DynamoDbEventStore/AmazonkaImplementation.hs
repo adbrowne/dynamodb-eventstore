@@ -297,7 +297,7 @@ queryTableAws direction streamId limit exclusiveStartKey = getBackward
 
 newtype InMemoryCache k v = InMemoryCache (TVar (LRU.LRU k v))
 
-newCacheAws :: Ord k => Integer -> MyAwsM (InMemoryCache k v)
+newCacheAws :: (MonadIO m, Ord k) => Integer -> m (InMemoryCache k v)
 newCacheAws size = do
   let cache = LRU.newLRU (Just size)
   tvarCache <- liftIO $ newTVarIO cache

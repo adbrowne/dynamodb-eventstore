@@ -13,7 +13,6 @@ import           Control.Monad.Except
 import           Control.Monad.Loops
 import           Control.Monad.Random
 import           Control.Monad.State
-import           DodgerBlue.Testing
 import qualified Data.Aeson                              as Aeson
 import qualified Data.ByteString.Lazy                    as BL
 import           Data.Either.Combinators
@@ -30,6 +29,7 @@ import qualified Data.Text.Encoding                      as T
 import qualified Data.Text.Lazy.Encoding                 as TL
 import           Data.Time.Format
 import qualified Data.UUID                               as UUID
+import           DodgerBlue.Testing
 import           GHC.Natural
 import qualified Pipes.Prelude                           as P
 import           Test.Tasty
@@ -38,12 +38,27 @@ import           Test.Tasty.QuickCheck                   (testProperty, (===))
 import qualified Test.Tasty.QuickCheck                   as QC
 
 import           DynamoDbEventStore.DynamoCmdInterpreter
-import           DynamoDbEventStore.Types
+import           DynamoDbEventStore.EventStoreActions    (EventEntry (..), EventStartPosition (..),
+                                                          EventTime (..),
+                                                          EventType (..),
+                                                          EventWriteResult (..),
+                                                          FeedDirection (..),
+                                                          GlobalFeedPosition (..),
+                                                          GlobalStartPosition (..),
+                                                          GlobalStreamResult (..),
+                                                          PostEventRequest (..),
+                                                          ReadAllRequest (..),
+                                                          ReadEventRequest (..),
+                                                          ReadStreamRequest (..),
+                                                          StreamOffset,
+                                                          StreamResult (..),
+                                                          recordedEventProducerBackward,
+                                                          unEventTime)
 import qualified DynamoDbEventStore.EventStoreActions
-import           DynamoDbEventStore.EventStoreActions (PostEventRequest(..),EventEntry(..),EventWriteResult(..),EventStartPosition(..),FeedDirection(..),StreamResult(..),GlobalStartPosition(..),GlobalFeedPosition(..),GlobalStreamResult(..),StreamOffset,ReadStreamRequest(..),ReadAllRequest(..),EventType(..),EventTime(..),unEventTime,ReadEventRequest(..),recordedEventProducerBackward)
 import           DynamoDbEventStore.EventStoreCommands
 import           DynamoDbEventStore.GlobalFeedWriter     (EventStoreActionError (..))
 import qualified DynamoDbEventStore.GlobalFeedWriter     as GlobalFeedWriter
+import           DynamoDbEventStore.Types
 
 postEventRequestProgram :: MonadEsDsl m => PostEventRequest -> m (Either EventStoreActionError EventWriteResult)
 postEventRequestProgram = runExceptT . DynamoDbEventStore.EventStoreActions.postEventRequestProgram
@@ -54,7 +69,7 @@ getReadEventRequestProgram = runExceptT . DynamoDbEventStore.EventStoreActions.g
 getReadStreamRequestProgram :: MonadEsDsl m => ReadStreamRequest -> m (Either EventStoreActionError (Maybe StreamResult))
 getReadStreamRequestProgram = runExceptT . DynamoDbEventStore.EventStoreActions.getReadStreamRequestProgram
 globalFeedWriterProgram :: MonadEsDslWithFork m => m (Either EventStoreActionError ())
-globalFeedWriterProgram = runExceptT (evalStateT GlobalFeedWriter.main GlobalFeedWriter.emptyGlobalFeedWriterState)
+globalFeedWriterProgram = runExceptT (evalStateT (newCache 10 >>= GlobalFeedWriter.main) GlobalFeedWriter.emptyGlobalFeedWriterState)
 
 type UploadItem = (Text,Int64,NonEmpty EventEntry)
 newtype UploadList = UploadList [UploadItem] deriving (Show)

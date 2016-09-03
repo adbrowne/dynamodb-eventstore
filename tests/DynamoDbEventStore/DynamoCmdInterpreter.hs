@@ -13,6 +13,7 @@
 module DynamoDbEventStore.DynamoCmdInterpreter
   ( TestState(..)
   , runPrograms
+  , runProgramsWithState
   , runProgramGenerator
   , runProgram
   , emptyTestState
@@ -269,20 +270,22 @@ execProgramUntilIdle = execProgram
 
 runPrograms'
   :: ExecutionTree (TestProgram DynamoCmd a)
+  -> TestState
   -> QC.Gen (ExecutionTree (ThreadResult a), TestState)
-runPrograms' t =
+runPrograms' t startTestState =
   let interpretDslCommand' =
         interpretDslCommand :: Text -> Text -> DynamoCmd a -> StateT TestState QC.Gen a
-  in runStateT (evalMultiDslTest interpretDslCommand' emptyEvalState t) emptyTestState
+  in runStateT (evalMultiDslTest interpretDslCommand' emptyEvalState t) startTestState
 
-runPrograms :: Map ProgramId (DynamoCmdM Queue a, Int)
+runProgramsWithState :: Map ProgramId (DynamoCmdM Queue a, Int)
+            -> TestState
             -> QC.Gen (Map ProgramId a, TestState)
-runPrograms programs =
+runProgramsWithState programs startTestState =
   let startExecutionTree =
         ExecutionTree $
         Map.singleton "node" $ (Map.mapKeys unProgramId $ fst <$> programs)
       mapResult (ExecutionTree t) = Map.foldr accOuter Map.empty t
-  in do over _1 mapResult <$> (runPrograms' startExecutionTree)
+  in do over _1 mapResult <$> (runPrograms' startExecutionTree startTestState)
   where
     accOuter :: Map Text (ThreadResult a) -> Map ProgramId a -> Map ProgramId a
     accOuter v z = Map.foldrWithKey accInner z v
@@ -291,6 +294,10 @@ runPrograms programs =
       Map.insert (ProgramId threadName) a m
     accInner _threadName ThreadBlocked m = m
     accInner _threadName ThreadIdle m = m
+
+runPrograms :: Map ProgramId (DynamoCmdM Queue a, Int)
+            -> QC.Gen (Map ProgramId a, TestState)
+runPrograms programs = runProgramsWithState programs emptyTestState
 
 runProgramGenerator :: ProgramId -> DynamoCmdM Queue a -> TestState -> QC.Gen a
 runProgramGenerator (ProgramId programId) p initialTestState =
