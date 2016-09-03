@@ -15,7 +15,6 @@ module DynamoDbEventStore.DynamoCmdInterpreter
   , runPrograms
   , runProgramsWithState
   , runProgramGenerator
-  , runProgram
   , emptyTestState
   , evalProgram
   , execProgram
@@ -299,6 +298,3 @@ runPrograms programs = runProgramsWithState programs emptyTestState
 runProgramGenerator :: ProgramId -> DynamoCmdM Queue a -> TestState -> QC.Gen a
 runProgramGenerator (ProgramId programId) p initialTestState =
   fst <$> runStateT (evalDslTest interpretDslCommand programId p) initialTestState
-
-runProgram :: ProgramId -> DynamoCmdM Queue a -> TestState -> (a, LoopState a)
-runProgram = error "todo runProgram"
