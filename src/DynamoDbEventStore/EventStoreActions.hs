@@ -1,6 +1,4 @@
-{-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE FlexibleContexts           #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE RankNTypes                 #-}
@@ -42,26 +40,17 @@ import           Control.Monad.Except
 import qualified Data.Aeson                            as Aeson
 import qualified Data.ByteString.Lazy                  as BL
 import           Data.Either.Combinators
-import qualified Data.HashMap.Strict                   as HM
 import           Data.List.NonEmpty                    (NonEmpty (..))
 import qualified Data.List.NonEmpty                    as NonEmpty
-import qualified Data.Serialize                        as Serialize
-import qualified Data.Text                             as T
-import qualified Data.Text.Lazy                        as TL
-import qualified Data.Text.Lazy.Encoding               as TL
-import           Data.Time.Calendar
-import           Data.Time.Clock
-import           Data.Time.Format
 import qualified DynamoDbEventStore.Constants          as Constants
+import           DynamoDbEventStore.EventStoreQueries
+import           DynamoDbEventStore.StreamEntry (StreamEntry(..), dynamoReadResultToStreamEntry, EventEntry(..),eventTypeToText, EventType(..),EventTime(..),streamEntryToValues,unEventTime)
 import           DynamoDbEventStore.EventStoreCommands hiding (readField)
-import           DynamoDbEventStore.Types
 import qualified DynamoDbEventStore.EventStoreCommands as EventStoreCommands
-import           DynamoDbEventStore.GlobalFeedWriter   (EventStoreActionError (..),
-                                                        GlobalFeedPosition (..),
-                                                        DynamoCmdWithErrors,
+import           DynamoDbEventStore.GlobalFeedWriter   (DynamoCmdWithErrors, 
                                                         getPageDynamoKey)
 import qualified DynamoDbEventStore.GlobalFeedWriter   as GlobalFeedWriter
-import           GHC.Generics
+import           DynamoDbEventStore.Types
 import           GHC.Natural
 import           Network.AWS.DynamoDB
 import           Pipes                                 hiding (ListT, runListT)
@@ -70,7 +59,6 @@ import           Safe
 import           Safe.Exact
 import qualified Test.QuickCheck                       as QC
 import           Test.QuickCheck.Instances             ()
-import           TextShow                              hiding (fromString)
 
 -- High level event store actions
 -- should map almost one to one with http interface
@@ -80,44 +68,8 @@ data EventStoreAction =
   ReadEvent ReadEventRequest |
   ReadAll ReadAllRequest deriving (Show)
 
-newtype EventType = EventType Text deriving (Show, Eq, Ord, IsString)
-newtype EventTime = EventTime UTCTime deriving (Show, Eq, Ord)
-unEventTime :: EventTime -> UTCTime
-unEventTime (EventTime utcTime) = utcTime
-
-eventTypeToText :: EventType -> Text
-eventTypeToText (EventType t) = t
-
-data EventEntry = EventEntry {
-  eventEntryData    :: BL.ByteString,
-  eventEntryType    :: EventType,
-  eventEntryEventId :: EventId,
-  eventEntryCreated :: EventTime,
-  eventEntryIsJson  :: Bool
-} deriving (Show, Eq, Ord, Generic)
-
-instance Serialize.Serialize EventEntry
-
-newtype NonEmptyWrapper a = NonEmptyWrapper (NonEmpty a)
-instance Serialize.Serialize a => Serialize.Serialize (NonEmptyWrapper a) where
-  put (NonEmptyWrapper xs) = Serialize.put (NonEmpty.toList xs)
-  get = do
-    xs <- Serialize.get
-    maybe (fail "NonEmptyWrapper: found an empty list") (return . NonEmptyWrapper) (NonEmpty.nonEmpty xs)
-
-instance Serialize.Serialize EventTime where
-  put (EventTime t) = (Serialize.put . formatTime defaultTimeLocale "%s%Q") t
-  get = do
-    textValue <- Serialize.get
-    time <- parseTimeM False defaultTimeLocale "%s%Q" textValue
-    return $ EventTime time
-
 data EventStartPosition = EventStartHead | EventStartPosition Int64 deriving (Show, Eq)
 data GlobalStartPosition = GlobalStartHead | GlobalStartPosition GlobalFeedPosition deriving (Show, Eq)
-
-instance Serialize.Serialize EventType where
-  put (EventType t) = (Serialize.put . encodeUtf8) t
-  get = EventType . decodeUtf8 <$> Serialize.get
 
 type StreamOffset = (FeedDirection, EventStartPosition, Natural)
 
@@ -149,25 +101,6 @@ data PostEventRequest = PostEventRequest {
    perExpectedVersion :: Maybe Int64,
    perEvents          :: NonEmpty EventEntry
 } deriving (Show)
-
-newtype SecondPrecisionUtcTime = SecondPrecisionUtcTime UTCTime
-
-instance QC.Arbitrary EventTime where
-  arbitrary =
-    EventTime <$> QC.arbitrary
-
-instance QC.Arbitrary SecondPrecisionUtcTime where
-  arbitrary =
-    SecondPrecisionUtcTime <$> (UTCTime
-     <$> (QC.arbitrary  :: QC.Gen Day)
-     <*> (secondsToDiffTime <$> QC.choose (0, 86400)))
-
-instance QC.Arbitrary EventEntry where
-  arbitrary = EventEntry <$> (TL.encodeUtf8 . TL.pack <$> QC.arbitrary)
-                         <*> (EventType . fromString <$> QC.arbitrary)
-                         <*> QC.arbitrary
-                         <*> QC.arbitrary
-                         <*> QC.arbitrary
 
 instance QC.Arbitrary PostEventRequest where
   arbitrary = PostEventRequest <$> (fromString <$> QC.arbitrary)
@@ -215,9 +148,6 @@ ensureExpectedVersion (DynamoKey streamId expectedEventNumber) = do
       eventCount <- GlobalFeedWriter.entryEventCount readResult
       return $ eventNumber + fromIntegral eventCount - 1 == expectedEventNumber
 
-dynamoReadResultToEventNumber :: DynamoReadResult -> Int64
-dynamoReadResultToEventNumber (DynamoReadResult (DynamoKey _key eventNumber) _version _values) = eventNumber
-
 dynamoReadResultToEventId :: DynamoCmdWithErrors q m => DynamoReadResult -> m EventId
 dynamoReadResultToEventId readResult = do
   recordedEvents <- toRecordedEventBackward readResult
@@ -232,10 +162,13 @@ postEventRequestProgram (PostEventRequest sId ev eventEntries) = do
                            Right dynamoKey -> writeMyEvent dynamoKey
   where
     writeMyEvent :: (DynamoCmdWithErrors q m) => DynamoKey -> m EventWriteResult
-    writeMyEvent dynamoKey = do
-      let values = HM.singleton Constants.pageBodyKey (set avB (Just ((Serialize.encode . NonEmptyWrapper) eventEntries)) attributeValue) &
-                   HM.insert Constants.needsPagingKey (set avS (Just "True") attributeValue) &
-                   HM.insert Constants.eventCountKey (set avN (Just ((showt . length) eventEntries)) attributeValue)
+    writeMyEvent dynamoKey@DynamoKey{..} = do
+      let streamEntry = StreamEntry {
+            streamEntryStreamId = StreamId sId,
+            streamEntryFirstEventNumber = dynamoKeyEventNumber,
+            streamEntryEventEntries = eventEntries,
+            streamEntryNeedsPaging = True }
+      let values = streamEntryToValues streamEntry
       writeResult <- GlobalFeedWriter.dynamoWriteWithRetry dynamoKey values 0
       return $ toEventResult writeResult
     getDynamoKey :: (DynamoCmdWithErrors q m) => Text -> Maybe Int64 -> EventId -> m (Either EventWriteResult DynamoKey)
@@ -262,18 +195,11 @@ postEventRequestProgram (PostEventRequest sId ev eventEntries) = do
     toEventResult DynamoWriteFailure = WriteError
     toEventResult DynamoWriteWrongVersion = EventExists
 
-binaryDeserialize :: (MonadError EventStoreActionError m, Serialize.Serialize a) => DynamoKey -> ByteString -> m a
-binaryDeserialize key x = do
-  let value = Serialize.decode x
-  case value of Left err    -> throwError (EventStoreActionErrorBodyDecode key err)
-                Right v     -> return v
-
 toRecordedEvent :: (DynamoCmdWithErrors q m) => DynamoReadResult -> m (NonEmpty RecordedEvent)
-toRecordedEvent (DynamoReadResult key@(DynamoKey dynamoHashKey firstEventNumber) _version values) = do
-  eventBody <- readField Constants.pageBodyKey avB values
-  let streamId = T.drop (T.length Constants.streamDynamoKeyPrefix) dynamoHashKey
-  NonEmptyWrapper eventEntries <- binaryDeserialize key eventBody
-  let eventEntriesWithEventNumber = NonEmpty.zip (firstEventNumber :| [firstEventNumber + 1 ..]) eventEntries
+toRecordedEvent readResult@(DynamoReadResult (DynamoKey _dynamoHashKey firstEventNumber) _version _values) = do
+  StreamEntry{..} <- dynamoReadResultToStreamEntry readResult
+  let eventEntriesWithEventNumber = NonEmpty.zip (firstEventNumber :| [firstEventNumber + 1 ..]) streamEntryEventEntries
+  let (StreamId streamId) = streamEntryStreamId
   let buildEvent (eventNumber, EventEntry{..}) = RecordedEvent streamId eventNumber (BL.toStrict eventEntryData) (eventTypeToText eventEntryType) (unEventTime eventEntryCreated) eventEntryEventId eventEntryIsJson
   let recordedEvents = buildEvent <$> eventEntriesWithEventNumber
   return recordedEvents
@@ -282,34 +208,10 @@ toRecordedEventBackward :: (DynamoCmdWithErrors q m) => DynamoReadResult -> m (N
 toRecordedEventBackward readResult = NonEmpty.reverse <$> toRecordedEvent readResult
 
 dynamoReadResultProducerBackward :: DynamoCmdWithErrors q m => StreamId -> Maybe Int64 -> Natural -> Producer DynamoReadResult m ()
-dynamoReadResultProducerBackward (StreamId streamId) lastEvent batchSize = do
-  (firstBatch :: [DynamoReadResult]) <- lift $ queryTable QueryDirectionBackward (Constants.streamDynamoKeyPrefix <> streamId) batchSize lastEvent
-  yieldResultsAndLoop firstBatch
-  where
-    yieldResultsAndLoop :: DynamoCmdWithErrors q m => [DynamoReadResult] -> Producer DynamoReadResult m ()
-    yieldResultsAndLoop [] = return ()
-    yieldResultsAndLoop [readResult] = do
-      yield readResult
-      let lastEventNumber = dynamoReadResultToEventNumber readResult
-      dynamoReadResultProducerBackward (StreamId streamId) (Just lastEventNumber) batchSize
-    yieldResultsAndLoop (x:xs) = do
-      yield x
-      yieldResultsAndLoop xs
+dynamoReadResultProducerBackward = readStreamProducer QueryDirectionBackward
 
 dynamoReadResultProducerForward :: (DynamoCmdWithErrors q m) => StreamId -> Maybe Int64 -> Natural -> Producer DynamoReadResult m ()
-dynamoReadResultProducerForward (StreamId streamId) firstEvent batchSize = do
-  (firstBatch :: [DynamoReadResult]) <- lift $ queryTable QueryDirectionForward (Constants.streamDynamoKeyPrefix <> streamId) batchSize firstEvent
-  yieldResultsAndLoop firstBatch
-  where
-    yieldResultsAndLoop :: DynamoCmdWithErrors q m => [DynamoReadResult] -> Producer DynamoReadResult m ()
-    yieldResultsAndLoop [] = return ()
-    yieldResultsAndLoop [readResult] = do
-      yield readResult
-      let lastEventNumber = dynamoReadResultToEventNumber readResult
-      dynamoReadResultProducerForward (StreamId streamId) (Just lastEventNumber) batchSize
-    yieldResultsAndLoop (x:xs) = do
-      yield x
-      yieldResultsAndLoop xs
+dynamoReadResultProducerForward = readStreamProducer QueryDirectionForward
 
 readResultToRecordedEventBackwardPipe :: (DynamoCmdWithErrors q m) => Pipe DynamoReadResult RecordedEvent m ()
 readResultToRecordedEventBackwardPipe = forever $ do
@@ -479,7 +381,7 @@ getFirstPageBackward position@GlobalFeedPosition{..} = do
 
 getGlobalFeedBackward :: DynamoCmdWithErrors q m => Maybe GlobalFeedPosition -> Producer (GlobalFeedPosition, EventKey) m ()
 getGlobalFeedBackward Nothing = do
-  lastKnownPage <- lift GlobalFeedWriter.getLatestStoredPage
+  lastKnownPage <- lift GlobalFeedWriter.getLastFullPage
   lastItem <- lift $ P.last (getPageItemsForward lastKnownPage)
   let lastPosition = fst <$> lastItem
   maybe (return ()) (getGlobalFeedBackward . Just) lastPosition

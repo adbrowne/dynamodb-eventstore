@@ -17,6 +17,8 @@ module DynamoDbEventStore.Types
   , RecordedEvent(..)
   , EventId(..)
   , EventKey(..)
+  , EventStoreActionError(..)
+  , GlobalFeedPosition(..)
   , ValueUpdate(..))
 where
 
@@ -175,3 +177,30 @@ instance ToJSON EventKey where
     object [ "streamId"    .= streamId
            , "eventNumber" .= eventNumber
            ]
+
+data EventStoreActionError =
+  EventStoreActionErrorFieldMissing Text |
+  EventStoreActionErrorCouldNotReadEventCount (Maybe Text) |
+  EventStoreActionErrorJsonDecodeError String |
+  EventStoreActionErrorBodyDecode DynamoKey String |
+  EventStoreActionErrorEventDoesNotExist DynamoKey |
+  EventStoreActionErrorOnWritingPage PageKey |
+  EventstoreActionErrorCouldNotFindPreviousEntry DynamoKey |
+  EventStoreActionErrorCouldNotFindEvent EventKey |
+  EventStoreActionErrorInvalidGlobalFeedPosition GlobalFeedPosition |
+  EventStoreActionErrorInvalidGlobalFeedPage PageKey |
+  EventStoreActionErrorWriteFailure DynamoKey |
+  EventStoreActionErrorUpdateFailure DynamoKey |
+  EventStoreActionErrorHeadFieldMissing Text |
+  EventStoreActionErrorHeadFieldFormat Text Text
+  deriving (Show, Eq)
+
+data GlobalFeedPosition = GlobalFeedPosition {
+    globalFeedPositionPage   :: PageKey
+  , globalFeedPositionOffset :: Int
+} deriving (Show, Eq, Ord)
+
+instance QC.Arbitrary GlobalFeedPosition where
+  arbitrary = GlobalFeedPosition
+                <$> QC.arbitrary
+                <*> ((\(QC.Positive p) -> p) <$> QC.arbitrary)

@@ -20,6 +20,7 @@ module DynamoDbEventStore.EventStoreCommands(
   queryTable',
   updateItem',
   readField,
+  readExcept,
   Cache(..),
   MonadEsDsl(..),
   MonadEsDslWithFork(..),
@@ -218,3 +219,10 @@ instance MonadEsDsl m => MonadEsDsl (ExceptT e m) where
 
 readField :: (MonadError e m) => (Text -> e) -> Text -> Lens' AttributeValue (Maybe a) -> DynamoValues -> m a
 readField = readFieldGeneric
+
+readExcept :: (MonadError e m) => (Read a) => (Text -> e) -> Text -> m a
+readExcept err t =
+  let
+    parsed = BasicPrelude.readMay t
+  in case parsed of Nothing  -> throwError $ err t
+                    (Just a) -> return a
