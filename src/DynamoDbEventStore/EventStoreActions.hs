@@ -38,17 +38,19 @@ import           BasicPrelude
 import           Control.Lens                          hiding ((.=))
 import           Control.Monad.Except
 import qualified Data.Aeson                            as Aeson
+import qualified Data.Sequence                         as Seq
+import           Data.Foldable
 import qualified Data.ByteString.Lazy                  as BL
 import           Data.Either.Combinators
 import           Data.List.NonEmpty                    (NonEmpty (..))
 import qualified Data.List.NonEmpty                    as NonEmpty
 import qualified DynamoDbEventStore.Constants          as Constants
 import           DynamoDbEventStore.EventStoreQueries
+import           DynamoDbEventStore.GlobalFeedItem (readPage, GlobalFeedItem(..))
 import           DynamoDbEventStore.StreamEntry (StreamEntry(..), dynamoReadResultToStreamEntry, EventEntry(..),eventTypeToText, EventType(..),EventTime(..),streamEntryToValues,unEventTime)
 import           DynamoDbEventStore.EventStoreCommands hiding (readField)
 import qualified DynamoDbEventStore.EventStoreCommands as EventStoreCommands
-import           DynamoDbEventStore.GlobalFeedWriter   (DynamoCmdWithErrors, 
-                                                        getPageDynamoKey)
+import           DynamoDbEventStore.GlobalFeedWriter   (DynamoCmdWithErrors)
 import qualified DynamoDbEventStore.GlobalFeedWriter   as GlobalFeedWriter
 import           DynamoDbEventStore.Types
 import           GHC.Natural
@@ -132,10 +134,6 @@ data ReadAllRequest = ReadAllRequest {
 } deriving (Show)
 
 data EventWriteResult = WriteSuccess | WrongExpectedVersion | EventExists | WriteError deriving (Eq, Show)
-
-readField :: (MonadError EventStoreActionError m) => Text -> Lens' AttributeValue (Maybe a) -> DynamoValues -> m a
-readField =
-   EventStoreCommands.readField EventStoreActionErrorFieldMissing
 
 ensureExpectedVersion :: DynamoCmdWithErrors q m => DynamoKey -> m Bool
 ensureExpectedVersion (DynamoKey _streamId (-1)) = return True
@@ -330,38 +328,30 @@ getReadStreamRequestProgram (ReadStreamRequest streamId startEventNumber maxItem
     filterFirstEvent Nothing = P.filter (const True)
     filterFirstEvent (Just v) = P.filter ((>= v) . recordedEventNumber)
 
-feedEntryToEventKeys :: FeedEntry -> [EventKey]
-feedEntryToEventKeys FeedEntry { feedEntryStream = streamId, feedEntryNumber = eventNumber, feedEntryCount = entryCount } =
-  (\number -> EventKey(streamId, number)) <$> take entryCount [eventNumber..]
-
-jsonDecode :: (Aeson.FromJSON a, MonadError EventStoreActionError m) => ByteString -> m a
-jsonDecode a = eitherToError $ over _Left EventStoreActionErrorJsonDecodeError $ Aeson.eitherDecodeStrict a
-
-readPageKeys :: DynamoCmdWithErrors q m => DynamoReadResult -> m [EventKey]
-readPageKeys (DynamoReadResult _key _version values) = do
-   body <- readField Constants.pageBodyKey avB values
-   feedEntries <- jsonDecode body
-   return $ feedEntries >>= feedEntryToEventKeys
-
-readPage :: DynamoCmdWithErrors q m => PageKey -> m (Maybe [(GlobalFeedPosition,EventKey)])
-readPage page = do
-  result <- readFromDynamo (getPageDynamoKey page)
-  case result of Just x  -> Just <$> pageToEventKeys page x
-                 Nothing -> return Nothing
-
 getPagesBackward :: DynamoCmdWithErrors q m => PageKey -> Producer [(GlobalFeedPosition,EventKey)] m ()
 getPagesBackward (PageKey (-1)) = return ()
 getPagesBackward page = do
   result <- lift $ readPage page
-  _ <- case result of (Just entries) -> yield entries
+  _ <- case result of (Just entries) -> yield (globalFeedItemToEventKeys entries)
                       Nothing        -> lift $ throwError (EventStoreActionErrorInvalidGlobalFeedPage page)
   getPagesBackward (page - 1)
 
+feedEntryToEventKeys :: FeedEntry -> [EventKey]
+feedEntryToEventKeys FeedEntry { feedEntryStream = streamId, feedEntryNumber = eventNumber, feedEntryCount = entryCount } =
+  (\number -> EventKey(streamId, number)) <$> take entryCount [eventNumber..]
+
+globalFeedItemToEventKeys :: GlobalFeedItem -> [(GlobalFeedPosition, EventKey)]
+globalFeedItemToEventKeys GlobalFeedItem{..} =
+  let eventKeys = join $ feedEntryToEventKeys <$> toList globalFeedItemFeedEntries
+  in zip (GlobalFeedPosition globalFeedItemPageKey <$> [0..]) eventKeys
+
+{-
 pageToEventKeys :: DynamoCmdWithErrors q m => PageKey -> DynamoReadResult -> m [(GlobalFeedPosition, EventKey)]
 pageToEventKeys page entries = do
   pageKeys <- readPageKeys entries
   let pageKeysWithPosition = zip (GlobalFeedPosition page <$> [0..]) pageKeys
   return pageKeysWithPosition
+-}
 
 getPageItemsBackward :: DynamoCmdWithErrors q m => PageKey -> Producer (GlobalFeedPosition, EventKey) m ()
 getPageItemsBackward startPage =
@@ -373,7 +363,7 @@ getPageItemsBackward startPage =
 getFirstPageBackward :: DynamoCmdWithErrors q m => GlobalFeedPosition -> Producer (GlobalFeedPosition, EventKey) m ()
 getFirstPageBackward position@GlobalFeedPosition{..} = do
   items <- lift $ readPage globalFeedPositionPage
-  let itemsBeforePosition = items >>= takeExactMay (globalFeedPositionOffset + 1)
+  let itemsBeforePosition = (globalFeedItemToEventKeys <$> items) >>= takeExactMay (globalFeedPositionOffset + 1)
   maybe notFoundError yieldItemsInReverse itemsBeforePosition
   where
     notFoundError = lift $ throwError (EventStoreActionErrorInvalidGlobalFeedPosition position)
@@ -382,7 +372,8 @@ getFirstPageBackward position@GlobalFeedPosition{..} = do
 getGlobalFeedBackward :: DynamoCmdWithErrors q m => Maybe GlobalFeedPosition -> Producer (GlobalFeedPosition, EventKey) m ()
 getGlobalFeedBackward Nothing = do
   lastKnownPage <- lift GlobalFeedWriter.getLastFullPage
-  lastItem <- lift $ P.last (getPageItemsForward lastKnownPage)
+  let lastKnownPage' = fromMaybe (PageKey 0) lastKnownPage
+  lastItem <- lift $ P.last (getPageItemsForward lastKnownPage')
   let lastPosition = fst <$> lastItem
   maybe (return ()) (getGlobalFeedBackward . Just) lastPosition
 
@@ -392,7 +383,7 @@ getGlobalFeedBackward (Just (position@GlobalFeedPosition{..})) =
 getPagesForward :: (DynamoCmdWithErrors q m) => PageKey -> Producer [(GlobalFeedPosition,EventKey)] m ()
 getPagesForward startPage = do
   result <- lift $ readPage startPage
-  case result of (Just entries) -> yield entries >> getPagesForward (startPage + 1)
+  case result of (Just entries) -> yield (globalFeedItemToEventKeys entries) >> getPagesForward (startPage + 1)
                  Nothing        -> return ()
 
 getPageItemsForward :: (DynamoCmdWithErrors q m) => PageKey -> Producer (GlobalFeedPosition, EventKey) m ()

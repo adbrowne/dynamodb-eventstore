@@ -116,9 +116,12 @@ valuesIsPaged values =
     HM.member Constants.needsPagingKey &
     not
 
+streamEntryBodyKey :: Text
+streamEntryBodyKey = "Body"
+
 dynamoReadResultToStreamEntry :: MonadError EventStoreActionError m => DynamoReadResult -> m StreamEntry
 dynamoReadResultToStreamEntry (DynamoReadResult key@(DynamoKey dynamoHashKey firstEventNumber) _version values) = do
-  eventBody <- readField Constants.pageBodyKey avB values
+  eventBody <- readField streamEntryBodyKey avB values
   let streamId = T.drop (T.length Constants.streamDynamoKeyPrefix) dynamoHashKey
   NonEmptyWrapper eventEntries <- binaryDeserialize key eventBody
   let entryIsPaged = valuesIsPaged values
@@ -135,6 +138,6 @@ streamEntryToValues StreamEntry{..} =
       bodyValue = set avB (Just ((Serialize.encode . NonEmptyWrapper) streamEntryEventEntries)) attributeValue
       eventCountValue = set avN (Just ((showt . length) streamEntryEventEntries)) attributeValue
       needsPagingValue = set avS (Just "True") attributeValue
-    in HM.singleton Constants.pageBodyKey bodyValue &
+    in HM.singleton streamEntryBodyKey bodyValue &
        HM.insert Constants.needsPagingKey needsPagingValue &
        HM.insert Constants.eventCountKey eventCountValue

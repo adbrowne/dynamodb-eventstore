@@ -89,7 +89,7 @@ data FeedEntry = FeedEntry {
   feedEntryStream :: StreamId,
   feedEntryNumber :: Int64,
   feedEntryCount  :: Int
-} deriving (Eq, Show)
+} deriving (Eq, Show, Ord)
 
 instance QC.Arbitrary FeedEntry where
   arbitrary =
@@ -192,7 +192,8 @@ data EventStoreActionError =
   EventStoreActionErrorWriteFailure DynamoKey |
   EventStoreActionErrorUpdateFailure DynamoKey |
   EventStoreActionErrorHeadFieldMissing Text |
-  EventStoreActionErrorHeadFieldFormat Text Text
+  EventStoreActionErrorHeadFieldFormat Text Text |
+  EventStoreActionErrorPageStatusFieldFormat Text
   deriving (Show, Eq)
 
 data GlobalFeedPosition = GlobalFeedPosition {

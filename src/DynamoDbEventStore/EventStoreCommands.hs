@@ -21,6 +21,8 @@ module DynamoDbEventStore.EventStoreCommands(
   updateItem',
   readField,
   readExcept,
+  dynamoWriteWithRetry,
+  updateItemWithRetry,
   Cache(..),
   MonadEsDsl(..),
   MonadEsDslWithFork(..),
@@ -226,3 +228,25 @@ readExcept err t =
     parsed = BasicPrelude.readMay t
   in case parsed of Nothing  -> throwError $ err t
                     (Just a) -> return a
+
+loopUntilSuccess :: Monad m => Integer -> (a -> Bool) -> m a -> m a
+loopUntilSuccess maxTries f action =
+  action >>= loop (maxTries - 1)
+  where
+    loop 0 lastResult = return lastResult
+    loop _ lastResult | f lastResult = return lastResult
+    loop triesRemaining _ = action >>= loop (triesRemaining - 1)
+
+dynamoWriteWithRetry :: (MonadEsDsl m, MonadError EventStoreActionError m) => DynamoKey -> DynamoValues -> Int -> m DynamoWriteResult
+dynamoWriteWithRetry key value version = do
+  finalResult <- loopUntilSuccess 100 (/= DynamoWriteFailure) (writeToDynamo key value version)
+  checkFinalResult finalResult
+  where
+    checkFinalResult DynamoWriteSuccess = return DynamoWriteSuccess
+    checkFinalResult DynamoWriteWrongVersion = return DynamoWriteWrongVersion
+    checkFinalResult DynamoWriteFailure = throwError $ EventStoreActionErrorWriteFailure key
+
+updateItemWithRetry :: (MonadEsDsl m, MonadError EventStoreActionError m) => DynamoKey -> HashMap Text ValueUpdate -> m ()
+updateItemWithRetry key updates = do
+  result <- loopUntilSuccess 100 id (updateItem key updates)
+  unless result (throwError $ EventStoreActionErrorUpdateFailure key)

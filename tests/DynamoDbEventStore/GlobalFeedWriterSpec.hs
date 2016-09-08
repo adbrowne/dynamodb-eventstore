@@ -59,6 +59,7 @@ import qualified DynamoDbEventStore.EventStoreActions
 import           DynamoDbEventStore.EventStoreCommands
 import           DynamoDbEventStore.GlobalFeedWriter     (EventStoreActionError (..))
 import qualified DynamoDbEventStore.GlobalFeedWriter     as GlobalFeedWriter
+import qualified DynamoDbEventStore.GlobalFeedItem       as GlobalFeedItem
 import           DynamoDbEventStore.Types
 
 postEventRequestProgram :: MonadEsDsl m => PostEventRequest -> m (Either EventStoreActionError EventWriteResult)
@@ -488,7 +489,7 @@ testStateItems itemCount =
     writeState = execProgram "writeEvents" (forM_ requests id) emptyTestState
     feedEntries = (\x -> FeedEntry { feedEntryCount = 1, feedEntryNumber = fromIntegral x, feedEntryStream = StreamId streamId}) <$> [0..itemCount-1]
     pages = zip  [0..] (Seq.fromList <$> groupByFibs feedEntries)
-    writePage' (pageNumber, pageEntries) = GlobalFeedWriter.writePage pageNumber pageEntries 0
+    writePage' (pageNumber, pageEntries) = GlobalFeedItem.writePage pageNumber pageEntries 0
     writePagesProgram = runExceptT $ evalStateT (forM_ pages writePage') GlobalFeedWriter.emptyGlobalFeedWriterState
     globalFeedCreatedState = execProgram "writeGlobalFeed" writePagesProgram writeState
   in globalFeedCreatedState

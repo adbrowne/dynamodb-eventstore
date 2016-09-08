@@ -13,17 +13,11 @@ eventCountKey = "EventCount"
 pageIsVerifiedKey :: Text
 pageIsVerifiedKey = "Verified"
 
-pageDynamoKeyPrefix :: Text
-pageDynamoKeyPrefix = "page$"
-
 streamDynamoKeyPrefix :: Text
 streamDynamoKeyPrefix = "stream$"
 
 eventCreatedKey :: Text
 eventCreatedKey = "EventCreated"
-
-pageBodyKey :: Text
-pageBodyKey = "Body"
 
 isJsonKey :: Text
 isJsonKey = "IsJson"

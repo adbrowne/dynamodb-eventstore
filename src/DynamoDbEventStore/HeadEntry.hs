@@ -26,8 +26,8 @@ lastVerifiedPageFieldKey ::Text
 lastVerifiedPageFieldKey = "lastVerified"
 
 data HeadData = HeadData {
-  headDataLastFullPage :: PageKey,
-  headDataLastVerifiedPage :: PageKey,
+  headDataLastFullPage :: Maybe PageKey,
+  headDataLastVerifiedPage :: Maybe PageKey,
   headDataVersion     :: Int }
 
 readPageField :: (MonadError EventStoreActionError m) => DynamoReadResult -> Text -> m PageKey
@@ -44,27 +44,27 @@ readHeadData = do
   readHead currentHead
   where
     readHead Nothing = return HeadData {
-      headDataLastFullPage = -1,
-      headDataLastVerifiedPage = -1,
+      headDataLastFullPage = Nothing,
+      headDataLastVerifiedPage = Nothing,
       headDataVersion = 0 }
     readHead (Just readResult@DynamoReadResult{..}) = do
       lastFullPage <- readPageField readResult lastFullPageFieldKey
       lastVerifiedPage <- readPageField readResult lastVerifiedPageFieldKey
       return HeadData {
-        headDataLastFullPage = lastFullPage,
-        headDataLastVerifiedPage = lastVerifiedPage,
+        headDataLastFullPage = Just lastFullPage,
+        headDataLastVerifiedPage = Just lastVerifiedPage,
         headDataVersion = dynamoReadResultVersion }
 
-getLastVerifiedPage :: (MonadEsDsl m, MonadError EventStoreActionError m) => m PageKey
+getLastVerifiedPage :: (MonadEsDsl m, MonadError EventStoreActionError m) => m (Maybe PageKey)
 getLastVerifiedPage = headDataLastVerifiedPage <$> readHeadData
 
-getLastFullPage :: (MonadEsDsl m, MonadError EventStoreActionError m) =>  m PageKey
+getLastFullPage :: (MonadEsDsl m, MonadError EventStoreActionError m) =>  m (Maybe PageKey)
 getLastFullPage = headDataLastFullPage <$> readHeadData
 
 trySetLastFullPage :: (MonadEsDsl m, MonadError EventStoreActionError m) => PageKey -> m ()
 trySetLastFullPage latestPage = do
   HeadData{..} <- readHeadData
-  when (latestPage > headDataLastFullPage) $ do
+  when (Just latestPage > headDataLastFullPage) $ do
     let value = HM.singleton lastFullPageFieldKey  (set avN (Just . show $  latestPage) attributeValue)
     void (writeToDynamo headDynamoKey value (headDataVersion + 1))
   return ()

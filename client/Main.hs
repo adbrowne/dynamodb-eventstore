@@ -36,6 +36,8 @@ import DynamoDbEventStore.EventStoreCommands
 import DynamoDbEventStore.AmazonkaImplementation
 import qualified DynamoDbEventStore.GlobalFeedWriter
        as GlobalFeedWriter
+import qualified DynamoDbEventStore.GlobalFeedItem
+       as GlobalFeedItem
 import Network.Wreq
 import qualified Options.Applicative as Opt
 import qualified Prelude as P
@@ -496,7 +498,11 @@ writePages = do
       -> (StateT GlobalFeedWriter.GlobalFeedWriterState (ExceptT GlobalFeedWriter.EventStoreActionError MyAwsM)) DynamoWriteResult
     go pageNumber = do
       log Debug ("Writing page" <> show pageNumber)
-      GlobalFeedWriter.writePage (PageKey pageNumber) feedEntries 0
+      GlobalFeedItem.writeGlobalFeedItem GlobalFeedItem.GlobalFeedItem {
+        globalFeedItemPageKey = PageKey pageNumber,
+        globalFeedItemFeedEntries = feedEntries,
+        globalFeedItemPageStatus = GlobalFeedItem.PageStatusComplete,
+        globalFeedItemVersion = 0}
 
 main :: IO ()
 main = Opt.execParser opts >>= start
