@@ -38,8 +38,8 @@ import           DynamoDbEventStore.EventStoreCommands
 import           DynamoDbEventStore.EventStoreQueries (streamEntryProducer)
 import           DynamoDbEventStore.HeadEntry (getLastFullPage, getLastVerifiedPage, trySetLastFullPage)
 import           DynamoDbEventStore.StreamEntry (streamEntryFirstEventNumber,StreamEntry(..))
-import           DynamoDbEventStore.GlobalFeedItem (GlobalFeedItem(..), globalFeedItemsProducer,PageStatus(..),writeGlobalFeedItem)
-import           Pipes ((>->),Producer)
+import           DynamoDbEventStore.GlobalFeedItem (GlobalFeedItem(..), globalFeedItemsProducer,PageStatus(..),writeGlobalFeedItem, readPageMustExist, updatePageStatus, firstPageKey, readPage)
+import           Pipes ((>->),Producer,runEffect)
 import qualified Pipes.Prelude              as P
 import           DynamoDbEventStore.Types
 import           Network.AWS.DynamoDB                  hiding (updateItem)
@@ -129,23 +129,44 @@ setFeedEntryPageNumber pageNumber feedEntry = do
 stringAttributeValue :: Text -> AttributeValue
 stringAttributeValue t = set avS (Just t) attributeValue
 
-{-
-verifyPage :: GlobalFeedWriterStack q m => PageKey -> m ()
-verifyPage (PageKey (-1))       = return ()
-verifyPage pageNumber = do
-  let pageDynamoKey = getPageDynamoKey pageNumber
-  page <- readFromDynamoMustExist pageDynamoKey
-  let pageValues = dynamoReadResultValue page
-  let pageVersion = dynamoReadResultVersion page
-  log Debug ("verifyPage " <> show pageNumber <> " go value " <> show pageValues)
-  unless (HM.member Constants.pageIsVerifiedKey pageValues) $ do
-    let entries = readPageBody pageValues
-    log Debug ("setPageEntry for " <> show entries)
-    void $ traverse (setFeedEntryPageNumber pageNumber) entries
-    let newValues = HM.insert Constants.pageIsVerifiedKey (stringAttributeValue "Verified") pageValues
-    void (dynamoWriteWithRetry pageDynamoKey newValues (pageVersion + 1))
--}
+verifyPage :: (MonadError EventStoreActionError m, MonadEsDsl m) => GlobalFeedItem -> m ()
+verifyPage GlobalFeedItem{..} = do
+  log Debug ("verifyPage " <> show globalFeedItemPageKey <> " got value " <> show globalFeedItemFeedEntries)
+  void $ traverse (setFeedEntryPageNumber globalFeedItemPageKey) globalFeedItemFeedEntries
+  updatePageStatus globalFeedItemPageKey PageStatusVerified
 
+completeButUnverifiedGlobalFeedItemsProducer :: (MonadError EventStoreActionError m, MonadEsDsl m) => Producer GlobalFeedItem m ()
+completeButUnverifiedGlobalFeedItemsProducer =
+  globalFeedItemsProducer QueryDirectionForward Nothing
+    >-> P.mapM waitUntilComplete
+    >-> P.filter (\GlobalFeedItem{..} -> globalFeedItemPageStatus /= PageStatusVerified )
+  where
+    waitUntilComplete x@GlobalFeedItem { globalFeedItemPageStatus = PageStatusComplete } = return x
+    waitUntilComplete x@GlobalFeedItem { globalFeedItemPageStatus = PageStatusVerified } = return x
+    waitUntilComplete x@GlobalFeedItem { globalFeedItemPageStatus = PageStatusIncomplete } = do
+      wait 1000
+      result <- readPageMustExist (globalFeedItemPageKey x)
+      waitUntilComplete result
+
+verifyPagesThread :: MonadEsDsl m => m ()
+verifyPagesThread =
+  void $ runExceptT $ go firstPageKey
+  where
+    go pageKey = do
+      result <- readPage pageKey
+      --traceMe ("verifyPagesThread" <> show (globalFeedItemPageKey <$> result))
+      maybe (pageDoesNotExist pageKey) pageExists result
+    awaitPage pageKey = do
+      setPulseStatus False
+      wait 1000
+      go pageKey
+    pageDoesNotExist = awaitPage
+    pageExists GlobalFeedItem { globalFeedItemPageStatus = PageStatusIncomplete, globalFeedItemPageKey = pageKey } =
+      awaitPage pageKey
+    pageExists x@GlobalFeedItem { globalFeedItemPageStatus = PageStatusVerified, globalFeedItemPageKey = pageKey } = go (succ pageKey)
+    pageExists x@GlobalFeedItem { globalFeedItemPageStatus = PageStatusComplete, globalFeedItemPageKey = pageKey } =
+      setPulseStatus True >> verifyPage x >> go (succ pageKey)
+      
 readFromDynamoMustExist :: GlobalFeedWriterStack q m => DynamoKey -> m DynamoReadResult
 readFromDynamoMustExist key = do
   r <- readFromDynamo key
@@ -318,7 +339,7 @@ writeItemsToPageThread
 writeItemsToPageThread inQ = void . runExceptT . forever $ do
   item <- readQueue inQ
   result <- writeItemsToPage item
-  traceMe result
+  --traceMe result
   --maybe (return()) (writeQueue outQ) result
   return ()
 
@@ -366,9 +387,9 @@ emptyGlobalFeedWriterState = GlobalFeedWriterState {
 
 type GlobalFeedWriterStack q m = (MonadEsDsl m, MonadError EventStoreActionError m, MonadState GlobalFeedWriterState m)
 
-forkChild' :: (MonadEsDslWithFork m) => m () -> StateT GlobalFeedWriterState (ExceptT EventStoreActionError m) ()
+forkChild' :: (MonadEsDslWithFork m) => Text -> m () -> StateT GlobalFeedWriterState (ExceptT EventStoreActionError m) ()
 
-forkChild' c = lift $ lift $ forkChild c
+forkChild' threadName c = lift $ lift $ forkChild threadName c
 
 data PageKeyPosition =
   PageKeyPositionLastComplete
@@ -376,18 +397,21 @@ data PageKeyPosition =
   deriving (Eq, Ord, Show)
 
 main :: MonadEsDslWithFork m => CacheType m PageKeyPosition PageKey -> StateT GlobalFeedWriterState (ExceptT EventStoreActionError m) ()
-main _pagePositionCache = forever $ do
+main _pagePositionCache = do
   itemsToPageQueue <- newQueue
   itemsReadyForGlobalFeed <- newQueue
-  markFeedEntryPageQueue <- newQueue
-  let startMarkFeedEntryThread = forkChild' (markEventAsPagedThread markFeedEntryPageQueue)
-  replicateM_ 25 startMarkFeedEntryThread
-  let startCollectAncestorsThread = forkChild' $ collectAncestorsThread itemsToPageQueue itemsReadyForGlobalFeed
+  --markFeedEntryPageQueue <- newQueue
+  --let startMarkFeedEntryThread = forkChild' (markEventAsPagedThread markFeedEntryPageQueue)
+  --replicateM_ 25 startMarkFeedEntryThread
+  let startCollectAncestorsThread = forkChild' "collectAncestorsThread" $ collectAncestorsThread itemsToPageQueue itemsReadyForGlobalFeed
   replicateM_ 25 startCollectAncestorsThread
-  forkChild' $ writeItemsToPageThread itemsReadyForGlobalFeed
-  scanResult <- scanNeedsPaging
-  _ <- traverse (writeQueue itemsToPageQueue) scanResult
-  -- addItemsToGlobalFeed scanResult markFeedEntryPageQueue
-  when (null scanResult) (wait 1000)
-  let isActive = not (null scanResult)
-  setPulseStatus isActive
+  forkChild' "writeItemsToPageThread" $ writeItemsToPageThread itemsReadyForGlobalFeed
+  forkChild' "verifyPagesThread" verifyPagesThread
+  forever $ do
+    scanResult <- scanNeedsPaging
+    -- traceMe ("scanReuslt" <> show scanResult)
+    _ <- traverse (writeQueue itemsToPageQueue) scanResult
+    -- addItemsToGlobalFeed scanResult markFeedEntryPageQueue
+    when (null scanResult) (wait 1000)
+    let isActive = not (null scanResult)
+    setPulseStatus isActive

@@ -29,6 +29,7 @@ module DynamoDbEventStore.DynamoCmdInterpreter
   ) where
 
 import           BasicPrelude
+import qualified Debug.Trace
 import           Control.Lens
 import           Control.Monad.Reader
 import           Control.Monad.State
@@ -38,6 +39,7 @@ import           DodgerBlue.Testing
 import qualified DynamoDbEventStore.InMemoryCache       as MemCache
 import qualified DynamoDbEventStore.InMemoryDynamoTable as MemDb
 import           GHC.Natural
+import qualified Data.Text as T
 import qualified Prelude                                as P
 import qualified Test.Tasty.QuickCheck                  as QC
 
@@ -271,6 +273,14 @@ execProgram programId p initialTestState = snd $ runStateProgram programId p ini
 execProgramUntilIdle :: ProgramId -> DynamoCmdM Queue a -> TestState -> TestState
 execProgramUntilIdle = execProgram
 
+reportActiveThreads :: Monad m => Int -> Bool -> [Text] -> [Text] -> m ()
+reportActiveThreads count inCooldown active idle =
+  let
+    showString :: Show a => a -> String
+    showString = T.unpack . show
+    msg = "inCooldown: " <>  showString inCooldown <> " active: " <> (showString active) <> " idle: " <> showString idle
+  in return () -- Debug.Trace.traceM msg
+
 runPrograms'
   :: ExecutionTree (TestProgram DynamoCmd a)
   -> TestState
@@ -278,7 +288,7 @@ runPrograms'
 runPrograms' t startTestState =
   let interpretDslCommand' =
         interpretDslCommand :: Text -> DynamoCmd a -> StateT TestState QC.Gen a
-  in runStateT (evalMultiDslTest interpretDslCommand' emptyEvalState t) startTestState
+  in runStateT (evalMultiDslTest interpretDslCommand' reportActiveThreads emptyEvalState t) startTestState
 
 runProgramsWithState :: Map ProgramId (DynamoCmdM Queue a, Int)
             -> TestState

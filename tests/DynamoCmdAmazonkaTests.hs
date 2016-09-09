@@ -61,7 +61,7 @@ tests evalProgram =
           writeQueue q queueItem
         actions = do
           q <- newQueue
-          forkChild (childThread q)
+          forkChild "childThread" (childThread q)
           waitForItem q
         evt = evalProgram actions
         expected = Right queueItem

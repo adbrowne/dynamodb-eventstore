@@ -78,7 +78,7 @@ data DynamoCmd next where
 deriving instance Functor DynamoCmd
 
 class MonadEsDsl m => MonadEsDslWithFork m where
-  forkChild :: m () -> m ()
+  forkChild :: Text -> m () -> m ()
 
 class Monad m => MonadEsDsl m  where
   type QueueType m :: * -> *
@@ -153,8 +153,8 @@ instance MonadEsDsl (F (DodgerBlue.CustomDsl q DynamoCmd)) where
 instance MonadEsDslWithFork (F (DodgerBlue.CustomDsl q DynamoCmd)) where
   forkChild = DodgerBlue.forkChild
 
-forkChildIO :: MyAwsM () -> MyAwsM ()
-forkChildIO (MyAwsM c) = MyAwsM $ do
+forkChildIO :: Text -> MyAwsM () -> MyAwsM ()
+forkChildIO _childThreadName (MyAwsM c) = MyAwsM $ do
   runtimeEnv <- ask
   _ <- lift $ allocate (async (runResourceT $ runAWST runtimeEnv (runExceptT c))) cancel
   return ()

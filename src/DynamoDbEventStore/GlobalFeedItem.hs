@@ -7,9 +7,12 @@ module DynamoDbEventStore.GlobalFeedItem
   (GlobalFeedItem(..)
   ,globalFeedItemsProducer
   ,PageStatus(..)
+  ,firstPageKey
   ,readPage
+  ,readPageMustExist
   ,writePage
   ,writeGlobalFeedItem
+  ,updatePageStatus
   ) where
 
 import BasicPrelude
@@ -26,7 +29,7 @@ import Pipes (Producer,yield)
 import           Data.Either.Combinators (eitherToError)
 
 import qualified DynamoDbEventStore.EventStoreCommands as EventStoreCommands
-import DynamoDbEventStore.EventStoreCommands (MonadEsDsl, dynamoWriteWithRetry, readFromDynamo, readExcept, QueryDirection(..))
+import DynamoDbEventStore.EventStoreCommands (MonadEsDsl, dynamoWriteWithRetry, readFromDynamo, readExcept, QueryDirection(..),ValueUpdate(..), updateItem)
 import DynamoDbEventStore.Types (PageKey(..), DynamoVersion, FeedEntry(..), DynamoKey(..), DynamoWriteResult,EventStoreActionError(..),DynamoReadResult(..), DynamoValues, EventKey(..))
 import           Network.AWS.DynamoDB (AttributeValue,avB,avN,avS,attributeValue)
 
@@ -67,8 +70,8 @@ readField =
 jsonByteStringToItem :: (Aeson.FromJSON a, MonadError EventStoreActionError m) => ByteString -> m a
 jsonByteStringToItem a = eitherToError $ over _Left EventStoreActionErrorJsonDecodeError $ Aeson.eitherDecodeStrict a
 
-firstPage :: PageKey
-firstPage = PageKey 0
+firstPageKey :: PageKey
+firstPageKey = PageKey 0
 
 readFeedEntries :: (MonadError EventStoreActionError m) => DynamoValues -> m (Seq FeedEntry)
 readFeedEntries values = do
@@ -96,9 +99,17 @@ readPage pageKey = do
               globalFeedItemPageStatus = pageStatus,
               globalFeedItemVersion = version })
 
+readPageMustExist :: (MonadEsDsl m, MonadError EventStoreActionError m) => PageKey -> m GlobalFeedItem
+readPageMustExist pageKey =
+  let
+    onError = throwError $ EventStoreActionErrorPageDoesNotExist pageKey
+  in do
+    readResult <- readPage pageKey
+    maybe onError return readResult
+
 globalFeedItemsProducerInternal :: (MonadEsDsl m, MonadError EventStoreActionError m) => (PageKey -> PageKey) -> Maybe PageKey -> Producer GlobalFeedItem m ()
 globalFeedItemsProducerInternal _next (Just (PageKey (-1))) = return ()
-globalFeedItemsProducerInternal next Nothing = globalFeedItemsProducerInternal next (Just firstPage)
+globalFeedItemsProducerInternal next Nothing = globalFeedItemsProducerInternal next (Just firstPageKey)
 globalFeedItemsProducerInternal next (Just startPage) = do
   result <- lift $ readPage startPage
   maybe (return()) yieldAndLoop result
@@ -112,8 +123,20 @@ globalFeedItemsProducer QueryDirectionBackward = globalFeedItemsProducerInternal
 globalFeedItemsProducer QueryDirectionForward = globalFeedItemsProducerInternal (\(PageKey p) -> PageKey (p + 1))
 
 writeGlobalFeedItem :: (MonadError EventStoreActionError m, MonadEsDsl m) => GlobalFeedItem -> m DynamoWriteResult
-writeGlobalFeedItem GlobalFeedItem{..} = do
+writeGlobalFeedItem GlobalFeedItem{..} =
   writePage globalFeedItemPageKey globalFeedItemFeedEntries globalFeedItemVersion
+
+pageStatusToAttribute :: PageStatus -> AttributeValue
+pageStatusToAttribute pageStatus =
+  set avS (Just (show pageStatus)) attributeValue
+
+updatePageStatus :: (MonadError EventStoreActionError m, MonadEsDsl m) => PageKey -> PageStatus -> m ()
+updatePageStatus pageKey newStatus =
+  let
+    dynamoKey = getPageDynamoKey pageKey
+    changes = HM.singleton pageStatusKey (ValueUpdateSet (pageStatusToAttribute newStatus))
+  in
+    void $ updateItem dynamoKey changes
 
 writePage :: (MonadError EventStoreActionError m, MonadEsDsl m) => PageKey -> Seq FeedEntry -> DynamoVersion -> m DynamoWriteResult
 writePage pageNumber entries version = do
@@ -121,5 +144,5 @@ writePage pageNumber entries version = do
   let dynamoKey = getPageDynamoKey pageNumber
   let body =
         HM.singleton pageBodyKey (set avB (Just feedEntry) attributeValue)
-        & HM.insert pageStatusKey (set avS (Just (show PageStatusIncomplete)) attributeValue)
+        & HM.insert pageStatusKey (pageStatusToAttribute PageStatusComplete)
   dynamoWriteWithRetry dynamoKey body version

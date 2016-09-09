@@ -185,6 +185,7 @@ data EventStoreActionError =
   EventStoreActionErrorBodyDecode DynamoKey String |
   EventStoreActionErrorEventDoesNotExist DynamoKey |
   EventStoreActionErrorOnWritingPage PageKey |
+  EventStoreActionErrorPageDoesNotExist PageKey |
   EventstoreActionErrorCouldNotFindPreviousEntry DynamoKey |
   EventStoreActionErrorCouldNotFindEvent EventKey |
   EventStoreActionErrorInvalidGlobalFeedPosition GlobalFeedPosition |
