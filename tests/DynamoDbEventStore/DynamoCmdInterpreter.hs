@@ -257,12 +257,15 @@ interpretDslCommand threadName cmd =
     go (Wait' _milliseconds n) = return n
     go (Log' _logLevel msg n) = (addTextLog Debug msg >> return n)
 
+myInterpret :: Text -> DynamoCmd a -> StateT TestState Identity a
+myInterpret = interpretDslCommand
+
 runStateProgram :: ProgramId
                 -> DynamoCmdM Queue a
                 -> TestState
                 -> (a, TestState)
 runStateProgram (ProgramId programId) p initialTestState =
-  runState (evalDslTest interpretDslCommand programId p) initialTestState
+  runState (evalDslTest myInterpret programId p) initialTestState
 
 evalProgram :: ProgramId -> DynamoCmdM Queue a -> TestState -> a
 evalProgram programId p initialTestState = fst $ runStateProgram programId p initialTestState
@@ -274,12 +277,7 @@ execProgramUntilIdle :: ProgramId -> DynamoCmdM Queue a -> TestState -> TestStat
 execProgramUntilIdle = execProgram
 
 reportActiveThreads :: Monad m => Int -> Bool -> [Text] -> [Text] -> m ()
-reportActiveThreads count inCooldown active idle =
-  let
-    showString :: Show a => a -> String
-    showString = T.unpack . show
-    msg = "inCooldown: " <>  showString inCooldown <> " active: " <> (showString active) <> " idle: " <> showString idle
-  in return () -- Debug.Trace.traceM msg
+reportActiveThreads _count _inCooldown _active _idle = return ()
 
 runPrograms'
   :: ExecutionTree (TestProgram DynamoCmd a)

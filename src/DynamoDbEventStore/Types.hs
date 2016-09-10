@@ -36,7 +36,16 @@ import           TextShow.TH
 data DynamoKey = DynamoKey {
   dynamoKeyKey         :: Text,
   dynamoKeyEventNumber :: Int64
-} deriving (Show, Eq, Ord)
+} deriving (Show, Eq)
+
+instance Ord DynamoKey where
+  compare dynamoKey1 dynamoKey2 =
+    let
+      eventNumberCompare = compare (dynamoKeyEventNumber dynamoKey1) (dynamoKeyEventNumber dynamoKey2)
+      keyKeyCompare = compare (dynamoKeyKey dynamoKey1) (dynamoKeyKey dynamoKey2)
+    in case eventNumberCompare of EQ -> keyKeyCompare
+                                  x  -> x
+
 
 type DynamoValues = HM.HashMap Text AttributeValue
 data DynamoReadResult = DynamoReadResult {

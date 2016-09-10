@@ -285,10 +285,11 @@ collectAncestorsThread ::
   QueueType m DynamoKey ->
   QueueType m ToBePaged ->
   m ()
-collectAncestorsThread inQ outQ = void $ runExceptT $ forever $ do
-  i <- readQueue inQ
-  result <- collectAncestors i
-  writeQueue outQ result
+collectAncestorsThread inQ outQ = do
+  void $ runExceptT $ forever $ do
+    i <- readQueue inQ
+    result <- collectAncestors i
+    writeQueue outQ result
 
 data PageUpdate =
   PageUpdate {
@@ -396,6 +397,26 @@ data PageKeyPosition =
   | PageKeyPositionLastVerified
   deriving (Eq, Ord, Show)
 
+scanNeedsPagingIndex :: MonadEsDsl m => QueueType m DynamoKey -> m ()
+scanNeedsPagingIndex itemsToPageQueue =
+  let
+    go cache = do
+      scanResult <- scanNeedsPaging
+      (filteredScan :: [DynamoKey]) <- filterM (notInCache cache) scanResult
+      log Debug ("filteredScan: " <> show filteredScan)
+      _ <- traverse (writeQueue itemsToPageQueue) filteredScan
+      when (null scanResult) (wait 1000)
+      let isActive = not (null scanResult)
+      setPulseStatus isActive
+      _ <- traverse (\k -> cacheInsert cache k True) filteredScan
+      go cache
+    notInCache cache dynamoKey = do
+      result <- cacheLookup cache dynamoKey
+      return $ isNothing result
+  in do
+    cache <- newCache 1000
+    go cache
+
 main :: MonadEsDslWithFork m => CacheType m PageKeyPosition PageKey -> StateT GlobalFeedWriterState (ExceptT EventStoreActionError m) ()
 main _pagePositionCache = do
   itemsToPageQueue <- newQueue
@@ -404,14 +425,7 @@ main _pagePositionCache = do
   --let startMarkFeedEntryThread = forkChild' (markEventAsPagedThread markFeedEntryPageQueue)
   --replicateM_ 25 startMarkFeedEntryThread
   let startCollectAncestorsThread = forkChild' "collectAncestorsThread" $ collectAncestorsThread itemsToPageQueue itemsReadyForGlobalFeed
-  replicateM_ 25 startCollectAncestorsThread
+  replicateM_ 2 startCollectAncestorsThread
   forkChild' "writeItemsToPageThread" $ writeItemsToPageThread itemsReadyForGlobalFeed
   forkChild' "verifyPagesThread" verifyPagesThread
-  forever $ do
-    scanResult <- scanNeedsPaging
-    -- traceMe ("scanReuslt" <> show scanResult)
-    _ <- traverse (writeQueue itemsToPageQueue) scanResult
-    -- addItemsToGlobalFeed scanResult markFeedEntryPageQueue
-    when (null scanResult) (wait 1000)
-    let isActive = not (null scanResult)
-    setPulseStatus isActive
+  scanNeedsPagingIndex itemsToPageQueue

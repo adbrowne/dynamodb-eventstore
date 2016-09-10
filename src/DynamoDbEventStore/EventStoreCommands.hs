@@ -41,6 +41,7 @@ module DynamoDbEventStore.EventStoreCommands(
   FeedEntry(..)
   ) where
 import           BasicPrelude                              hiding (log)
+import qualified Prelude
 import           Control.Concurrent.Async                  hiding (wait)
 import           Control.Concurrent.STM
 import           Control.Lens                              hiding ((.=))
@@ -74,6 +75,31 @@ data DynamoCmd next where
   CacheLookup' :: (Typeable k, Ord k, Typeable v) => Cache k v -> k -> (Maybe v -> next) -> DynamoCmd next
   Wait' :: Int -> next -> DynamoCmd next
   Log' :: LogLevel -> Text -> next -> DynamoCmd next
+
+showResult :: String -> String -> String
+showResult myString existing = myString <> existing
+
+instance Show (DynamoCmd n) where
+  showsPrec _ (ReadFromDynamo' key _) =
+    showResult $ "ReadFromDynamo' " <> Prelude.show key
+  showsPrec _ (WriteToDynamo' key values version _) =
+    showResult $ "WriteToDynamo' " <> Prelude.show key <> " " <> Prelude.show values <> " " <> Prelude.show version
+  showsPrec _ (QueryTable' direction key maxEvents startEvent _) =
+    showResult $ "QueryTable' " <> Prelude.show direction <> " " <> Prelude.show key <> " " <> Prelude.show maxEvents <> " " <> Prelude.show startEvent
+  showsPrec _ (UpdateItem' key _values _) = 
+    showResult $ "UpdateItem' " <> Prelude.show key
+  showsPrec _ (ScanNeedsPaging' _) =
+    showResult "ScanNeedsPaging'"
+  showsPrec _ (NewCache' size _) =
+    showResult $ "NewCache' " <> Prelude.show size
+  showsPrec _ (CacheInsert' c _ _ _) =
+    showResult $ "CacheInsert' " <> Prelude.show c
+  showsPrec _ (CacheLookup' c _ _) =
+    showResult $ "CacheLookup' " <> Prelude.show c
+  showsPrec _ (Wait' milliseconds _) =
+    showResult $ "Wait' " <> Prelude.show milliseconds
+  showsPrec _ (Log' logLevel msg _) =
+    showResult $ "Log' " <> Prelude.show logLevel <> " " <> Prelude.show msg
 
 deriving instance Functor DynamoCmd
 
