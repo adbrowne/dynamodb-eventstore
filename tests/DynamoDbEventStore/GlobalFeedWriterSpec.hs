@@ -103,7 +103,7 @@ data NewUploadList = NewUploadList { uploadListEvents :: [NonEmpty (NonEmpty Eve
 
 instance QC.Arbitrary NewUploadList where
   arbitrary =
-    NewUploadList <$> QC.resize 10 QC.arbitrary <*> QC.arbitrary
+    NewUploadList <$> QC.resize 1 QC.arbitrary <*> QC.arbitrary -- todo increase the size
   shrink NewUploadList{..} =
     (\xs -> NewUploadList xs uploadListGenSeed) <$> QC.shrink uploadListEvents
 
@@ -275,9 +275,10 @@ expectedEventsFromUploadList (UploadList uploadItems) = do
     recordedEventCreated = eventTime,
     recordedEventIsJson = isJson }
 
-prop_AllEventsCanBeReadIndividually :: UploadList -> QC.Property
-prop_AllEventsCanBeReadIndividually (UploadList uploadItems) =
+prop_AllEventsCanBeReadIndividually :: NewUploadList -> QC.Property
+prop_AllEventsCanBeReadIndividually newUploadList =
   let
+    uploadItems = buildUploadListItems newUploadList
     programs = Map.fromList [
       ("Publisher", (publisher uploadItems,100))
       ]
@@ -352,9 +353,10 @@ readEachStream uploadItems =
     streams :: [Text]
     streams = (\(stream, _, _) -> stream) <$> uploadItems
 
-prop_EventsShouldAppearInTheirSteamsInOrder :: UploadList -> QC.Property
-prop_EventsShouldAppearInTheirSteamsInOrder (UploadList uploadList) =
+prop_EventsShouldAppearInTheirSteamsInOrder :: NewUploadList -> QC.Property
+prop_EventsShouldAppearInTheirSteamsInOrder newUploadList =
   let
+    uploadList = buildUploadListItems newUploadList
     expectedGlobalFeed = Right $ globalFeedFromUploadList uploadList
     programs = Map.fromList [
       ("Publisher", (publisher uploadList,100)),
@@ -364,9 +366,10 @@ prop_EventsShouldAppearInTheirSteamsInOrder (UploadList uploadList) =
     runReadEachStream = evalProgram "readEachStream" (runExceptT (readEachStream uploadList))
   in QC.forAll (runPrograms programs) check
 
-prop_ScanUnpagedShouldBeEmpty :: UploadList -> QC.Property
-prop_ScanUnpagedShouldBeEmpty (UploadList uploadList) =
+prop_ScanUnpagedShouldBeEmpty :: NewUploadList -> QC.Property
+prop_ScanUnpagedShouldBeEmpty newUploadList =
   let
+    uploadList = buildUploadListItems newUploadList
     programs = Map.fromList [
       ("Publisher", (publisher uploadList,100)),
       ("GlobalFeedWriter1", (globalFeedWriterProgram, 100)),
