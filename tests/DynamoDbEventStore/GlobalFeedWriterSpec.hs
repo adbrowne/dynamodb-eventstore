@@ -213,7 +213,7 @@ prop_EventShouldAppearInGlobalFeedInStreamOrder newUploadList =
       , ("GlobalFeedWriter1", (globalFeedWriterProgram, 100))
       , ("GlobalFeedWriter2", (globalFeedWriterProgram, 100))
       ]
-  in QC.forAll (runPrograms programs) (check uploadList)
+  in (length uploadList < 4) QC.==> QC.forAll (runPrograms programs) (check uploadList)
      where
        check uploadList (_, testRunState) = QC.forAll (runReadAllProgram testRunState) (\feedItems -> (globalStreamResultToMap <$> feedItems) === (Right $ globalFeedFromUploadList uploadList))
        runReadAllProgram = runProgramGenerator "readAllRequestProgram" (getReadAllRequestProgram ReadAllRequest { readAllRequestStartPosition = Nothing, readAllRequestMaxItems = 10000, readAllRequestDirection = FeedDirectionForward })
