@@ -18,6 +18,7 @@ module DynamoDbEventStore.GlobalFeedWriter (
   EventStoreActionError(..)) where
 
 import           BasicPrelude                          hiding (log)
+import           Control.Exception (throw)
 import qualified Control.Foldl as Foldl
 import           Control.Lens
 import           Control.Monad.Except
@@ -64,6 +65,7 @@ setEventEntryPage key (PageKey pageNumber) = do
     updateItemWithRetry key updates
 
 setFeedEntryPageNumber :: (MonadEsDsl m, MonadError EventStoreActionError m) => PageKey -> FeedEntry -> m ()
+  
 setFeedEntryPageNumber pageNumber feedEntry = do
   let streamId = feedEntryStream feedEntry
   let dynamoKey = toDynamoKey streamId  (feedEntryNumber feedEntry)
@@ -77,7 +79,7 @@ verifyPage GlobalFeedItem{..} = do
 
 verifyPagesThread :: MonadEsDsl m => m ()
 verifyPagesThread =
-  void $ runExceptT $ go firstPageKey
+  throwOnLeft $ go firstPageKey
   where
     go pageKey = do
       result <- readPage pageKey
@@ -104,6 +106,7 @@ data ToBePaged =
   ToBePaged {
   toBePagedEntries           :: [FeedEntry],
   toBePagedVerifiedUpToPage  :: Maybe PageKey }
+  deriving (Show)
 
 streamEntryToFeedEntry :: StreamEntry -> FeedEntry
 streamEntryToFeedEntry StreamEntry{..} =
@@ -128,14 +131,13 @@ collectAncestors dynamoKey =
                  >-> P.map streamEntryToFeedEntry
     return $ ToBePaged events lastVerifiedPage
 
--- todo: deal with errors
 collectAncestorsThread ::
   (MonadEsDsl m) =>
   QueueType m DynamoKey ->
   QueueType m ToBePaged ->
   m ()
 collectAncestorsThread inQ outQ =
-  void $ runExceptT $ forever $ do
+  throwOnLeft $ forever $ do
     i <- readQueue inQ
     result <- collectAncestors i
     writeQueue outQ result
@@ -181,12 +183,19 @@ writeItemsToPage ToBePaged{..} =
         globalFeedItemVersion = 0,
         globalFeedItemFeedEntries = Seq.empty }
 
--- todo don't ignore errors
+throwOnLeft :: MonadEsDsl m => ExceptT EventStoreActionError m () -> m ()
+throwOnLeft action = do
+  result <- runExceptT action
+  case result of Left e   -> do
+                   log Error (show e)
+                   throw e
+                 Right () -> return ()
+
 writeItemsToPageThread
   :: (MonadEsDsl m) =>
   QueueType m ToBePaged ->
   m ()
-writeItemsToPageThread inQ = void . runExceptT . forever $ do
+writeItemsToPageThread inQ = throwOnLeft . forever $ do
   item <- readQueue inQ
   _ <- writeItemsToPage item
   return ()
@@ -215,7 +224,6 @@ scanNeedsPagingIndex itemsToPageQueue =
     go cache = do
       scanResult <- scanNeedsPaging
       (filteredScan :: [DynamoKey]) <- filterM (notInCache cache) scanResult
-      log Debug ("filteredScan: " <> show filteredScan)
       _ <- traverse (writeQueue itemsToPageQueue) filteredScan
       when (null scanResult) (wait 1000)
       let isActive = not (null scanResult)

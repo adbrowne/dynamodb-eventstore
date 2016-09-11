@@ -204,7 +204,9 @@ data EventStoreActionError =
   EventStoreActionErrorHeadFieldMissing Text |
   EventStoreActionErrorHeadFieldFormat Text Text |
   EventStoreActionErrorPageStatusFieldFormat Text
-  deriving (Show, Eq)
+  deriving (Show, Eq, Typeable)
+
+instance Exception EventStoreActionError
 
 data GlobalFeedPosition = GlobalFeedPosition {
     globalFeedPositionPage   :: PageKey
