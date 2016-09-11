@@ -18,7 +18,6 @@ module DynamoDbEventStore.GlobalFeedItem
 import BasicPrelude
 import Control.Lens
 import Control.Monad.Except
-import qualified Data.Sequence                         as Seq
 import           Text.Printf                           (printf)
 import qualified Data.Text                             as T
 import qualified Data.Aeson                            as Aeson
@@ -30,8 +29,8 @@ import           Data.Either.Combinators (eitherToError)
 
 import qualified DynamoDbEventStore.EventStoreCommands as EventStoreCommands
 import DynamoDbEventStore.EventStoreCommands (MonadEsDsl, dynamoWriteWithRetry, readFromDynamo, readExcept, QueryDirection(..),ValueUpdate(..), updateItem)
-import DynamoDbEventStore.Types (PageKey(..), DynamoVersion, FeedEntry(..), DynamoKey(..), DynamoWriteResult,EventStoreActionError(..),DynamoReadResult(..), DynamoValues, EventKey(..))
-import           Network.AWS.DynamoDB (AttributeValue,avB,avN,avS,attributeValue)
+import DynamoDbEventStore.Types (PageKey(..), DynamoVersion, FeedEntry(..), DynamoKey(..), DynamoWriteResult,EventStoreActionError(..),DynamoReadResult(..), DynamoValues)
+import           Network.AWS.DynamoDB (AttributeValue,avB,avS,attributeValue)
 
 pageDynamoKeyPrefix :: Text
 pageDynamoKeyPrefix = "page$"

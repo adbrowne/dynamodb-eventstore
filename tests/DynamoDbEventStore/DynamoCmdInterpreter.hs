@@ -29,7 +29,6 @@ module DynamoDbEventStore.DynamoCmdInterpreter
   ) where
 
 import           BasicPrelude
-import qualified Debug.Trace
 import           Control.Lens
 import           Control.Monad.Reader
 import           Control.Monad.State
@@ -39,7 +38,6 @@ import           DodgerBlue.Testing
 import qualified DynamoDbEventStore.InMemoryCache       as MemCache
 import qualified DynamoDbEventStore.InMemoryDynamoTable as MemDb
 import           GHC.Natural
-import qualified Data.Text as T
 import qualified Prelude                                as P
 import qualified Test.Tasty.QuickCheck                  as QC
 

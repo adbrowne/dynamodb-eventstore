@@ -44,7 +44,6 @@ import           DynamoDbEventStore.EventStoreActions    (EventEntry (..), Event
                                                           EventType (..),
                                                           EventWriteResult (..),
                                                           FeedDirection (..),
-                                                          GlobalFeedPosition (..),
                                                           GlobalStartPosition (..),
                                                           GlobalStreamResult (..),
                                                           PostEventRequest (..),
@@ -57,7 +56,6 @@ import           DynamoDbEventStore.EventStoreActions    (EventEntry (..), Event
                                                           unEventTime)
 import qualified DynamoDbEventStore.EventStoreActions
 import           DynamoDbEventStore.EventStoreCommands
-import           DynamoDbEventStore.GlobalFeedWriter     (EventStoreActionError (..))
 import qualified DynamoDbEventStore.GlobalFeedWriter     as GlobalFeedWriter
 import qualified DynamoDbEventStore.GlobalFeedItem       as GlobalFeedItem
 import           DynamoDbEventStore.Types

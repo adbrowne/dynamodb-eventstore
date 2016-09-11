@@ -35,13 +35,9 @@ module DynamoDbEventStore.EventStoreActions(
   recordedEventProducerBackward) where
 
 import           BasicPrelude
-import           Control.Lens                          hiding ((.=))
 import           Control.Monad.Except
-import qualified Data.Aeson                            as Aeson
-import qualified Data.Sequence                         as Seq
 import           Data.Foldable
 import qualified Data.ByteString.Lazy                  as BL
-import           Data.Either.Combinators
 import           Data.List.NonEmpty                    (NonEmpty (..))
 import qualified Data.List.NonEmpty                    as NonEmpty
 import qualified DynamoDbEventStore.Constants          as Constants
@@ -49,12 +45,10 @@ import           DynamoDbEventStore.EventStoreQueries
 import           DynamoDbEventStore.GlobalFeedItem (readPage, GlobalFeedItem(..))
 import           DynamoDbEventStore.StreamEntry (StreamEntry(..), dynamoReadResultToStreamEntry, EventEntry(..),eventTypeToText, EventType(..),EventTime(..),streamEntryToValues,unEventTime)
 import           DynamoDbEventStore.EventStoreCommands hiding (readField)
-import qualified DynamoDbEventStore.EventStoreCommands as EventStoreCommands
 import           DynamoDbEventStore.GlobalFeedWriter   (DynamoCmdWithErrors)
 import qualified DynamoDbEventStore.GlobalFeedWriter   as GlobalFeedWriter
 import           DynamoDbEventStore.Types
 import           GHC.Natural
-import           Network.AWS.DynamoDB
 import           Pipes                                 hiding (ListT, runListT)
 import qualified Pipes.Prelude                         as P
 import           Safe
