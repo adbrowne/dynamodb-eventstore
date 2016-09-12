@@ -5,6 +5,7 @@
 module DynamoDbEventStore.HeadEntry (
   getLastFullPage
   ,trySetLastFullPage
+  ,trySetLastVerifiedPage
   ,getLastVerifiedPage) where
 
 import BasicPrelude
@@ -66,5 +67,13 @@ trySetLastFullPage latestPage = do
   HeadData{..} <- readHeadData
   when (Just latestPage > headDataLastFullPage) $ do
     let value = HM.singleton lastFullPageFieldKey  (set avN (Just . show $  latestPage) attributeValue)
+    void (writeToDynamo headDynamoKey value (headDataVersion + 1))
+  return ()
+
+trySetLastVerifiedPage :: (MonadEsDsl m, MonadError EventStoreActionError m) => PageKey -> m ()
+trySetLastVerifiedPage latestPage = do
+  HeadData{..} <- readHeadData
+  when (Just latestPage > headDataLastVerifiedPage) $ do
+    let value = HM.singleton lastVerifiedPageFieldKey (set avN (Just . show $  latestPage) attributeValue)
     void (writeToDynamo headDynamoKey value (headDataVersion + 1))
   return ()

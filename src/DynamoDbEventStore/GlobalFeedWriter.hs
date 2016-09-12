@@ -31,7 +31,7 @@ import qualified Data.Text                             as T
 import qualified DynamoDbEventStore.Constants          as Constants
 import           DynamoDbEventStore.EventStoreCommands
 import           DynamoDbEventStore.EventStoreQueries (streamEntryProducer)
-import           DynamoDbEventStore.HeadEntry (getLastFullPage, getLastVerifiedPage)
+import           DynamoDbEventStore.HeadEntry (getLastFullPage, getLastVerifiedPage, trySetLastVerifiedPage)
 import           DynamoDbEventStore.StreamEntry (streamEntryFirstEventNumber,StreamEntry(..))
 import           DynamoDbEventStore.GlobalFeedItem (GlobalFeedItem(..), globalFeedItemsProducer,PageStatus(..),writeGlobalFeedItem, updatePageStatus, firstPageKey, readPage)
 import           Pipes ((>->))
@@ -76,6 +76,7 @@ verifyPage GlobalFeedItem{..} = do
   log Debug ("verifyPage " <> show globalFeedItemPageKey <> " got value " <> show globalFeedItemFeedEntries)
   void $ traverse (setFeedEntryPageNumber globalFeedItemPageKey) globalFeedItemFeedEntries
   updatePageStatus globalFeedItemPageKey PageStatusVerified
+  trySetLastVerifiedPage globalFeedItemPageKey
 
 verifyPagesThread :: MonadEsDsl m => m ()
 verifyPagesThread =
