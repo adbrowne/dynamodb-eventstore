@@ -106,9 +106,9 @@ binaryDeserialize key x = do
   case value of Left err    -> throwError (EventStoreActionErrorBodyDecode key err)
                 Right v     -> return v
 
-readField :: (MonadError EventStoreActionError m) => Text -> Lens' AttributeValue (Maybe a) -> DynamoValues -> m a
-readField =
-   readFieldGeneric EventStoreActionErrorFieldMissing
+readField :: (MonadError EventStoreActionError m) => DynamoKey -> Text -> Lens' AttributeValue (Maybe a) -> DynamoValues -> m a
+readField dynamoKey =
+   readFieldGeneric (EventStoreActionErrorFieldMissing dynamoKey)
 
 valuesIsPaged :: DynamoValues -> Bool
 valuesIsPaged values =
@@ -121,7 +121,7 @@ streamEntryBodyKey = "Body"
 
 dynamoReadResultToStreamEntry :: MonadError EventStoreActionError m => DynamoReadResult -> m StreamEntry
 dynamoReadResultToStreamEntry (DynamoReadResult key@(DynamoKey dynamoHashKey firstEventNumber) _version values) = do
-  eventBody <- readField streamEntryBodyKey avB values
+  eventBody <- readField key streamEntryBodyKey avB values
   let streamId = T.drop (T.length Constants.streamDynamoKeyPrefix) dynamoHashKey
   NonEmptyWrapper eventEntries <- binaryDeserialize key eventBody
   let entryIsPaged = valuesIsPaged values

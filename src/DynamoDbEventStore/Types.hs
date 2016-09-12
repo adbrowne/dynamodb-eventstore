@@ -188,7 +188,7 @@ instance ToJSON EventKey where
            ]
 
 data EventStoreActionError =
-  EventStoreActionErrorFieldMissing Text |
+  EventStoreActionErrorFieldMissing DynamoKey Text |
   EventStoreActionErrorCouldNotReadEventCount (Maybe Text) |
   EventStoreActionErrorJsonDecodeError String |
   EventStoreActionErrorBodyDecode DynamoKey String |

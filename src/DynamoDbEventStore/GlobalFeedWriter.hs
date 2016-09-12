@@ -184,6 +184,7 @@ writeItemsToPage ToBePaged{..} =
     let sortedNewFeedEntries = (Seq.fromList . sort . toList) finalFeedEntries
     let page' = page { globalFeedItemFeedEntries = globalFeedItemFeedEntries <> sortedNewFeedEntries }
     _ <- writeGlobalFeedItem page' -- todo don't ignore errors
+    log Debug ("paged: " <> show sortedNewFeedEntries)
     return . Just $ PageUpdate {
       pageUpdatePageKey = globalFeedItemPageKey,
       pageUpdateNewEntries = sortedNewFeedEntries,

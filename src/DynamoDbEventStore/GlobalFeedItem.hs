@@ -39,7 +39,7 @@ pageBodyKey :: Text
 pageBodyKey = "Body"
 
 pageStatusKey :: Text
-pageStatusKey = "Status"
+pageStatusKey = "PageStatus"
 
 getPageDynamoKey :: PageKey -> DynamoKey
 getPageDynamoKey (PageKey pageNumber) =
@@ -62,9 +62,9 @@ data PageStatus =
   | PageStatusVerified
   deriving (Read, Show, Eq)
 
-readField :: (MonadError EventStoreActionError m) => Text -> Lens' AttributeValue (Maybe a) -> DynamoValues -> m a
-readField =
-   EventStoreCommands.readField EventStoreActionErrorFieldMissing
+readField :: (MonadError EventStoreActionError m) => DynamoKey -> Text -> Lens' AttributeValue (Maybe a) -> DynamoValues -> m a
+readField dynamoKey =
+   EventStoreCommands.readField (EventStoreActionErrorFieldMissing dynamoKey)
 
 jsonByteStringToItem :: (Aeson.FromJSON a, MonadError EventStoreActionError m) => ByteString -> m a
 jsonByteStringToItem a = eitherToError $ over _Left EventStoreActionErrorJsonDecodeError $ Aeson.eitherDecodeStrict a
@@ -72,14 +72,14 @@ jsonByteStringToItem a = eitherToError $ over _Left EventStoreActionErrorJsonDec
 firstPageKey :: PageKey
 firstPageKey = PageKey 0
 
-readFeedEntries :: (MonadError EventStoreActionError m) => DynamoValues -> m (Seq FeedEntry)
-readFeedEntries values = do
-   body <- readField pageBodyKey avB values
+readFeedEntries :: (MonadError EventStoreActionError m) => DynamoKey -> DynamoValues -> m (Seq FeedEntry)
+readFeedEntries dynamoKey values = do
+   body <- readField dynamoKey pageBodyKey avB values
    jsonByteStringToItem body
 
-readPageStatus :: (MonadError EventStoreActionError m) => DynamoValues -> m PageStatus
-readPageStatus values = do
-   pageStatus <- readField pageStatusKey avS values 
+readPageStatus :: (MonadError EventStoreActionError m) => DynamoKey -> DynamoValues -> m PageStatus
+readPageStatus dynamoKey values = do
+   pageStatus <- readField dynamoKey pageStatusKey avS values 
    let formatError = EventStoreActionErrorPageStatusFieldFormat
    readExcept formatError pageStatus
 
@@ -89,9 +89,9 @@ readPage pageKey = do
   result <- readFromDynamo dynamoKey
   maybe (return Nothing) readResult result
   where
-    readResult (DynamoReadResult _key version values) = do
-      feedEntries <- readFeedEntries values
-      pageStatus <- readPageStatus values
+    readResult (DynamoReadResult key version values) = do
+      feedEntries <- readFeedEntries key values
+      pageStatus <- readPageStatus key values
       return (Just GlobalFeedItem {
               globalFeedItemFeedEntries = feedEntries,
               globalFeedItemPageKey = pageKey,
