@@ -22,7 +22,6 @@ import           Control.Exception (throw)
 import qualified Control.Foldl as Foldl
 import           Control.Lens
 import           Data.List.NonEmpty (NonEmpty(..))
-import qualified Data.List.NonEmpty as NonEmpty
 import           Control.Monad.Except
 import           Control.Monad.State
 import           Data.Foldable
