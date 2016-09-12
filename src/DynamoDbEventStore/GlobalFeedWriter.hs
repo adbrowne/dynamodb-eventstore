@@ -21,6 +21,8 @@ import           BasicPrelude                          hiding (log)
 import           Control.Exception (throw)
 import qualified Control.Foldl as Foldl
 import           Control.Lens
+import           Data.List.NonEmpty (NonEmpty(..))
+import qualified Data.List.NonEmpty as NonEmpty
 import           Control.Monad.Except
 import           Control.Monad.State
 import           Data.Foldable
@@ -109,6 +111,18 @@ data ToBePaged =
   toBePagedVerifiedUpToPage  :: Maybe PageKey }
   deriving (Show)
 
+instance Monoid ToBePaged where
+  mempty = ToBePaged {
+    toBePagedEntries = mempty,
+    toBePagedVerifiedUpToPage = Nothing }
+  mappend
+    ToBePaged { toBePagedEntries = toBePagedEntries1, toBePagedVerifiedUpToPage = toBePagedVerifiedUpToPage1 }
+    ToBePaged { toBePagedEntries = toBePagedEntries2, toBePagedVerifiedUpToPage = toBePagedVerifiedUpToPage2 } = ToBePaged (toBePagedEntries1 <> toBePagedEntries2) (minPageKey toBePagedVerifiedUpToPage1 toBePagedVerifiedUpToPage2)
+    where
+      minPageKey Nothing other = other
+      minPageKey other Nothing = other
+      minPageKey (Just pk1) (Just pk2) = Just $ min pk1 pk2
+    
 streamEntryToFeedEntry :: StreamEntry -> FeedEntry
 streamEntryToFeedEntry StreamEntry{..} =
   FeedEntry {
@@ -192,13 +206,23 @@ throwOnLeft action = do
                    throw e
                  Right () -> return ()
 
+collectAllAvailable :: (Typeable a,  MonadEsDsl m) => QueueType m a -> m (NonEmpty a)
+collectAllAvailable q = do
+  firstItem <- readQueue q
+  moreItems <- tryReadMore []
+  return $ firstItem :| moreItems
+  where
+    tryReadMore acc = do
+      result <- tryReadQueue q
+      maybe (return acc) (\x -> tryReadMore (x:acc)) result
+  
 writeItemsToPageThread
   :: (MonadEsDsl m) =>
   QueueType m ToBePaged ->
   m ()
 writeItemsToPageThread inQ = throwOnLeft . forever $ do
-  item <- readQueue inQ
-  _ <- writeItemsToPage item
+  items <- collectAllAvailable inQ
+  _ <- writeItemsToPage (fold items)
   return ()
 
 data GlobalFeedWriterState = GlobalFeedWriterState {
