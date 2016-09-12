@@ -92,6 +92,9 @@ globalFeedWriterProgram =
              (newCache 10 >>= GlobalFeedWriter.main)
              GlobalFeedWriter.emptyGlobalFeedWriterState)
 
+testStreamId :: Text
+testStreamId = "MyStream"
+
 type UploadItem = (Text, Int64, NonEmpty EventEntry)
 
 newtype UploadList =
@@ -794,12 +797,11 @@ sampleEventIds :: [EventId]
 sampleEventIds = EventId <$> sampleUUIDs
 
 testStateItems :: Int -> TestState
-testStateItems itemCount = 
-    let streamId = "MyStream"
-        postProgram (eventId,eventNumber) = 
+testStateItems itemCount =
+    let postProgram (eventId,eventNumber) = 
             postEventRequestProgram
                 PostEventRequest
-                { perStreamId = streamId
+                { perStreamId = testStreamId
                 , perExpectedVersion = Nothing
                 , perEvents = sampleEventEntry
                   { eventEntryType = (EventType . show) eventNumber
@@ -811,12 +813,18 @@ testStateItems itemCount =
             take itemCount $ postProgram <$> zip sampleEventIds [(0 :: Int) ..]
         writeState = 
             execProgram "writeEvents" (forM_ requests id) emptyTestState
+    in writeState
+
+pagedTestStateItems :: Int -> TestState
+pagedTestStateItems itemCount = 
+    let
+        writeState = testStateItems itemCount
         feedEntries = 
             (\x -> 
                   FeedEntry
                   { feedEntryCount = 1
                   , feedEntryNumber = fromIntegral x
-                  , feedEntryStream = StreamId streamId
+                  , feedEntryStream = StreamId testStreamId
                   }) <$>
             [0 .. itemCount - 1]
         pages = zip [0 ..] (Seq.fromList <$> groupByFibs feedEntries)
@@ -845,7 +853,7 @@ getSampleItems startEvent maxItems direction =
                   startEvent
                   maxItems
                   direction))
-        (testStateItems 29)
+        (pagedTestStateItems 29)
 
 getSampleGlobalItems
     :: Maybe GlobalFeedPosition
@@ -854,7 +862,7 @@ getSampleGlobalItems
     -> Either EventStoreActionError GlobalStreamResult
 getSampleGlobalItems startPosition maxItems direction = 
     let readAllRequest = ReadAllRequest startPosition maxItems direction
-        programState = testStateItems 29
+        programState = pagedTestStateItems 29
     in evalProgram
            "ReadAllStream"
            (getReadAllRequestProgram readAllRequest)
@@ -910,7 +918,7 @@ prop_all_items_are_in_stream_when_paged_through :: QC.Positive Natural
                                                 -> FeedDirection
                                                 -> QC.Property
 prop_all_items_are_in_stream_when_paged_through (QC.Positive pageSize) (QC.Positive streamLength) direction = 
-    let startState = testStateItems streamLength
+    let startState = pagedTestStateItems streamLength
         program = readStreamProgram "MyStream" pageSize direction
         programResult = evalProgram "readStream" program startState
         maxEventNumber = fromIntegral $ streamLength - 1
@@ -1324,18 +1332,17 @@ whenIndexing1000ItemsIopsIsMinimal =
                 (pageThroughGlobalFeed 10)
                 afterIndexState
         expectedWriteState = Map.fromList [
-           ((UnpagedRead,IopsScanUnpaged,"indexer"),100)
+           ((UnpagedRead,IopsScanUnpaged,"indexer"),108)
           ,((TableRead,IopsGetItem,"collectAncestorsThread"),100)
-          ,((TableRead,IopsGetItem,"globalFeedReader"),33)
+          ,((TableRead,IopsGetItem,"globalFeedReader"),19)
           ,((TableRead,IopsGetItem,"verifyPagesThread"),617)
-          ,((TableRead,IopsGetItem,"writeItemsToPageThread"),23)
-          ,((TableRead,IopsQuery,"collectAncestorsThread"),955)
+          ,((TableRead,IopsGetItem,"writeItemsToPageThread"),10)
+          ,((TableRead,IopsQuery,"collectAncestorsThread"),4340)
           ,((TableRead,IopsQuery,"globalFeedReader"),109)
           ,((TableRead,IopsQuery,"writeEvents"),99)
-          ,((TableWrite,IopsWrite,"verifyPagesThread"),124)
+          ,((TableWrite,IopsWrite,"verifyPagesThread"),108)
           ,((TableWrite,IopsWrite,"writeEvents"),100)
-          ,((TableWrite,IopsWrite,"writeGlobalFeed"),10)
-          ,((TableWrite,IopsWrite,"writeItemsToPageThread"),2)]
+          ,((TableWrite,IopsWrite,"writeItemsToPageThread"),4)]
     in assertEqual
            "Should be small iops"
            expectedWriteState
