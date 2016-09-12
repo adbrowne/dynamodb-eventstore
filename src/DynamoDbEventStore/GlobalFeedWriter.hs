@@ -267,7 +267,7 @@ main _pagePositionCache = do
   itemsToPageQueue <- newQueue
   itemsReadyForGlobalFeed <- newQueue
   let startCollectAncestorsThread = forkChild' "collectAncestorsThread" $ collectAncestorsThread itemsToPageQueue itemsReadyForGlobalFeed
-  replicateM_ 2 startCollectAncestorsThread
+  replicateM_ 25 startCollectAncestorsThread
   forkChild' "writeItemsToPageThread" $ writeItemsToPageThread itemsReadyForGlobalFeed
   forkChild' "verifyPagesThread" verifyPagesThread
   scanNeedsPagingIndex itemsToPageQueue
