@@ -6,6 +6,7 @@
 module Main where
 
 import BasicPrelude hiding (log)
+import Control.Concurrent.Async
 import Control.Concurrent.STM.TQueue
 import Control.Lens hiding (children, element)
 import Control.Monad.Except
@@ -28,6 +29,7 @@ import qualified Data.Sequence as Seq
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import Data.Text.Encoding.Error (lenientDecode)
+import Data.Traversable
 import qualified Data.Text.Lazy as TL
 import Data.Text.Lazy.Encoding as TL
 import qualified Data.UUID (UUID)
@@ -431,11 +433,11 @@ compareFile CompareDownloadConfig{..} leftFilePath = do
         ".xml" -> compareFeedFiles leftFilePath rightFilePath
         _ -> error $ "compareFile with unkown extension" <> extension
 
-makeTestEntry :: Int -> EntryData
-makeTestEntry n = 
+makeTestEntry :: Text -> Int -> EntryData
+makeTestEntry streamName n = 
     EntryData
     { entryDataType = "MyEntryType" <> show n
-    , entryDataStream = "mystream"
+    , entryDataStream = streamName
     , entryDataBody = Just . TL.encodeUtf8 . TL.fromStrict $
       "{ \"a\":" <> show n <> "}"
     }
@@ -484,9 +486,17 @@ start Config{configCommand = CopyGlobalStream CopyGlobalStreamConfig{..}} = do
     sequence_ $ putEntry copyGlobalStreamConfigDestination <$> entryData
     return ()
 start Config{configCommand = InsertData InsertDataConfig{..}} = do
-    let testEntries = makeTestEntry <$> [0 .. 100]
-    sequence_ $ putEntry insertDataConfigDestination <$> testEntries
+    let streamNames = 
+            (\n -> 
+                  "mystream" <> show n) <$>
+            [1 .. 10]
+    asyncs <- traverse (async . insertIntoStream) streamNames
+    _ <- traverse Control.Concurrent.Async.wait asyncs
     return ()
+  where
+    insertIntoStream streamName = do
+        let testEntries = makeTestEntry streamName <$> [0 .. 100]
+        sequence_ $ putEntry insertDataConfigDestination <$> testEntries
 start Config{configCommand = CompareDownload compareDownloadConfig} = do
     files <- 
         listDirectoryTree $
