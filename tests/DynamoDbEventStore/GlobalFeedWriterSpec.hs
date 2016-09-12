@@ -1317,13 +1317,13 @@ whenIndexing1000ItemsIopsIsMinimal =
             execProgramUntilIdle
                 "indexer"
                 globalFeedWriterProgram
-                (testStateItems 10)
+                (testStateItems 100)
         afterReadState = 
             execProgramUntilIdle
                 "globalFeedReader"
                 (pageThroughGlobalFeed 10)
                 afterIndexState
-        expectedWriteState = Map.fromList [((UnpagedRead,IopsScanUnpaged,"indexer"),10),((TableRead,IopsGetItem,"collectAncestorsThread"),10),((TableRead,IopsGetItem,"globalFeedReader"),22),((TableRead,IopsGetItem,"verifyPagesThread"),649),((TableRead,IopsGetItem,"writeItemsToPageThread"),105),((TableRead,IopsQuery,"collectAncestorsThread"),55),((TableRead,IopsQuery,"globalFeedReader"),10),((TableRead,IopsQuery,"writeEvents"),9),((TableWrite,IopsWrite,"verifyPagesThread"),25),((TableWrite,IopsWrite,"writeEvents"),10),((TableWrite,IopsWrite,"writeGlobalFeed"),5),((TableWrite,IopsWrite,"writeItemsToPageThread"),10)]
+        expectedWriteState = Map.fromList [((UnpagedRead,IopsScanUnpaged,"indexer"),100),((TableRead,IopsGetItem,"collectAncestorsThread"),100),((TableRead,IopsGetItem,"globalFeedReader"),131),((TableRead,IopsGetItem,"verifyPagesThread"),2567),((TableRead,IopsGetItem,"writeItemsToPageThread"),6050),((TableRead,IopsQuery,"collectAncestorsThread"),5050),((TableRead,IopsQuery,"globalFeedReader"),109),((TableRead,IopsQuery,"writeEvents"),99),((TableWrite,IopsWrite,"verifyPagesThread"),210),((TableWrite,IopsWrite,"writeEvents"),100),((TableWrite,IopsWrite,"writeGlobalFeed"),10),((TableWrite,IopsWrite,"writeItemsToPageThread"),100)]
     in assertEqual
            "Should be small iops"
            expectedWriteState
