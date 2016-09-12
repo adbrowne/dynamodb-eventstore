@@ -8,6 +8,7 @@
 module DynamoDbEventStore.StreamEntry (
   StreamEntry(..)
   ,dynamoReadResultToStreamEntry
+  , getStreamIdFromDynamoKey
   , eventTypeToText
   , unEventTime
   , streamEntryToValues
@@ -119,14 +120,18 @@ valuesIsPaged values =
 streamEntryBodyKey :: Text
 streamEntryBodyKey = "Body"
 
+getStreamIdFromDynamoKey :: DynamoKey -> StreamId
+getStreamIdFromDynamoKey DynamoKey{..} =
+  StreamId $  T.drop (T.length Constants.streamDynamoKeyPrefix) dynamoKeyKey
+
 dynamoReadResultToStreamEntry :: MonadError EventStoreActionError m => DynamoReadResult -> m StreamEntry
-dynamoReadResultToStreamEntry (DynamoReadResult key@(DynamoKey dynamoHashKey firstEventNumber) _version values) = do
+dynamoReadResultToStreamEntry (DynamoReadResult key@(DynamoKey _dynamoHashKey firstEventNumber) _version values) = do
   eventBody <- readField key streamEntryBodyKey avB values
-  let streamId = T.drop (T.length Constants.streamDynamoKeyPrefix) dynamoHashKey
+  let streamId = getStreamIdFromDynamoKey key
   NonEmptyWrapper eventEntries <- binaryDeserialize key eventBody
   let entryIsPaged = valuesIsPaged values
   let streamEvent = StreamEntry {
-        streamEntryStreamId = StreamId streamId,
+        streamEntryStreamId = streamId,
         streamEntryFirstEventNumber = firstEventNumber,
         streamEntryEventEntries = eventEntries,
         streamEntryNeedsPaging = not entryIsPaged }

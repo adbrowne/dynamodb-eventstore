@@ -1332,17 +1332,17 @@ whenIndexing1000ItemsIopsIsMinimal =
                 (pageThroughGlobalFeed 10)
                 afterIndexState
         expectedWriteState = Map.fromList [
-           ((UnpagedRead,IopsScanUnpaged,"indexer"),108)
-          ,((TableRead,IopsGetItem,"collectAncestorsThread"),100)
-          ,((TableRead,IopsGetItem,"globalFeedReader"),19)
+           ((UnpagedRead,IopsScanUnpaged,"indexer"),135)
+          ,((TableRead,IopsGetItem,"collectAncestorsThread"),1)
+          ,((TableRead,IopsGetItem,"globalFeedReader"),13)
           ,((TableRead,IopsGetItem,"verifyPagesThread"),617)
-          ,((TableRead,IopsGetItem,"writeItemsToPageThread"),10)
-          ,((TableRead,IopsQuery,"collectAncestorsThread"),4340)
+          ,((TableRead,IopsGetItem,"writeItemsToPageThread"),1)
+          ,((TableRead,IopsQuery,"collectAncestorsThread"),100)
           ,((TableRead,IopsQuery,"globalFeedReader"),109)
           ,((TableRead,IopsQuery,"writeEvents"),99)
-          ,((TableWrite,IopsWrite,"verifyPagesThread"),108)
+          ,((TableWrite,IopsWrite,"verifyPagesThread"),102)
           ,((TableWrite,IopsWrite,"writeEvents"),100)
-          ,((TableWrite,IopsWrite,"writeItemsToPageThread"),4)]
+          ,((TableWrite,IopsWrite,"writeItemsToPageThread"),1)]
     in assertEqual
            "Should be small iops"
            expectedWriteState

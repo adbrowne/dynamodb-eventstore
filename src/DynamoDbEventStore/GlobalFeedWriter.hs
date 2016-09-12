@@ -33,7 +33,7 @@ import qualified DynamoDbEventStore.Constants          as Constants
 import           DynamoDbEventStore.EventStoreCommands
 import           DynamoDbEventStore.EventStoreQueries (streamEntryProducer)
 import           DynamoDbEventStore.HeadEntry (getLastFullPage, getLastVerifiedPage, trySetLastVerifiedPage)
-import           DynamoDbEventStore.StreamEntry (streamEntryFirstEventNumber,StreamEntry(..))
+import           DynamoDbEventStore.StreamEntry (streamEntryFirstEventNumber,StreamEntry(..), getStreamIdFromDynamoKey)
 import           DynamoDbEventStore.GlobalFeedItem (GlobalFeedItem(..), globalFeedItemsProducer,PageStatus(..),writeGlobalFeedItem, updatePageStatus, firstPageKey, readPage)
 import           Pipes ((>->))
 import qualified Pipes.Prelude              as P
@@ -98,12 +98,6 @@ verifyPagesThread =
     pageExists x@GlobalFeedItem { globalFeedItemPageStatus = PageStatusComplete, globalFeedItemPageKey = pageKey } =
       setPulseStatus True >> verifyPage x >> go (succ pageKey)
 
-dynamoKeyToEventKey :: DynamoKey -> EventKey
-dynamoKeyToEventKey DynamoKey{..} =
-  let
-    streamId = StreamId $ T.drop (T.length Constants.streamDynamoKeyPrefix) dynamoKeyKey
-  in EventKey (streamId, dynamoKeyEventNumber)
-
 data ToBePaged =
   ToBePaged {
   toBePagedEntries           :: [FeedEntry],
@@ -131,24 +125,22 @@ streamEntryToFeedEntry StreamEntry{..} =
 
 collectAncestors
   :: (MonadEsDsl m, MonadError EventStoreActionError m) =>
-  DynamoKey ->
+  StreamId ->
   m ToBePaged
-collectAncestors dynamoKey =
+collectAncestors streamId =
   let
-    EventKey(streamId, eventNumber) = dynamoKeyToEventKey dynamoKey
-    streamFromEventBack = streamEntryProducer QueryDirectionBackward streamId (Just (eventNumber + 1)) 10
+    streamFromEventBack = streamEntryProducer QueryDirectionBackward streamId Nothing 10
   in do
     lastVerifiedPage <- getLastVerifiedPage
     events <- P.toListM $  
                 streamFromEventBack
-                 >-> P.filter ((<= eventNumber) . streamEntryFirstEventNumber)
                  >-> P.takeWhile streamEntryNeedsPaging
                  >-> P.map streamEntryToFeedEntry
     return $ ToBePaged events lastVerifiedPage
 
 collectAncestorsThread ::
   (MonadEsDsl m) =>
-  QueueType m DynamoKey ->
+  QueueType m StreamId ->
   QueueType m ToBePaged ->
   m ()
 collectAncestorsThread inQ outQ =
@@ -244,13 +236,14 @@ data PageKeyPosition =
   | PageKeyPositionLastVerified
   deriving (Eq, Ord, Show)
 
-scanNeedsPagingIndex :: MonadEsDsl m => QueueType m DynamoKey -> m ()
+scanNeedsPagingIndex :: MonadEsDsl m => QueueType m StreamId -> m ()
 scanNeedsPagingIndex itemsToPageQueue =
   let
     go cache = do
       scanResult <- scanNeedsPaging
       (filteredScan :: [DynamoKey]) <- filterM (notInCache cache) scanResult
-      _ <- traverse (writeQueue itemsToPageQueue) filteredScan
+      let streams = toList . Set.fromList $ getStreamIdFromDynamoKey <$> filteredScan
+      _ <- traverse (writeQueue itemsToPageQueue) streams
       when (null scanResult) (wait 1000)
       let isActive = not (null scanResult)
       setPulseStatus isActive
