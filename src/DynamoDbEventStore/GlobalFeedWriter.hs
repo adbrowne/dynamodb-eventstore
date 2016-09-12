@@ -35,7 +35,7 @@ import           DynamoDbEventStore.EventStoreQueries (streamEntryProducer)
 import           DynamoDbEventStore.HeadEntry (getLastFullPage, getLastVerifiedPage, trySetLastVerifiedPage)
 import           DynamoDbEventStore.StreamEntry (streamEntryFirstEventNumber,StreamEntry(..), getStreamIdFromDynamoKey)
 import           DynamoDbEventStore.GlobalFeedItem (GlobalFeedItem(..), globalFeedItemsProducer,PageStatus(..),writeGlobalFeedItem, updatePageStatus, firstPageKey, readPage)
-import           Pipes ((>->))
+import           Pipes ((>->),Producer,yield)
 import qualified Pipes.Prelude              as P
 import           DynamoDbEventStore.Types
 import           Network.AWS.DynamoDB                  hiding (updateItem)
@@ -74,7 +74,6 @@ setFeedEntryPageNumber pageNumber feedEntry = do
 
 verifyPage :: (MonadError EventStoreActionError m, MonadEsDsl m) => GlobalFeedItem -> m ()
 verifyPage GlobalFeedItem{..} = do
-  log Debug ("verifyPage " <> show globalFeedItemPageKey <> " got value " <> show globalFeedItemFeedEntries)
   void $ traverse (setFeedEntryPageNumber globalFeedItemPageKey) globalFeedItemFeedEntries
   updatePageStatus globalFeedItemPageKey PageStatusVerified
   trySetLastVerifiedPage globalFeedItemPageKey
@@ -92,8 +91,6 @@ verifyPagesThread =
       wait 1000
       go pageKey
     pageDoesNotExist = awaitPage
-    pageExists GlobalFeedItem { globalFeedItemPageStatus = PageStatusIncomplete, globalFeedItemPageKey = pageKey } =
-      awaitPage pageKey
     pageExists GlobalFeedItem { globalFeedItemPageStatus = PageStatusVerified, globalFeedItemPageKey = pageKey } = go (succ pageKey)
     pageExists x@GlobalFeedItem { globalFeedItemPageStatus = PageStatusComplete, globalFeedItemPageKey = pageKey } =
       setPulseStatus True >> verifyPage x >> go (succ pageKey)
@@ -156,40 +153,62 @@ data PageUpdate =
     pageUpdatePageVersion :: DynamoVersion }
   deriving Show
 
+data FeedPage = FeedPage {
+  feedPageKey :: PageKey,
+  feedPageItems :: Set FeedEntry }
+
+feedPageProducerForward :: (MonadEsDsl m, MonadError EventStoreActionError m)
+  => CacheType m PageKey (Set FeedEntry) 
+  -> Maybe PageKey
+  -> Producer FeedPage m ()
+feedPageProducerForward completePageCache Nothing = feedPageProducerForward completePageCache (Just firstPageKey)
+feedPageProducerForward completePageCache (Just page) = do
+  cacheResult <- lift $ cacheLookup completePageCache page
+  maybe lookupDb yieldAndLoop cacheResult
+  where
+    lookupDb =
+      globalFeedItemsProducer QueryDirectionForward (Just page)
+      >->
+      P.map globalFeedItemToFeedPage 
+    globalFeedItemToFeedPage GlobalFeedItem{..} =
+      FeedPage globalFeedItemPageKey (Set.fromList . toList $ globalFeedItemFeedEntries)
+    yieldAndLoop feedEntries = do
+      yield $ FeedPage page feedEntries
+      feedPageProducerForward completePageCache (Just $ page + 1)
+
 writeItemsToPage
   :: (MonadEsDsl m, MonadError EventStoreActionError m) =>
+  CacheType m PageKey (Set FeedEntry) ->
   ToBePaged ->
   m (Maybe PageUpdate)
-writeItemsToPage ToBePaged{..} =
+writeItemsToPage completePageCache ToBePaged{..} =
   let
     toBePagedSet = Set.fromList . toList $ toBePagedEntries
-    removePagedItem s GlobalFeedItem{..} =
-      let pageItemSet = (Set.fromList . toList) globalFeedItemFeedEntries
-      in Set.difference s pageItemSet
+    removePagedItem s FeedPage{..} = Set.difference s feedPageItems
     filteredItemsToPage = Foldl.Fold removePagedItem toBePagedSet id
     combinedFold = (,) <$> filteredItemsToPage <*> Foldl.last
     foldOverProducer = Foldl.purely P.fold
-    result = foldOverProducer combinedFold $ globalFeedItemsProducer QueryDirectionForward toBePagedVerifiedUpToPage
+    result = foldOverProducer combinedFold $ feedPageProducerForward completePageCache toBePagedVerifiedUpToPage
   in do
     (finalFeedEntries, lastPage) <- result
-    let page@GlobalFeedItem{..} = getPageFromLast lastPage
+    let pageKey = getNextPageKey lastPage
     let sortedNewFeedEntries = (Seq.fromList . sort . toList) finalFeedEntries
-    let page' = page { globalFeedItemFeedEntries = globalFeedItemFeedEntries <> sortedNewFeedEntries }
-    _ <- writeGlobalFeedItem page' -- todo don't ignore errors
+    let pageVersion = 0
+    let page = GlobalFeedItem {
+          globalFeedItemPageKey = pageKey,
+          globalFeedItemPageStatus = PageStatusComplete,
+          globalFeedItemVersion = pageVersion,
+          globalFeedItemFeedEntries = sortedNewFeedEntries }
+    _ <- writeGlobalFeedItem page -- todo don't ignore errors
+    cacheInsert completePageCache pageKey (Set.fromList . toList $ sortedNewFeedEntries)
     log Debug ("paged: " <> show sortedNewFeedEntries)
     return . Just $ PageUpdate {
-      pageUpdatePageKey = globalFeedItemPageKey,
+      pageUpdatePageKey = pageKey,
       pageUpdateNewEntries = sortedNewFeedEntries,
-      pageUpdatePageVersion = globalFeedItemVersion}
+      pageUpdatePageVersion = pageVersion }
   where
-    getPageFromLast Nothing = GlobalFeedItem (PageKey 0) PageStatusIncomplete 0 Seq.empty
-    getPageFromLast (Just globalFeedItem@GlobalFeedItem{ globalFeedItemPageStatus = PageStatusIncomplete, globalFeedItemVersion = version }) = globalFeedItem { globalFeedItemVersion = version + 1 }
-    getPageFromLast (Just GlobalFeedItem{ globalFeedItemPageKey = pageKey }) =
-      GlobalFeedItem {
-        globalFeedItemPageKey = pageKey + 1,
-        globalFeedItemPageStatus = PageStatusIncomplete,
-        globalFeedItemVersion = 0,
-        globalFeedItemFeedEntries = Seq.empty }
+    getNextPageKey Nothing = firstPageKey
+    getNextPageKey (Just FeedPage {..}) = feedPageKey + 1
 
 throwOnLeft :: MonadEsDsl m => ExceptT EventStoreActionError m () -> m ()
 throwOnLeft action = do
@@ -211,11 +230,12 @@ collectAllAvailable q = do
   
 writeItemsToPageThread
   :: (MonadEsDsl m) =>
+  CacheType m PageKey (Set FeedEntry) ->
   QueueType m ToBePaged ->
   m ()
-writeItemsToPageThread inQ = throwOnLeft . forever $ do
+writeItemsToPageThread completePageCache inQ = throwOnLeft . forever $ do
   items <- collectAllAvailable inQ
-  _ <- writeItemsToPage (fold items)
+  _ <- writeItemsToPage completePageCache (fold items)
   return ()
 
 data GlobalFeedWriterState = GlobalFeedWriterState {
@@ -260,8 +280,9 @@ main :: MonadEsDslWithFork m => CacheType m PageKeyPosition PageKey -> StateT Gl
 main _pagePositionCache = do
   itemsToPageQueue <- newQueue
   itemsReadyForGlobalFeed <- newQueue
+  completePageCache <- newCache 1000
   let startCollectAncestorsThread = forkChild' "collectAncestorsThread" $ collectAncestorsThread itemsToPageQueue itemsReadyForGlobalFeed
   replicateM_ 25 startCollectAncestorsThread
-  forkChild' "writeItemsToPageThread" $ writeItemsToPageThread itemsReadyForGlobalFeed
+  forkChild' "writeItemsToPageThread" $ writeItemsToPageThread completePageCache itemsReadyForGlobalFeed
   forkChild' "verifyPagesThread" verifyPagesThread
   scanNeedsPagingIndex itemsToPageQueue

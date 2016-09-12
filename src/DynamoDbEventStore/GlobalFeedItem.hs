@@ -15,7 +15,7 @@ module DynamoDbEventStore.GlobalFeedItem
   ,updatePageStatus
   ) where
 
-import BasicPrelude
+import BasicPrelude hiding (log)
 import Control.Lens
 import Control.Monad.Except
 import           Text.Printf                           (printf)
@@ -28,7 +28,7 @@ import Pipes (Producer,yield)
 import           Data.Either.Combinators (eitherToError)
 
 import qualified DynamoDbEventStore.EventStoreCommands as EventStoreCommands
-import DynamoDbEventStore.EventStoreCommands (MonadEsDsl, dynamoWriteWithRetry, readFromDynamo, readExcept, QueryDirection(..),ValueUpdate(..), updateItem)
+import DynamoDbEventStore.EventStoreCommands (MonadEsDsl, dynamoWriteWithRetry, readFromDynamo, readExcept, QueryDirection(..),ValueUpdate(..), updateItem, LogLevel(..), log)
 import DynamoDbEventStore.Types (PageKey(..), DynamoVersion, FeedEntry(..), DynamoKey(..), DynamoWriteResult,EventStoreActionError(..),DynamoReadResult(..), DynamoValues)
 import           Network.AWS.DynamoDB (AttributeValue,avB,avS,attributeValue)
 
@@ -57,8 +57,7 @@ data GlobalFeedItem =
    globalFeedItemFeedEntries :: Seq FeedEntry }
 
 data PageStatus =
-  PageStatusIncomplete
-  | PageStatusComplete
+  PageStatusComplete
   | PageStatusVerified
   deriving (Read, Show, Eq)
 
@@ -141,6 +140,7 @@ writePage :: (MonadError EventStoreActionError m, MonadEsDsl m) => PageKey -> Se
 writePage pageNumber entries version = do
   let feedEntry = itemToJsonByteString entries
   let dynamoKey = getPageDynamoKey pageNumber
+  log Debug ("Writing page: " <> show dynamoKey)
   let body =
         HM.singleton pageBodyKey (set avB (Just feedEntry) attributeValue)
         & HM.insert pageStatusKey (pageStatusToAttribute PageStatusComplete)

@@ -489,13 +489,16 @@ start Config{configCommand = InsertData InsertDataConfig{..}} = do
     let streamNames = 
             (\n -> 
                   "mystream" <> show n) <$>
-            [1 .. 10]
+            [1 .. 100]
     asyncs <- traverse (async . insertIntoStream) streamNames
     _ <- traverse Control.Concurrent.Async.wait asyncs
     return ()
   where
     insertIntoStream streamName = do
-        let testEntries = makeTestEntry streamName <$> [0 .. 100]
+        let testEntries = 
+                (\n -> 
+                      makeTestEntry (streamName <> "-" <> show n) 0) <$>
+                [0 :: Int .. 10]
         sequence_ $ putEntry insertDataConfigDestination <$> testEntries
 start Config{configCommand = CompareDownload compareDownloadConfig} = do
     files <- 
