@@ -142,6 +142,7 @@ collectAncestors dynamoKey =
     events <- P.toListM $  
                 streamFromEventBack
                  >-> P.filter ((<= eventNumber) . streamEntryFirstEventNumber)
+                 >-> P.takeWhile streamEntryNeedsPaging
                  >-> P.map streamEntryToFeedEntry
     return $ ToBePaged events lastVerifiedPage
 
