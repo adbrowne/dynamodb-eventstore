@@ -25,6 +25,7 @@ module DynamoDbEventStore.AmazonkaImplementation
   ,evalProgram
   ,runLocalDynamo
   ,runDynamoCloud
+  ,runDynamoCloud2
   ,runProgram
   ,newCacheAws
   ,cacheInsertAws
@@ -505,6 +506,12 @@ type MyAwsStack = ((ExceptT InterpreterError) (AWST' RuntimeEnvironment (Resourc
 
 runProgram :: Text -> MyAwsM a -> MyAwsStack a
 runProgram _tableName program = unMyAwsM program
+
+runDynamoCloud2 :: RuntimeEnvironment
+               -> AWST' RuntimeEnvironment (ResourceT IO) a
+               -> IO a
+runDynamoCloud2 runtimeEnvironment x = 
+    runResourceT $ runAWST runtimeEnvironment $ x
 
 runDynamoCloud :: RuntimeEnvironment
                -> MyAwsM a

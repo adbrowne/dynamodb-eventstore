@@ -151,19 +151,14 @@ printError err = putStrLn $ "Error: " <> show err
 forkGlobalFeedWriter :: (forall a. MyAwsM a -> ExceptT InterpreterError IO a)
                      -> IO ()
 forkGlobalFeedWriter runner = 
-    forkAndSupervise "GlobalFeedWriter" $
-    do pageKeyPositionCache <- newCacheAws 10
+    --forkAndSupervise "GlobalFeedWriter" $
+    do 
        result <- 
            runExceptT $
            runner $
-           runExceptT $
-           evalStateT
-               (GlobalFeedWriter.main pageKeyPositionCache)
-               GlobalFeedWriter.emptyGlobalFeedWriterState
+           GlobalFeedWriter.replicateProblem
        case result of
            (Left err) -> printError (ApplicationErrorInterpreter err)
-           (Right (Left err)) -> 
-               printError (ApplicationErrorGlobalFeedWriter err)
            _ -> return ()
 
 startWebServer
@@ -211,7 +206,7 @@ start :: Config -> ExceptT ApplicationError IO ()
 start parsedConfig = do
     let tableName = (T.pack . configTableName) parsedConfig
     metrics <- liftIO startMetrics
-    logger <- liftIO $ newLogger AWS.Error stdout
+    logger <- liftIO $ newLogger AWS.Debug stdout
     awsEnv <- set envLogger logger <$> newEnv Sydney Discover
     thisCompletePageQueue <- lift newTQueueIO
     let interperter = 
@@ -249,7 +244,7 @@ start parsedConfig = do
     --let runner' = runMyAws runner tableName
      = do
         liftIO $ forkGlobalFeedWriter runner
-        liftIO $ startWebServer runner parsedConfig
+        --liftIO $ startWebServer runner parsedConfig
     failNoTable = putStrLn "Table does not exist"
 
 checkForFailureOnExit :: ExceptT ApplicationError IO () -> IO ()
@@ -262,6 +257,22 @@ checkForFailureOnExit a = do
         Right () -> return ()
 
 main :: IO ()
+main = do
+    let tableName = "estest1"
+    metrics <- liftIO startMetrics
+    logger <- liftIO $ newLogger AWS.Debug stdout
+    awsEnv <- set envLogger logger <$> newEnv Sydney Discover
+    thisCompletePageQueue <- newTQueueIO
+    let runtimeEnvironment = 
+            RuntimeEnvironment
+            { _runtimeEnvironmentMetricLogs = metrics
+            , _runtimeEnvironmentCompletePageQueue = thisCompletePageQueue
+            , _runtimeEnvironmentAmazonkaEnv = awsEnv
+            , _runtimeEnvironmentTableName = tableName
+            }
+    _ <- runDynamoCloud2 runtimeEnvironment GlobalFeedWriter.replicateProblemAws
+    return ()
+{-
 main = Opt.execParser opts >>= checkForFailureOnExit . start
   where
     opts = 
@@ -270,3 +281,5 @@ main = Opt.execParser opts >>= checkForFailureOnExit . start
             (fullDesc <> Opt.progDesc "DynamoDB event store" <>
              Opt.header
                  "DynamoDB Event Store - all your events are belong to us")
+
+-}

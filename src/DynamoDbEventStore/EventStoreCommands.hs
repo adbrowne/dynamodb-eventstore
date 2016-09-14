@@ -180,10 +180,14 @@ instance MonadEsDslWithFork (F (DodgerBlue.CustomDsl q DynamoCmd)) where
   forkChild = DodgerBlue.forkChild
 
 forkChildIO :: Text -> MyAwsM () -> MyAwsM ()
-forkChildIO _childThreadName (MyAwsM c) = MyAwsM $ do
+forkChildIO childThreadName (MyAwsM c) = MyAwsM $ do
   runtimeEnv <- ask
-  _ <- lift $ allocate (async (runResourceT $ runAWST runtimeEnv (runExceptT c))) cancel
+  _ <- lift $ allocate (async (runResourceT $ runAWST runtimeEnv (runExceptT c))) onDispose
   return ()
+  where
+    onDispose a = do
+      putStrLn ("disposing" <> childThreadName)
+      cancel a
 
 instance MonadEsDsl MyAwsM where
   type QueueType MyAwsM = TQueue

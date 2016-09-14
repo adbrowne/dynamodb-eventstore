@@ -509,7 +509,7 @@ start Config{configCommand = SpeedTest} = do
     logger <- liftIO $ AWS.newLogger AWS.Error System.IO.stdout
     awsEnv <- set AWS.envLogger logger <$> AWS.newEnv AWS.Sydney AWS.Discover
     thisCompletePageQueue <- newTQueueIO
-    let tableName = "estest2"
+    let tableName = "estest"
     let runtimeEnvironment = 
             RuntimeEnvironment
             { _runtimeEnvironmentMetricLogs = nullMetrics

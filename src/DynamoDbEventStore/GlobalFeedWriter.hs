@@ -4,9 +4,12 @@
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
+{-# LANGUAGE RankNTypes   #-}
 
 module DynamoDbEventStore.GlobalFeedWriter (
   main,
+  replicateProblem,
+  replicateProblemAws,
   dynamoWriteWithRetry,
   entryEventCount,
   getLastFullPage,
@@ -19,10 +22,14 @@ module DynamoDbEventStore.GlobalFeedWriter (
 
 import           BasicPrelude                          hiding (log)
 import           Control.Exception (throw)
+import Control.Concurrent (threadDelay)
 import qualified Control.Foldl as Foldl
 import           Control.Lens
+import TextShow
 import           Data.List.NonEmpty (NonEmpty(..))
+import qualified Control.Concurrent.Async
 import           Control.Monad.Except
+import           Control.Monad.Reader
 import           Control.Monad.State
 import           Data.Foldable
 import qualified Data.HashMap.Lazy                     as HM
@@ -31,6 +38,7 @@ import qualified Data.Set                              as Set
 import qualified Data.Text                             as T
 import qualified DynamoDbEventStore.Constants          as Constants
 import           DynamoDbEventStore.EventStoreCommands
+import           DynamoDbEventStore.AmazonkaImplementation
 import           DynamoDbEventStore.EventStoreQueries (streamEntryProducer)
 import           DynamoDbEventStore.HeadEntry (getLastFullPage, getLastVerifiedPage, trySetLastVerifiedPage)
 import           DynamoDbEventStore.StreamEntry (streamEntryFirstEventNumber,StreamEntry(..), getStreamIdFromDynamoKey)
@@ -38,7 +46,11 @@ import           DynamoDbEventStore.GlobalFeedItem (GlobalFeedItem(..), globalFe
 import           Pipes ((>->),Producer,yield)
 import qualified Pipes.Prelude              as P
 import           DynamoDbEventStore.Types
+import           Control.Monad.Trans.AWS hiding (Debug,Error)
+import           Control.Monad.Trans.Resource
+import           Network.AWS hiding (Debug, Error, send)
 import           Network.AWS.DynamoDB                  hiding (updateItem)
+import qualified Network.AWS.DynamoDB
 import           Safe
 
 type DynamoCmdWithErrors q m = (MonadEsDsl m, MonadError EventStoreActionError m)
@@ -74,9 +86,9 @@ setFeedEntryPageNumber pageNumber feedEntry = do
 
 verifyPage :: (MonadError EventStoreActionError m, MonadEsDsl m) => GlobalFeedItem -> m ()
 verifyPage GlobalFeedItem{..} = do
-  void $ traverse (setFeedEntryPageNumber globalFeedItemPageKey) globalFeedItemFeedEntries
+  -- void $ traverse (setFeedEntryPageNumber globalFeedItemPageKey) globalFeedItemFeedEntries
   updatePageStatus globalFeedItemPageKey PageStatusVerified
-  trySetLastVerifiedPage globalFeedItemPageKey
+  --trySetLastVerifiedPage globalFeedItemPageKey
 
 verifyPagesThread :: MonadEsDsl m => m ()
 verifyPagesThread =
@@ -264,7 +276,7 @@ scanNeedsPagingIndex itemsToPageQueue =
       (filteredScan :: [DynamoKey]) <- filterM (notInCache cache) scanResult
       let streams = toList . Set.fromList $ getStreamIdFromDynamoKey <$> filteredScan
       _ <- traverse (writeQueue itemsToPageQueue) streams
-      when (null scanResult) (wait 1000)
+      when (null filteredScan) (wait 1000)
       let isActive = not (null scanResult)
       setPulseStatus isActive
       _ <- traverse (\k -> cacheInsert cache k True) filteredScan
@@ -275,6 +287,114 @@ scanNeedsPagingIndex itemsToPageQueue =
   in do
     cache <- newCache 1000
     go cache
+
+testScan :: MyAwsM ()
+testScan = forever $ do
+  --scanResult <- scanNeedsPaging
+  log Debug "Blah"
+  let dynamoKey = DynamoKey "page$00000000" 0
+  result <- readFromDynamo dynamoKey -- readPage (PageKey 0)
+  let changes = HM.singleton "PageStatus" (ValueUpdateSet (set avS (Just "SomeValue") attributeValue))
+  void $ updateItem dynamoKey changes
+  (wait 1000)
+
+replicateProblem :: MyAwsM ()
+replicateProblem = do
+  replicateM_ 25 (forkChild "testScan" testScan)
+  testScan
+  
+forkChildAws :: Text -> AWST' RuntimeEnvironment (ResourceT IO) () -> AWST' RuntimeEnvironment (ResourceT IO) () 
+forkChildAws childThreadName c = do
+  runtimeEnv <- ask
+  _ <- lift $ allocate (Control.Concurrent.Async.async (runResourceT $ runAWST runtimeEnv c)) onDispose
+  return ()
+  where
+    onDispose a = do
+      putStrLn ("disposing" <> childThreadName)
+      Control.Concurrent.Async.cancel a
+
+getDynamoKeyForEvent :: DynamoKey -> HM.HashMap Text AttributeValue
+getDynamoKeyForEvent (DynamoKey hashKey rangeKey) = 
+    HM.fromList
+        [ ("streamId", set avS (Just hashKey) attributeValue)
+        , ("eventNumber", set avN (Just (showt rangeKey)) attributeValue)]
+
+readFromDynamoAws1 :: DynamoKey -> AWST' RuntimeEnvironment (ResourceT IO) ()
+readFromDynamoAws1 eventKey = do
+    tn <- asks _runtimeEnvironmentTableName 
+    let key = getDynamoKeyForEvent eventKey
+    let req = getItem tn & set giKey key & set giConsistentRead (Just True)
+    resp <- send req
+    return ()
+
+itemAttribute :: Text
+              -> Lens' AttributeValue (Maybe v)
+              -> v
+              -> (Text, AttributeValue)
+itemAttribute key l value = (key, set l (Just value) attributeValue)
+
+updateItemAws1 :: DynamoKey -> (HashMap Text ValueUpdate) -> AWST' RuntimeEnvironment (ResourceT IO) ()
+updateItemAws1 DynamoKey{dynamoKeyKey = streamId,dynamoKeyEventNumber = eventNumber} values = 
+    go
+  where
+    getSetExpressions :: Text -> ValueUpdate -> [Text] -> [Text]
+    getSetExpressions _key ValueUpdateDelete xs = xs
+    getSetExpressions key (ValueUpdateSet _value) xs = 
+        let x = key <> "= :" <> key
+        in x : xs
+    getSetAttributeValues
+        :: Text
+        -> ValueUpdate
+        -> HashMap Text AttributeValue
+        -> HashMap Text AttributeValue
+    getSetAttributeValues _key ValueUpdateDelete xs = xs
+    getSetAttributeValues key (ValueUpdateSet value) xs = 
+        HM.insert (":" <> key) value xs
+    getRemoveExpressions x ValueUpdateDelete xs = x : xs
+    getRemoveExpressions _key (ValueUpdateSet _value) xs = xs
+    go = do
+        tn <- asks _runtimeEnvironmentTableName 
+        let key = 
+                HM.fromList
+                    [ itemAttribute "streamId" avS streamId
+                    , itemAttribute "eventNumber" avN (showt eventNumber)]
+        let setExpressions = HM.foldrWithKey getSetExpressions [] values
+        let setExpression = 
+                if null setExpressions
+                    then []
+                    else ["SET " ++ (T.intercalate ", " setExpressions)]
+        let expressionAttributeValues = 
+                HM.foldrWithKey getSetAttributeValues HM.empty values
+        let removeKeys = HM.foldrWithKey getRemoveExpressions [] values
+        let removeExpression = 
+                if null removeKeys
+                    then []
+                    else ["REMOVE " ++ (T.intercalate ", " removeKeys)]
+        let updateExpression = 
+                T.intercalate " " (setExpression ++ removeExpression)
+        let req0 = 
+                Network.AWS.DynamoDB.updateItem tn & set uiKey key &
+                set uiUpdateExpression (Just updateExpression) &
+                if (not . HM.null) expressionAttributeValues
+                    then set
+                             uiExpressionAttributeValues
+                             expressionAttributeValues
+                    else id
+        _ <- send req0
+        return ()
+
+testScanAws :: AWST' RuntimeEnvironment (ResourceT IO) ()
+testScanAws = forever $ do
+  let dynamoKey = DynamoKey "page$00000000" 0
+  result <- readFromDynamoAws1 dynamoKey -- readPage (PageKey 0)
+  let changes = HM.singleton "PageStatus" (ValueUpdateSet (set avS (Just "SomeValue") attributeValue))
+  void $ updateItemAws1 dynamoKey changes
+  liftIO $ threadDelay 100000
+
+replicateProblemAws :: AWST' RuntimeEnvironment (ResourceT IO) ()
+replicateProblemAws = do
+  replicateM_ 25 (forkChildAws "testScan" testScanAws)
+  testScanAws
 
 main :: MonadEsDslWithFork m => CacheType m PageKeyPosition PageKey -> StateT GlobalFeedWriterState (ExceptT EventStoreActionError m) ()
 main _pagePositionCache = do
