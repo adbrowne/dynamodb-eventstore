@@ -333,45 +333,19 @@ itemAttribute :: Text
               -> (Text, AttributeValue)
 itemAttribute key l value = (key, set l (Just value) attributeValue)
 
-updateItemAws1 :: DynamoKey -> (HashMap Text ValueUpdate) -> AWST' RuntimeEnvironment (ResourceT IO) ()
-updateItemAws1 DynamoKey{dynamoKeyKey = streamId,dynamoKeyEventNumber = eventNumber} values = 
+updateItemAws1 :: DynamoKey -> AWST' RuntimeEnvironment (ResourceT IO) ()
+updateItemAws1 DynamoKey{dynamoKeyKey = streamId,dynamoKeyEventNumber = eventNumber} = 
     go
   where
-    getSetExpressions :: Text -> ValueUpdate -> [Text] -> [Text]
-    getSetExpressions _key ValueUpdateDelete xs = xs
-    getSetExpressions key (ValueUpdateSet _value) xs = 
-        let x = key <> "= :" <> key
-        in x : xs
-    getSetAttributeValues
-        :: Text
-        -> ValueUpdate
-        -> HashMap Text AttributeValue
-        -> HashMap Text AttributeValue
-    getSetAttributeValues _key ValueUpdateDelete xs = xs
-    getSetAttributeValues key (ValueUpdateSet value) xs = 
-        HM.insert (":" <> key) value xs
-    getRemoveExpressions x ValueUpdateDelete xs = x : xs
-    getRemoveExpressions _key (ValueUpdateSet _value) xs = xs
     go = do
         tn <- asks _runtimeEnvironmentTableName 
         let key = 
                 HM.fromList
                     [ itemAttribute "streamId" avS streamId
                     , itemAttribute "eventNumber" avN (showt eventNumber)]
-        let setExpressions = HM.foldrWithKey getSetExpressions [] values
-        let setExpression = 
-                if null setExpressions
-                    then []
-                    else ["SET " ++ (T.intercalate ", " setExpressions)]
         let expressionAttributeValues = 
-                HM.foldrWithKey getSetAttributeValues HM.empty values
-        let removeKeys = HM.foldrWithKey getRemoveExpressions [] values
-        let removeExpression = 
-                if null removeKeys
-                    then []
-                    else ["REMOVE " ++ (T.intercalate ", " removeKeys)]
-        let updateExpression = 
-                T.intercalate " " (setExpression ++ removeExpression)
+                HM.singleton ":PageStatus" (set avS (Just "SomeValue222") attributeValue)
+        let updateExpression = "SET PageStatus= :PageStatus"
         let req0 = 
                 Network.AWS.DynamoDB.updateItem tn & set uiKey key &
                 set uiUpdateExpression (Just updateExpression) &
@@ -387,8 +361,7 @@ testScanAws :: AWST' RuntimeEnvironment (ResourceT IO) ()
 testScanAws = forever $ do
   let dynamoKey = DynamoKey "page$00000000" 0
   result <- readFromDynamoAws1 dynamoKey -- readPage (PageKey 0)
-  let changes = HM.singleton "PageStatus" (ValueUpdateSet (set avS (Just "SomeValue") attributeValue))
-  void $ updateItemAws1 dynamoKey changes
+  void $ updateItemAws1 dynamoKey 
   liftIO $ threadDelay 100000
 
 replicateProblemAws :: AWST' RuntimeEnvironment (ResourceT IO) ()
