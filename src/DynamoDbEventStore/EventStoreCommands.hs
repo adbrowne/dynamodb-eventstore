@@ -55,12 +55,10 @@ import qualified DodgerBlue.Testing
 import           GHC.Natural
 
 import           Control.Monad.Trans.AWS                   hiding (LogLevel)
-import qualified Control.Monad.Trans.AWS as AWS
 import           Control.Monad.Trans.Resource
 import           DynamoDbEventStore.AmazonkaImplementation
 import           DynamoDbEventStore.Types
 import           Network.AWS.DynamoDB                      hiding (updateItem)
-import System.IO (stdout)
 
 newtype Cache k v = Cache
     { unCache :: Int
@@ -186,12 +184,6 @@ forkChildIO _childThreadName (MyAwsM c) = MyAwsM $ do
   runtimeEnv <- ask
   _ <- lift $ allocate (async (runResourceT $ runAWST runtimeEnv (runExceptT c))) cancel
   return ()
-  where
-    ioAction re = do
-      logger <- liftIO $ newLogger AWS.Error stdout
-      awsEnv <- set envLogger logger <$> newEnv Sydney Discover
-      let re' = re { _runtimeEnvironmentAmazonkaEnv = awsEnv }
-      runResourceT $ runAWST re' (runExceptT c)
 
 instance MonadEsDsl MyAwsM where
   type QueueType MyAwsM = TQueue
