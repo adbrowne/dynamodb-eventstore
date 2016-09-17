@@ -7,7 +7,6 @@ module Main where
 
 import BasicPrelude hiding (log)
 import Control.Concurrent.Async
-import Control.Concurrent.STM.TQueue
 import Control.Lens hiding (children, element)
 import Control.Monad.Except
 import Control.Monad.State
@@ -29,7 +28,6 @@ import qualified Data.Sequence as Seq
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import Data.Text.Encoding.Error (lenientDecode)
-import Data.Traversable
 import qualified Data.Text.Lazy as TL
 import Data.Text.Lazy.Encoding as TL
 import qualified Data.UUID (UUID)
@@ -490,7 +488,7 @@ start Config{configCommand = InsertData InsertDataConfig{..}} = do
     let streamNames = 
             (\n -> 
                   "mystream" <> show n) <$>
-            [1 .. 100]
+            [(1::Int) .. 100]
     asyncs <- traverse (async . insertIntoStream) streamNames
     _ <- traverse Control.Concurrent.Async.wait asyncs
     return ()
@@ -509,12 +507,10 @@ start Config{configCommand = CompareDownload compareDownloadConfig} = do
 start Config{configCommand = SpeedTest} = do
     logger <- liftIO $ AWS.newLogger AWS.Error System.IO.stdout
     awsEnv <- set AWS.envLogger logger <$> AWS.newEnv AWS.Sydney AWS.Discover
-    thisCompletePageQueue <- newTQueueIO
     let tableName = "estest2"
     let runtimeEnvironment = 
             RuntimeEnvironment
             { _runtimeEnvironmentMetricLogs = nullMetrics
-            , _runtimeEnvironmentCompletePageQueue = thisCompletePageQueue
             , _runtimeEnvironmentAmazonkaEnv = awsEnv
             , _runtimeEnvironmentTableName = tableName
             }

@@ -37,7 +37,6 @@ module DynamoDbEventStore.AmazonkaImplementation
   ,InMemoryCache
   ,runtimeEnvironmentAmazonkaEnv
   ,runtimeEnvironmentMetricLogs
-  ,runtimeEnvironmentCompletePageQueue
   ,RuntimeEnvironment(..))
   where
 
@@ -107,7 +106,6 @@ data MetricLogs = MetricLogs
 
 data RuntimeEnvironment = RuntimeEnvironment
     { _runtimeEnvironmentMetricLogs :: MetricLogs
-    , _runtimeEnvironmentCompletePageQueue :: TQueue (PageKey, Seq FeedEntry)
     , _runtimeEnvironmentTableName :: Text
     , _runtimeEnvironmentAmazonkaEnv :: Env
     } 
@@ -473,12 +471,10 @@ evalProgram :: MetricLogs -> MyAwsM a -> IO (Either InterpreterError a)
 evalProgram metrics program = do
     tableNameId :: Int <- getStdRandom (randomR (1, 9999999999))
     let tableName = "testtable-" ++ show tableNameId
-    thisCompletePageQueue <- newTQueueIO
     awsEnv <- newEnv Sydney Discover
     let runtimeEnvironment = 
             RuntimeEnvironment
             { _runtimeEnvironmentMetricLogs = metrics
-            , _runtimeEnvironmentCompletePageQueue = thisCompletePageQueue
             , _runtimeEnvironmentAmazonkaEnv = awsEnv
             , _runtimeEnvironmentTableName = tableName
             }

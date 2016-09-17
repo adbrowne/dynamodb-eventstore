@@ -7,12 +7,9 @@ module Main where
 
 import BasicPrelude
 import Control.Concurrent
-import Control.Concurrent.STM.TQueue
-import Control.Lens
 import Control.Monad.Except
 import Control.Monad.State
 import Control.Monad.Trans.AWS
-import qualified Control.Monad.Trans.AWS as AWS
 import qualified Data.Text as T
 import DynamoDbEventStore.AmazonkaImplementation
 import DynamoDbEventStore.EventStoreActions
@@ -23,23 +20,14 @@ import qualified DynamoDbEventStore.GlobalFeedWriter
        as GlobalFeedWriter
 import DynamoDbEventStore.Webserver
        (EventStoreActionRunner(..), app, realRunner)
-import Network.AWS.DynamoDB
 import Network.Wai.Handler.Warp
 import Options.Applicative as Opt
 import System.Exit
-import System.IO (stdout)
 import System.Metrics hiding (Value)
 import qualified System.Metrics.Counter as Counter
 import qualified System.Metrics.Distribution as Distribution
 import System.Remote.Monitoring
 import Web.Scotty
-
-runDynamoLocal :: RuntimeEnvironment
-               -> MyAwsM a
-               -> IO (Either InterpreterError a)
-runDynamoLocal env x = do
-    let dynamo = setEndpoint False "localhost" 8000 dynamoDB
-    runResourceT $ runAWST env $ reconfigure dynamo $ runExceptT (unMyAwsM x)
 
 printEvent
     :: (MonadIO m)
@@ -211,9 +199,9 @@ start :: Config -> ExceptT ApplicationError IO ()
 start parsedConfig = do
     let tableName = (T.pack . configTableName) parsedConfig
     metrics <- liftIO startMetrics
-    logger <- liftIO $ newLogger AWS.Error stdout
-    awsEnv <- set envLogger logger <$> newEnv Sydney Discover
-    thisCompletePageQueue <- lift newTQueueIO
+    --logger <- liftIO $ newLogger AWS.Error stdout
+    ---awsEnv <- set envLogger logger <$> newEnv Sydney Discover
+    awsEnv <- newEnv Sydney Discover
     let interperter = 
             (if configLocalDynamoDB parsedConfig
                  then runDynamoLocal
@@ -221,7 +209,6 @@ start parsedConfig = do
     let runtimeEnvironment = 
             RuntimeEnvironment
             { _runtimeEnvironmentMetricLogs = metrics
-            , _runtimeEnvironmentCompletePageQueue = thisCompletePageQueue
             , _runtimeEnvironmentAmazonkaEnv = awsEnv
             , _runtimeEnvironmentTableName = tableName
             }

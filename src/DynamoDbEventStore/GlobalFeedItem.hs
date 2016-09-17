@@ -28,7 +28,7 @@ import Pipes (Producer,yield)
 import           Data.Either.Combinators (eitherToError)
 
 import qualified DynamoDbEventStore.EventStoreCommands as EventStoreCommands
-import DynamoDbEventStore.EventStoreCommands (MonadEsDsl, dynamoWriteWithRetry, readFromDynamo, readExcept, QueryDirection(..),ValueUpdate(..), updateItem, LogLevel(..), log)
+import DynamoDbEventStore.EventStoreCommands (MonadEsDsl, dynamoWriteWithRetry, readFromDynamo, readExcept, QueryDirection(..),ValueUpdate(..), updateItem)
 import DynamoDbEventStore.Types (PageKey(..), DynamoVersion, FeedEntry(..), DynamoKey(..), DynamoWriteResult,EventStoreActionError(..),DynamoReadResult(..), DynamoValues)
 import           Network.AWS.DynamoDB (AttributeValue,avB,avS,attributeValue)
 
