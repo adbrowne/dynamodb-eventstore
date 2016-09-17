@@ -201,7 +201,7 @@ writeItemsToPage completePageCache ToBePaged{..} =
           globalFeedItemFeedEntries = sortedNewFeedEntries }
     _ <- writeGlobalFeedItem page -- todo don't ignore errors
     cacheInsert completePageCache pageKey (Set.fromList . toList $ sortedNewFeedEntries)
-    log Debug ("paged: " <> show sortedNewFeedEntries)
+    log Debug ("paged: " <> (show . length) sortedNewFeedEntries)
     return . Just $ PageUpdate {
       pageUpdatePageKey = pageKey,
       pageUpdateNewEntries = sortedNewFeedEntries,
@@ -264,6 +264,7 @@ scanNeedsPagingIndex itemsToPageQueue =
       (filteredScan :: [DynamoKey]) <- filterM (notInCache cache) scanResult
       let streams = toList . Set.fromList $ getStreamIdFromDynamoKey <$> filteredScan
       _ <- traverse (writeQueue itemsToPageQueue) streams
+      unless (null filteredScan) (log Debug $ "Scanned new:" <> (show . length) filteredScan)
       when (null scanResult) (wait 1000)
       let isActive = not (null scanResult)
       setPulseStatus isActive
@@ -273,7 +274,7 @@ scanNeedsPagingIndex itemsToPageQueue =
       result <- cacheLookup cache dynamoKey
       return $ isNothing result
   in do
-    cache <- newCache 1000
+    cache <- newCache 100000
     go cache
 
 main :: MonadEsDslWithFork m => CacheType m PageKeyPosition PageKey -> StateT GlobalFeedWriterState (ExceptT EventStoreActionError m) ()
@@ -282,7 +283,7 @@ main _pagePositionCache = do
   itemsReadyForGlobalFeed <- newQueue
   completePageCache <- newCache 1000
   let startCollectAncestorsThread = forkChild' "collectAncestorsThread" $ collectAncestorsThread itemsToPageQueue itemsReadyForGlobalFeed
-  replicateM_ 25 startCollectAncestorsThread
+  replicateM_ 100 startCollectAncestorsThread
   forkChild' "writeItemsToPageThread" $ writeItemsToPageThread completePageCache itemsReadyForGlobalFeed
   forkChild' "verifyPagesThread" verifyPagesThread
   scanNeedsPagingIndex itemsToPageQueue

@@ -140,7 +140,6 @@ writePage :: (MonadError EventStoreActionError m, MonadEsDsl m) => PageKey -> Se
 writePage pageNumber entries version = do
   let feedEntry = itemToJsonByteString entries
   let dynamoKey = getPageDynamoKey pageNumber
-  log Debug ("Writing page: " <> show dynamoKey)
   let body =
         HM.singleton pageBodyKey (set avB (Just feedEntry) attributeValue)
         & HM.insert pageStatusKey (pageStatusToAttribute PageStatusComplete)
