@@ -131,6 +131,7 @@ data EventWriteResult = WriteSuccess | WrongExpectedVersion | EventExists | Writ
 
 ensureExpectedVersion :: DynamoCmdWithErrors q m => DynamoKey -> m Bool
 ensureExpectedVersion (DynamoKey _streamId (-1)) = return True
+ensureExpectedVersion (DynamoKey _streamId (0)) = return True
 ensureExpectedVersion (DynamoKey streamId expectedEventNumber) = do
   result <- queryTable QueryDirectionBackward streamId 1 (Just $ expectedEventNumber + 1)
   checkEventNumber result
