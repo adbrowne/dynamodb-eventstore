@@ -284,8 +284,8 @@ toEntryData r =
               , entryDataBody = dataBody
               }
 
-putEntry :: Text -> EntryData -> IO ()
-putEntry destinationBaseUrl EntryData{..}
+putEntry :: Text -> Maybe Int64 -> EntryData -> IO ()
+putEntry destinationBaseUrl expectedVersion EntryData{..} 
                  -- threadDelay 1000000
  = do
     let url = T.unpack $ destinationBaseUrl <> "/streams/" <> entryDataStream
@@ -296,13 +296,14 @@ putEntry destinationBaseUrl EntryData{..}
             defaults & header "ES-EventType" .~ [T.encodeUtf8 entryDataType] &
             header "ES-EventId" .~
             [T.encodeUtf8 $ show eventId] &
+            maybe id (\ev -> header "ES-ExpectedVersion" .~ [T.encodeUtf8 $ show ev]) expectedVersion &
             header "Content-Type" .~
             ["application/json"] &
             header "Accept" .~
             ["application/vnd.eventstore.atom+json"]
     _ <- postWith opts url body
     return ()
-
+    
 readXmlFile :: String -> IO Node
 readXmlFile filePath = do
     fileContents <- T.strip <$> readTextFile (fromString filePath)
@@ -483,13 +484,13 @@ start Config{configCommand = CopyGlobalStream CopyGlobalStreamConfig{..}} = do
     responses <- followNext copyGlobalStreamConfigStartUrl
     entryBodies <- sequence $ getEntry True <$> join (fst <$> responses)
     let entryData = reverse $ toEntryData <$> entryBodies
-    sequence_ $ putEntry copyGlobalStreamConfigDestination <$> entryData
+    sequence_ $ putEntry copyGlobalStreamConfigDestination Nothing <$> entryData
     return ()
 start Config{configCommand = InsertData InsertDataConfig{..}} = do
     let streamNames = 
             (\n -> 
                   "mystream" <> show n) <$>
-            [1 .. 1000]
+            [1 .. 100]
     asyncs <- traverse (async . insertIntoStream) streamNames
     _ <- traverse Control.Concurrent.Async.wait asyncs
     return ()
@@ -498,8 +499,8 @@ start Config{configCommand = InsertData InsertDataConfig{..}} = do
         let testEntries = 
                 (\n -> 
                       makeTestEntry (streamName <> "-" <> show n) 0) <$>
-                [0 :: Int]
-        sequence_ $ putEntry insertDataConfigDestination <$> testEntries
+                [(0 :: Int)..100]
+        sequence_ $ putEntry insertDataConfigDestination (Just 0) <$> testEntries
 start Config{configCommand = CompareDownload compareDownloadConfig} = do
     files <- 
         listDirectoryTree $
