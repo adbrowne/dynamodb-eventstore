@@ -25,6 +25,7 @@ module DynamoDbEventStore.AmazonkaImplementation
   ,evalProgram
   ,runLocalDynamo
   ,runDynamoCloud
+  ,runDynamoLocal
   ,runProgram
   ,newCacheAws
   ,cacheInsertAws
@@ -511,3 +512,10 @@ runDynamoCloud :: RuntimeEnvironment
                -> IO (Either InterpreterError a)
 runDynamoCloud runtimeEnvironment x = 
     runResourceT $ runAWST runtimeEnvironment $ runExceptT $ unMyAwsM x
+
+runDynamoLocal :: RuntimeEnvironment
+               -> MyAwsM a
+               -> IO (Either InterpreterError a)
+runDynamoLocal env x = do
+    let dynamo = setEndpoint False "localhost" 8000 dynamoDB
+    runResourceT $ runAWST env $ reconfigure dynamo $ runExceptT (unMyAwsM x)
