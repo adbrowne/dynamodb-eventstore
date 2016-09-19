@@ -1332,15 +1332,16 @@ whenIndexing1000ItemsIopsIsMinimal =
                 (pageThroughGlobalFeed 10)
                 afterIndexState
         expectedWriteState = Map.fromList [
-           ((UnpagedRead,IopsScanUnpaged,"indexer"),134)
+           ((UnpagedRead,IopsScanUnpaged,"indexer"),138)
           ,((TableRead,IopsGetItem,"collectAncestorsThread"),1)
           ,((TableRead,IopsGetItem,"globalFeedReader"),13)
-          ,((TableRead,IopsGetItem,"verifyPagesThread"),614)
+          ,((TableRead,IopsGetItem,"verifyPagesThread"),548)
           ,((TableRead,IopsGetItem,"writeItemsToPageThread"),1)
           ,((TableRead,IopsQuery,"collectAncestorsThread"),100)
           ,((TableRead,IopsQuery,"globalFeedReader"),109)
           ,((TableRead,IopsQuery,"writeEvents"),99)
-          ,((TableWrite,IopsWrite,"verifyPagesThread"),102)
+          ,((TableWrite,IopsWrite,"verifyItemsThread"),100)
+          ,((TableWrite,IopsWrite,"verifyPagesThread"),2)
           ,((TableWrite,IopsWrite,"writeEvents"),100)
           ,((TableWrite,IopsWrite,"writeItemsToPageThread"),1)]
     in assertEqual

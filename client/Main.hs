@@ -586,7 +586,7 @@ start Config{configCommand = BenchMark} = do
     void . runner $ buildTable tableName
     startTime <- liftIO getCPUTime
     let threadCount = 20
-    let eventsPerThreadCount = 200
+    let eventsPerThreadCount = 400
     let totalEvents = threadCount * eventsPerThreadCount
     insertEvents runner threadCount eventsPerThreadCount
     endTime <- liftIO getCPUTime
@@ -606,16 +606,18 @@ toFeedEntries = forever $ do
   let feedEntries = GlobalFeedItem.globalFeedItemFeedEntries x
   forM_ feedEntries yield
 
-takeXItems :: (Monad m, MonadIO m) => Int -> Consumer FeedEntry m ()
-takeXItems total =
-  go total
+takeXItems :: (MonadEsDsl m, Monad m, MonadIO m) => Int -> Consumer FeedEntry m ()
+takeXItems total = do
+  counter <- lift . newCounter $ "dynamodb-eventstore.itemsRead"
+  go counter total
   where
-    go 0 = return ()
-    go c = do
+    go counter 0 = return ()
+    go counter c = do
       when (mod c 100 == 0) $ 
         lift . putStrLn $ "read " <> show (total - c) <> " items"
       void await
-      go (c - 1)
+      lift . incrimentCounter $ counter
+      go counter (c - 1)
 
 runGlobalFeedWriter :: (forall a. MyAwsM a -> IO (Either InterpreterError a))
                      -> IO ()

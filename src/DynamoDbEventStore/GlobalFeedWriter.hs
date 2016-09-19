@@ -65,41 +65,82 @@ setEventEntryPage key (PageKey pageNumber) = do
                       ]
     updateItemWithRetry key updates
 
-setFeedEntryPageNumber :: (MonadEsDsl m, MonadError EventStoreActionError m) => PageKey -> FeedEntry -> m ()
+setFeedEntryPageNumber ::
+  (MonadEsDsl m, MonadError EventStoreActionError m)
+  => CounterType m
+  -> PageKey
+  -> FeedEntry
+  -> m ()
   
-setFeedEntryPageNumber pageNumber feedEntry = do
+setFeedEntryPageNumber itemCounter pageNumber feedEntry = do
   let streamId = feedEntryStream feedEntry
   let dynamoKey = toDynamoKey streamId  (feedEntryNumber feedEntry)
   void $ setEventEntryPage dynamoKey pageNumber
+  incrimentCounter itemCounter
 
-verifyPage :: (MonadError EventStoreActionError m, MonadEsDsl m) => CounterType m -> CounterType m -> GlobalFeedItem -> m ()
-verifyPage itemCounter pageCounter GlobalFeedItem{..} = do
+verifyPage ::
+  (MonadError EventStoreActionError m, MonadEsDsl m)
+  => CounterType m
+  -> QueueType m (PageKey, FeedEntry)
+  -> QueueType m FeedEntry
+  -> GlobalFeedItem
+  -> m ()
+verifyPage pageCounter workQueue doneQueue GlobalFeedItem{..} = do
   void $ traverse verifyItem globalFeedItemFeedEntries
+  waitAll doneQueue (Set.fromList . toList $ globalFeedItemFeedEntries)
   updatePageStatus globalFeedItemPageKey PageStatusVerified
   trySetLastVerifiedPage globalFeedItemPageKey
   incrimentCounter pageCounter
   where
-    verifyItem i = do
-     setFeedEntryPageNumber globalFeedItemPageKey i
-     incrimentCounter itemCounter
+    verifyItem i = writeQueue workQueue (globalFeedItemPageKey,i) -- do
+     --setFeedEntryPageNumber itemCounter globalFeedItemPageKey i
+    waitAll :: (MonadEsDsl m, Ord a, Typeable a) => QueueType m a -> Set a -> m ()
+    waitAll q itemSet | Set.null itemSet = return ()
+    waitAll q itemSet = do
+      item <- readQueue q
+      let itemSet' = Set.delete item itemSet
+      waitAll q itemSet'
 
-verifyPagesThread :: MonadEsDsl m => m ()
+startVerifying ::
+  MonadEsDsl m
+  => CounterType m
+  -> QueueType m (PageKey, FeedEntry)
+  -> QueueType m FeedEntry
+  -> m ()
+startVerifying verifiedPages workQueue doneQueue =
+  throwOnLeft $ go firstPageKey
+  where
+    go pageKey = do
+      result <- readPage pageKey
+      maybe (pageDoesNotExist pageKey) pageExists result
+    awaitPage pageKey = do
+      setPulseStatus False
+      wait 1000
+      go pageKey
+    pageDoesNotExist = awaitPage
+    pageExists GlobalFeedItem { globalFeedItemPageStatus = PageStatusVerified, globalFeedItemPageKey = pageKey } = go (succ pageKey)
+    pageExists x@GlobalFeedItem { globalFeedItemPageStatus = PageStatusComplete, globalFeedItemPageKey = pageKey } =
+      setPulseStatus True >> verifyPage verifiedPages workQueue doneQueue x >> go (succ pageKey)
+
+verifyItemsThread :: MonadEsDsl m
+  => CounterType m
+  -> QueueType m (PageKey, FeedEntry)
+  -> QueueType m FeedEntry
+  -> m ()
+verifyItemsThread itemCounter inQ outQ =
+  throwOnLeft $ forever $ do
+    (pageKey, item) <- readQueue inQ
+    setFeedEntryPageNumber itemCounter pageKey item
+    writeQueue outQ item
+  
+verifyPagesThread :: MonadEsDslWithFork m => m ()
 verifyPagesThread = do
   verifiedItems <- newCounter "dynamodb-eventstore.verifiedItems"
   verifiedPages <- newCounter "dynamodb-eventstore.verifiedPages"
-  throwOnLeft $ go verifiedItems verifiedPages firstPageKey
-  where
-    go verifiedItems verifiedPages pageKey = do
-      result <- readPage pageKey
-      maybe (pageDoesNotExist verifiedItems verifiedPages pageKey) (pageExists verifiedItems verifiedPages) result
-    awaitPage verifiedItems verifiedPages pageKey = do
-      setPulseStatus False
-      wait 1000
-      go verifiedItems verifiedPages pageKey
-    pageDoesNotExist = awaitPage
-    pageExists verifiedItems verifiedPages GlobalFeedItem { globalFeedItemPageStatus = PageStatusVerified, globalFeedItemPageKey = pageKey } = go verifiedItems verifiedPages (succ pageKey)
-    pageExists verifiedItems verifiedPages x@GlobalFeedItem { globalFeedItemPageStatus = PageStatusComplete, globalFeedItemPageKey = pageKey } =
-      setPulseStatus True >> verifyPage verifiedItems verifiedPages x >> go verifiedItems verifiedPages (succ pageKey)
+  verifyItemQ <- newQueue
+  verifyDoneQ <- newQueue
+  replicateM_ 25 $ forkChild "verifyItemsThread" $ verifyItemsThread verifiedItems verifyItemQ verifyDoneQ
+  startVerifying verifiedPages verifyItemQ verifyDoneQ
 
 data ToBePaged =
   ToBePaged {
