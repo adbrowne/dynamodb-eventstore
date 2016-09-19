@@ -72,28 +72,34 @@ setFeedEntryPageNumber pageNumber feedEntry = do
   let dynamoKey = toDynamoKey streamId  (feedEntryNumber feedEntry)
   void $ setEventEntryPage dynamoKey pageNumber
 
-verifyPage :: (MonadError EventStoreActionError m, MonadEsDsl m) => GlobalFeedItem -> m ()
-verifyPage GlobalFeedItem{..} = do
-  void $ traverse (setFeedEntryPageNumber globalFeedItemPageKey) globalFeedItemFeedEntries
+verifyPage :: (MonadError EventStoreActionError m, MonadEsDsl m) => CounterType m -> CounterType m -> GlobalFeedItem -> m ()
+verifyPage itemCounter pageCounter GlobalFeedItem{..} = do
+  void $ traverse verifyItem globalFeedItemFeedEntries
   updatePageStatus globalFeedItemPageKey PageStatusVerified
   trySetLastVerifiedPage globalFeedItemPageKey
+  incrimentCounter pageCounter
+  where
+    verifyItem i = do
+     setFeedEntryPageNumber globalFeedItemPageKey i
+     incrimentCounter itemCounter
 
 verifyPagesThread :: MonadEsDsl m => m ()
-verifyPagesThread =
-  throwOnLeft $ go firstPageKey
+verifyPagesThread = do
+  verifiedItems <- newCounter "dynamodb-eventstore.verifiedItems"
+  verifiedPages <- newCounter "dynamodb-eventstore.verifiedPages"
+  throwOnLeft $ go verifiedItems verifiedPages firstPageKey
   where
-    go pageKey = do
+    go verifiedItems verifiedPages pageKey = do
       result <- readPage pageKey
-      --traceMe ("verifyPagesThread" <> show (globalFeedItemPageKey <$> result))
-      maybe (pageDoesNotExist pageKey) pageExists result
-    awaitPage pageKey = do
+      maybe (pageDoesNotExist verifiedItems verifiedPages pageKey) (pageExists verifiedItems verifiedPages) result
+    awaitPage verifiedItems verifiedPages pageKey = do
       setPulseStatus False
       wait 1000
-      go pageKey
+      go verifiedItems verifiedPages pageKey
     pageDoesNotExist = awaitPage
-    pageExists GlobalFeedItem { globalFeedItemPageStatus = PageStatusVerified, globalFeedItemPageKey = pageKey } = go (succ pageKey)
-    pageExists x@GlobalFeedItem { globalFeedItemPageStatus = PageStatusComplete, globalFeedItemPageKey = pageKey } =
-      setPulseStatus True >> verifyPage x >> go (succ pageKey)
+    pageExists verifiedItems verifiedPages GlobalFeedItem { globalFeedItemPageStatus = PageStatusVerified, globalFeedItemPageKey = pageKey } = go verifiedItems verifiedPages (succ pageKey)
+    pageExists verifiedItems verifiedPages x@GlobalFeedItem { globalFeedItemPageStatus = PageStatusComplete, globalFeedItemPageKey = pageKey } =
+      setPulseStatus True >> verifyPage verifiedItems verifiedPages x >> go verifiedItems verifiedPages (succ pageKey)
 
 data ToBePaged =
   ToBePaged {
@@ -285,5 +291,5 @@ main _pagePositionCache = do
   let startCollectAncestorsThread = forkChild' "collectAncestorsThread" $ collectAncestorsThread itemsToPageQueue itemsReadyForGlobalFeed
   replicateM_ 100 startCollectAncestorsThread
   forkChild' "writeItemsToPageThread" $ writeItemsToPageThread completePageCache itemsReadyForGlobalFeed
-  forkChild' "verifyPagesThread" verifyPagesThread
+  forkChild' "verifyPagesThread" $ verifyPagesThread
   scanNeedsPagingIndex itemsToPageQueue

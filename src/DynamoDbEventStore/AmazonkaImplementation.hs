@@ -17,6 +17,8 @@ module DynamoDbEventStore.AmazonkaImplementation
   ,logAws
   ,scanNeedsPagingAws
   ,waitAws
+  ,newCounterAws
+  ,incrimentCounterAws
   ,setPulseStatusAws
   ,readFieldGeneric
   ,fieldPagingRequired
@@ -61,6 +63,8 @@ import GHC.Natural
 import Network.AWS.DynamoDB
 import Network.AWS.Waiter
 import System.CPUTime
+import System.Metrics (Store, createCounter)
+import System.Metrics.Counter
 import System.Random
 import TextShow
 
@@ -102,6 +106,7 @@ data MetricLogs = MetricLogs
     , metricLogsQuery :: MetricLogsPair
     , metricLogsUpdateItem :: MetricLogsPair
     , metricLogsScan :: MetricLogsPair
+    , metricLogsStore :: Store
     } 
 
 data RuntimeEnvironment = RuntimeEnvironment
@@ -218,6 +223,14 @@ writeToDynamoAws DynamoKey{dynamoKeyKey = streamId,dynamoKeyEventNumber = eventN
         let req0 = putItem tn & set piItem item & addVersionChecks version
         _ <- timeAction metricLogsWriteItem $ send req0
         return DynamoWriteSuccess
+
+newCounterAws :: Text -> MyAwsM Counter
+newCounterAws name = do
+  MetricLogs{..} <- view runtimeEnvironmentMetricLogs
+  liftIO $ createCounter name metricLogsStore
+
+incrimentCounterAws :: Counter -> MyAwsM ()
+incrimentCounterAws = liftIO . inc
 
 updateItemAws :: DynamoKey -> (HashMap Text ValueUpdate) -> MyAwsM Bool
 updateItemAws DynamoKey{dynamoKeyKey = streamId,dynamoKeyEventNumber = eventNumber} values = 

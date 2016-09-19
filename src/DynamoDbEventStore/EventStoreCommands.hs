@@ -42,6 +42,7 @@ module DynamoDbEventStore.EventStoreCommands(
   ) where
 import           BasicPrelude                              hiding (log)
 import qualified Prelude
+import System.Metrics.Counter
 import           Control.Concurrent.Async                  hiding (wait)
 import           Control.Concurrent.STM
 import           Control.Lens                              hiding ((.=))
@@ -109,6 +110,9 @@ class MonadEsDsl m => MonadEsDslWithFork m where
 class Monad m => MonadEsDsl m  where
   type QueueType m :: * -> *
   type CacheType m :: * -> * -> *
+  type CounterType m :: *
+  newCounter :: Text -> m (CounterType m)
+  incrimentCounter :: CounterType m -> m ()
   newCache :: forall k. (Typeable k, Ord k) => forall v. Typeable v => Integer -> m (CacheType m k v)
   cacheInsert :: (Typeable k, Ord k, Typeable v) => CacheType m k v -> k -> v -> m ()
   cacheLookup :: (Typeable k, Ord k, Typeable v) => CacheType m k v -> k -> m (Maybe v)
@@ -160,6 +164,9 @@ type DynamoCmdM q = F (DodgerBlue.CustomDsl q DynamoCmd)
 instance MonadEsDsl (F (DodgerBlue.CustomDsl q DynamoCmd)) where
   type QueueType (F (DodgerBlue.CustomDsl q DynamoCmd)) = q
   type CacheType (F (DodgerBlue.CustomDsl q DynamoCmd)) = Cache
+  type CounterType (F (DodgerBlue.CustomDsl q DynamoCmd)) = ()
+  newCounter _ = return ()
+  incrimentCounter _ = return ()
   newQueue = DodgerBlue.newQueue
   newCache = newCache'
   cacheInsert = cacheInsert'
@@ -188,10 +195,13 @@ forkChildIO _childThreadName (MyAwsM c) = MyAwsM $ do
 instance MonadEsDsl MyAwsM where
   type QueueType MyAwsM = TQueue
   type CacheType MyAwsM = InMemoryCache
+  type CounterType MyAwsM = Counter
   newQueue = MyAwsM DodgerIO.newQueue
   writeQueue q a = MyAwsM $ DodgerIO.writeQueue q a
   readQueue = MyAwsM . DodgerIO.readQueue
   tryReadQueue = MyAwsM . DodgerIO.tryReadQueue
+  newCounter = newCounterAws
+  incrimentCounter = incrimentCounterAws
   newCache = newCacheAws
   cacheInsert = cacheInsertAws
   cacheLookup = cacheLookupAws
@@ -210,10 +220,13 @@ instance MonadEsDslWithFork MyAwsM where
 instance MonadEsDsl m => MonadEsDsl (StateT s m) where
   type QueueType (StateT s m) = QueueType m
   type CacheType (StateT s m) = CacheType m
+  type CounterType (StateT s m) = CounterType m
   newQueue = lift newQueue
   writeQueue q a = lift $ writeQueue q a
   readQueue = lift . readQueue
   tryReadQueue = lift . tryReadQueue
+  newCounter = lift . newCounter
+  incrimentCounter = lift . incrimentCounter
   newCache = lift . newCache
   cacheInsert a b c = lift $ cacheInsert a b c
   cacheLookup a b = lift $ cacheLookup a b
@@ -229,10 +242,13 @@ instance MonadEsDsl m => MonadEsDsl (StateT s m) where
 instance MonadEsDsl m => MonadEsDsl (ExceptT e m) where
   type QueueType (ExceptT e m) = QueueType m
   type CacheType (ExceptT s m) = CacheType m
+  type CounterType (ExceptT s m) = CounterType m
   newQueue = lift newQueue
   writeQueue q a = lift $ writeQueue q a
   readQueue = lift . readQueue
   tryReadQueue = lift . tryReadQueue
+  newCounter = lift . newCounter
+  incrimentCounter = lift . incrimentCounter
   newCache = lift . newCache
   cacheInsert a b c = lift $ cacheInsert a b c
   cacheLookup a b = lift $ cacheLookup a b

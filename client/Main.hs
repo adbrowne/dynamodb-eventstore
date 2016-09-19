@@ -463,15 +463,18 @@ makeTestEntry streamName n =
       "{ \"a\":" <> show n <> "}"
     }
 
-nullMetrics :: MetricLogs
-nullMetrics = 
-    MetricLogs
-    { metricLogsReadItem = doNothingPair
-    , metricLogsWriteItem = doNothingPair
-    , metricLogsUpdateItem = doNothingPair
-    , metricLogsQuery = doNothingPair
-    , metricLogsScan = doNothingPair
-    }
+nullMetrics :: IO MetricLogs
+nullMetrics = do
+    store <- newStore
+    return
+      MetricLogs
+      { metricLogsReadItem = doNothingPair
+      , metricLogsWriteItem = doNothingPair
+      , metricLogsUpdateItem = doNothingPair
+      , metricLogsQuery = doNothingPair
+      , metricLogsScan = doNothingPair
+      , metricLogsStore = store
+      }
   where
     doNothingPair = 
         MetricLogsPair
@@ -495,6 +498,7 @@ startMetrics = do
         , metricLogsUpdateItem = updateItemPair
         , metricLogsQuery = queryPair
         , metricLogsScan = scanPair
+        , metricLogsStore = store
         }
   where
     createPair store name = do
@@ -557,9 +561,10 @@ start Config{configCommand = SpeedTest} = do
     logger <- liftIO $ AWS.newLogger AWS.Error System.IO.stdout
     awsEnv <- set AWS.envLogger logger <$> AWS.newEnv AWS.Sydney AWS.Discover
     let tableName = "estest2"
+    metrics <- nullMetrics
     let runtimeEnvironment = 
             RuntimeEnvironment
-            { _runtimeEnvironmentMetricLogs = nullMetrics
+            { _runtimeEnvironmentMetricLogs = metrics
             , _runtimeEnvironmentAmazonkaEnv = awsEnv
             , _runtimeEnvironmentTableName = tableName
             }
@@ -581,7 +586,7 @@ start Config{configCommand = BenchMark} = do
     void . runner $ buildTable tableName
     startTime <- liftIO getCPUTime
     let threadCount = 20
-    let eventsPerThreadCount = 400
+    let eventsPerThreadCount = 200
     let totalEvents = threadCount * eventsPerThreadCount
     insertEvents runner threadCount eventsPerThreadCount
     endTime <- liftIO getCPUTime
