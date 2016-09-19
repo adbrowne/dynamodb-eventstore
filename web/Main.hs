@@ -184,6 +184,7 @@ startMetrics = do
         , metricLogsUpdateItem = updateItemPair
         , metricLogsQuery = queryPair
         , metricLogsScan = scanPair
+        , metricLogsStore = store
         }
   where
     createPair store name = do

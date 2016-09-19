@@ -95,7 +95,7 @@ verifyPage pageCounter workQueue doneQueue GlobalFeedItem{..} = do
     verifyItem i = writeQueue workQueue (globalFeedItemPageKey,i) -- do
      --setFeedEntryPageNumber itemCounter globalFeedItemPageKey i
     waitAll :: (MonadEsDsl m, Ord a, Typeable a) => QueueType m a -> Set a -> m ()
-    waitAll q itemSet | Set.null itemSet = return ()
+    waitAll _ itemSet | Set.null itemSet = return ()
     waitAll q itemSet = do
       item <- readQueue q
       let itemSet' = Set.delete item itemSet

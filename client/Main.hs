@@ -501,10 +501,10 @@ startMetrics = do
         , metricLogsStore = store
         }
   where
-    createPair store name = do
-        theCounter <- createCounter ("dynamodb-eventstore." <> name) store
+    createPair store metricName = do
+        theCounter <- createCounter ("dynamodb-eventstore." <> metricName) store
         theDistribution <- 
-            createDistribution ("dynamodb-eventstore." <> name <> "_ms") store
+            createDistribution ("dynamodb-eventstore." <> metricName <> "_ms") store
         return $
             MetricLogsPair
                 (Counter.inc theCounter)
@@ -591,7 +591,8 @@ start Config{configCommand = BenchMark} = do
     insertEvents runner threadCount eventsPerThreadCount
     endTime <- liftIO getCPUTime
     let t = fromIntegral (endTime - startTime) * 1e-12
-    putStrLn $ "Inserted " <> show totalEvents <> " events. Events per second: " <> show (fromIntegral totalEvents/ t)
+    let (eventsPerSecond :: Double) = fromIntegral totalEvents / t
+    putStrLn $ "Inserted " <> show totalEvents <> " events. Events per second: " <> show eventsPerSecond 
     _ <- async $ runGlobalFeedWriter runner
     b <- runner . runExceptT . runEffect $
       GlobalFeedItem.globalFeedItemsProducer QueryDirectionForward True Nothing
@@ -611,8 +612,8 @@ takeXItems total = do
   counter <- lift . newCounter $ "dynamodb-eventstore.itemsRead"
   go counter total
   where
-    go counter 0 = return ()
-    go counter c = do
+    go _counter 0 = return ()
+    go  counter c = do
       when (mod c 100 == 0) $ 
         lift . putStrLn $ "read " <> show (total - c) <> " items"
       void await

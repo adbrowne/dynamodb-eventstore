@@ -1335,7 +1335,7 @@ whenIndexing1000ItemsIopsIsMinimal =
            ((UnpagedRead,IopsScanUnpaged,"indexer"),138)
           ,((TableRead,IopsGetItem,"collectAncestorsThread"),1)
           ,((TableRead,IopsGetItem,"globalFeedReader"),13)
-          ,((TableRead,IopsGetItem,"verifyPagesThread"),548)
+          ,((TableRead,IopsGetItem,"verifyPagesThread"),583)
           ,((TableRead,IopsGetItem,"writeItemsToPageThread"),1)
           ,((TableRead,IopsQuery,"collectAncestorsThread"),100)
           ,((TableRead,IopsQuery,"globalFeedReader"),109)
