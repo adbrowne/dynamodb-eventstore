@@ -15,6 +15,10 @@ import Control.Concurrent.Async
 import qualified Data.Time.Clock                        as Time
 import qualified Data.UUID            as UUID
 import Control.Lens hiding (children, element)
+import System.Remote.Monitoring
+import System.Metrics hiding (Value)
+import qualified System.Metrics.Counter as Counter
+import qualified System.Metrics.Distribution as Distribution
 import Control.Monad.Except
 import Control.Monad.State
 import qualified Control.Monad.Trans.AWS as AWS
@@ -475,6 +479,33 @@ nullMetrics =
         , metricLogsPairTimeMs = const $ return ()
         }
 
+startMetrics :: IO MetricLogs
+startMetrics = do
+    metricServer <- forkServer "localhost" 8001
+    let store = serverMetricStore metricServer
+    readItemPair <- createPair store "readItem"
+    writeItemPair <- createPair store "writeItem"
+    updateItemPair <- createPair store "updateItem"
+    queryPair <- createPair store "query"
+    scanPair <- createPair store "scan"
+    return
+        MetricLogs
+        { metricLogsReadItem = readItemPair
+        , metricLogsWriteItem = writeItemPair
+        , metricLogsUpdateItem = updateItemPair
+        , metricLogsQuery = queryPair
+        , metricLogsScan = scanPair
+        }
+  where
+    createPair store name = do
+        theCounter <- createCounter ("dynamodb-eventstore." <> name) store
+        theDistribution <- 
+            createDistribution ("dynamodb-eventstore." <> name <> "_ms") store
+        return $
+            MetricLogsPair
+                (Counter.inc theCounter)
+                (Distribution.add theDistribution)
+
 start :: Config -> IO ()
 start Config{configCommand = DownloadGlobalStream DownloadGlobalStreamConfig{..}} = do
     responses <- followNext downloadGlobalStreamStartUrl
@@ -536,12 +567,13 @@ start Config{configCommand = SpeedTest} = do
     print result
     return ()
 start Config{configCommand = BenchMark} = do
+    metricLogs <- startMetrics
     logger <- liftIO $ AWS.newLogger AWS.Error System.IO.stdout
     awsEnv <- set AWS.envLogger logger <$> AWS.newEnv AWS.Sydney AWS.Discover
     tableName <- show <$> (randomIO :: IO UUID.UUID)
     let runtimeEnvironment = 
             RuntimeEnvironment
-            { _runtimeEnvironmentMetricLogs = nullMetrics
+            { _runtimeEnvironmentMetricLogs = metricLogs
             , _runtimeEnvironmentAmazonkaEnv = awsEnv
             , _runtimeEnvironmentTableName = tableName
             }
@@ -549,7 +581,7 @@ start Config{configCommand = BenchMark} = do
     void . runner $ buildTable tableName
     startTime <- liftIO getCPUTime
     let threadCount = 20
-    let eventsPerThreadCount = 100
+    let eventsPerThreadCount = 400
     let totalEvents = threadCount * eventsPerThreadCount
     insertEvents runner threadCount eventsPerThreadCount
     endTime <- liftIO getCPUTime

@@ -117,6 +117,7 @@ executable client
                        basic-prelude,
                        wreq,
                        pipes,
+                       ekg,
                        random >= 1.1,
                        text >= 1.2,
                        aeson >= 0.8,
