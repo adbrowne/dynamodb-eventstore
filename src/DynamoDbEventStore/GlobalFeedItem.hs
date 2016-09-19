@@ -28,7 +28,7 @@ import Pipes (Producer,yield)
 import           Data.Either.Combinators (eitherToError)
 
 import qualified DynamoDbEventStore.EventStoreCommands as EventStoreCommands
-import DynamoDbEventStore.EventStoreCommands (MonadEsDsl, dynamoWriteWithRetry, readFromDynamo, readExcept, QueryDirection(..),ValueUpdate(..), updateItem)
+import DynamoDbEventStore.EventStoreCommands (MonadEsDsl, dynamoWriteWithRetry, readFromDynamo, readExcept, QueryDirection(..),ValueUpdate(..), updateItem, wait)
 import DynamoDbEventStore.Types (PageKey(..), DynamoVersion, FeedEntry(..), DynamoKey(..), DynamoWriteResult,EventStoreActionError(..),DynamoReadResult(..), DynamoValues)
 import           Network.AWS.DynamoDB (AttributeValue,avB,avS,attributeValue)
 
@@ -105,18 +105,22 @@ readPageMustExist pageKey =
     readResult <- readPage pageKey
     maybe onError return readResult
 
-globalFeedItemsProducerInternal :: (MonadEsDsl m, MonadError EventStoreActionError m) => (PageKey -> PageKey) -> Maybe PageKey -> Producer GlobalFeedItem m ()
-globalFeedItemsProducerInternal _next (Just (PageKey (-1))) = return ()
-globalFeedItemsProducerInternal next Nothing = globalFeedItemsProducerInternal next (Just firstPageKey)
-globalFeedItemsProducerInternal next (Just startPage) = do
+globalFeedItemsProducerInternal :: (MonadEsDsl m, MonadError EventStoreActionError m) => (PageKey -> PageKey) -> Bool -> Maybe PageKey -> Producer GlobalFeedItem m ()
+globalFeedItemsProducerInternal _next _waitForNewPages (Just (PageKey (-1))) = return ()
+globalFeedItemsProducerInternal next waitForNewPages Nothing = globalFeedItemsProducerInternal next waitForNewPages (Just firstPageKey)
+globalFeedItemsProducerInternal next waitForNewPages (Just startPage) = do
   result <- lift $ readPage startPage
-  maybe (return()) yieldAndLoop result
+  maybe noResult yieldAndLoop result
   where
     yieldAndLoop a = do
       yield a
-      globalFeedItemsProducerInternal next $ Just (next startPage)
+      globalFeedItemsProducerInternal next waitForNewPages $ Just (next startPage)
+    noResult =
+      when waitForNewPages $ do
+          lift $ wait 1000
+          globalFeedItemsProducerInternal next waitForNewPages $ Just startPage
 
-globalFeedItemsProducer :: (MonadError EventStoreActionError m, MonadEsDsl m) => QueryDirection -> Maybe PageKey -> Producer GlobalFeedItem m ()
+globalFeedItemsProducer :: (MonadError EventStoreActionError m, MonadEsDsl m) => QueryDirection -> Bool -> Maybe PageKey -> Producer GlobalFeedItem m ()
 globalFeedItemsProducer QueryDirectionBackward = globalFeedItemsProducerInternal (\(PageKey p) -> PageKey (p - 1))
 globalFeedItemsProducer QueryDirectionForward = globalFeedItemsProducerInternal (\(PageKey p) -> PageKey (p + 1))
 

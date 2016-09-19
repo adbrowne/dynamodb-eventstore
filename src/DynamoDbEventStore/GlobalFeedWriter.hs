@@ -167,7 +167,7 @@ feedPageProducerForward completePageCache (Just page) = do
   maybe lookupDb yieldAndLoop cacheResult
   where
     lookupDb =
-      globalFeedItemsProducer QueryDirectionForward (Just page)
+      globalFeedItemsProducer QueryDirectionForward False (Just page)
       >->
       P.map globalFeedItemToFeedPage 
     globalFeedItemToFeedPage GlobalFeedItem{..} =

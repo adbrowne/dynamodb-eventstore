@@ -2,15 +2,23 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE RankNTypes #-}
 
 module Main where
 
 import BasicPrelude hiding (log)
+import System.CPUTime
+import Data.Foldable
+import Data.List.NonEmpty (NonEmpty(..))
+import qualified Control.Exception
 import Control.Concurrent.Async
+import qualified Data.Time.Clock                        as Time
+import qualified Data.UUID            as UUID
 import Control.Lens hiding (children, element)
 import Control.Monad.Except
 import Control.Monad.State
 import qualified Control.Monad.Trans.AWS as AWS
+import Pipes (await, Consumer, Pipe, runEffect, (>->), yield)
 import Data.Aeson
 import Data.Aeson.Diff
 import Data.Aeson.Encode
@@ -32,6 +40,8 @@ import qualified Data.Text.Lazy as TL
 import Data.Text.Lazy.Encoding as TL
 import qualified Data.UUID (UUID)
 import DynamoDbEventStore.EventStoreCommands
+import DynamoDbEventStore.Types
+import DynamoDbEventStore.EventStoreActions
 import DynamoDbEventStore.AmazonkaImplementation
 import qualified DynamoDbEventStore.GlobalFeedWriter
        as GlobalFeedWriter
@@ -119,6 +129,7 @@ data Command
     | CompareDownload CompareDownloadConfig
     | InsertData InsertDataConfig
     | SpeedTest 
+    | BenchMark 
 
 data DownloadFeedConfig = DownloadFeedConfig
     { downloadFeedConfigOutputDirectory :: Text
@@ -173,6 +184,11 @@ config =
              (Opt.info
                   speedTestOptions
                   (Opt.progDesc "Test bulk creation of pages")) <>
+         Opt.command
+             "benchmark"
+             (Opt.info
+                  benchmarkOptions
+                  (Opt.progDesc "Benchmark performance")) <>
          Opt.command
              "insertData"
              (Opt.info
@@ -236,6 +252,8 @@ config =
               Opt.help "test directory"))
     speedTestOptions :: Opt.Parser Command
     speedTestOptions = pure SpeedTest
+    benchmarkOptions :: Opt.Parser Command
+    benchmarkOptions = pure BenchMark
 
 saveResponse :: Text -> Text -> Response LByteString -> IO ()
 saveResponse directory filename response = do
@@ -517,6 +535,98 @@ start Config{configCommand = SpeedTest} = do
     result <- runDynamoCloud runtimeEnvironment writePages
     print result
     return ()
+start Config{configCommand = BenchMark} = do
+    logger <- liftIO $ AWS.newLogger AWS.Error System.IO.stdout
+    awsEnv <- set AWS.envLogger logger <$> AWS.newEnv AWS.Sydney AWS.Discover
+    tableName <- show <$> (randomIO :: IO UUID.UUID)
+    let runtimeEnvironment = 
+            RuntimeEnvironment
+            { _runtimeEnvironmentMetricLogs = nullMetrics
+            , _runtimeEnvironmentAmazonkaEnv = awsEnv
+            , _runtimeEnvironmentTableName = tableName
+            }
+    let runner = runDynamoLocal runtimeEnvironment 
+    void . runner $ buildTable tableName
+    startTime <- liftIO getCPUTime
+    let threadCount = 20
+    let eventsPerThreadCount = 100
+    let totalEvents = threadCount * eventsPerThreadCount
+    insertEvents runner threadCount eventsPerThreadCount
+    endTime <- liftIO getCPUTime
+    let t = fromIntegral (endTime - startTime) * 1e-12
+    putStrLn $ "Inserted " <> show totalEvents <> " events. Events per second: " <> show (fromIntegral totalEvents/ t)
+    _ <- async $ runGlobalFeedWriter runner
+    b <- runner . runExceptT . runEffect $
+      GlobalFeedItem.globalFeedItemsProducer QueryDirectionForward True Nothing
+      >-> toFeedEntries
+      >-> takeXItems totalEvents
+    print b
+    return ()
+
+toFeedEntries :: (Monad m) => Pipe GlobalFeedItem.GlobalFeedItem FeedEntry m ()
+toFeedEntries = forever $ do
+  x <- await
+  let feedEntries = GlobalFeedItem.globalFeedItemFeedEntries x
+  forM_ feedEntries yield
+
+takeXItems :: (Monad m, MonadIO m) => Int -> Consumer FeedEntry m ()
+takeXItems total =
+  go total
+  where
+    go 0 = return ()
+    go c = do
+      when (mod c 100 == 0) $ 
+        lift . putStrLn $ "read " <> show (total - c) <> " items"
+      void await
+      go (c - 1)
+
+runGlobalFeedWriter :: (forall a. MyAwsM a -> IO (Either InterpreterError a))
+                     -> IO ()
+runGlobalFeedWriter runner = do
+      pageKeyPositionCache <- newCacheAws 10
+      result <-
+          runner $
+          runExceptT $
+          evalStateT
+              (GlobalFeedWriter.main pageKeyPositionCache)
+              GlobalFeedWriter.emptyGlobalFeedWriterState
+      case result of
+          (Left e) -> print e
+          (Right (Left e)) -> print e
+          _ -> return ()
+
+randomEvent :: IO PostEventRequest
+randomEvent = do
+  currentTime <- liftIO Time.getCurrentTime
+  (eventId :: Data.UUID.UUID) <- liftIO randomIO
+  (streamId :: Data.UUID.UUID) <- liftIO randomIO
+  let eventEntry = EventEntry {
+    eventEntryData    = "Whatever",
+    eventEntryType    = EventType "Blah",
+    eventEntryEventId = EventId eventId,
+    eventEntryCreated = EventTime currentTime,
+    eventEntryIsJson  = False }
+  return PostEventRequest {
+           perStreamId = show streamId,
+           perExpectedVersion = Just 0,
+           perEvents =  eventEntry :| [] }
+
+insertEvents :: (forall a. MyAwsM a -> IO (Either InterpreterError a)) -> Int -> Int -> IO ()
+insertEvents runIO threadCount eventsPerThreadCount = do
+  threads <- replicateM threadCount (async insertThread) 
+  traverse_ Control.Concurrent.Async.wait threads
+  where
+    insertThread = replicateM_ eventsPerThreadCount insertEvent
+    insertEvent = runIO $ throwOnLeft $ do
+      evt <- liftIO randomEvent
+      _ <- postEventRequestProgram evt
+      return ()
+
+throwOnLeft :: MonadEsDsl m => ExceptT GlobalFeedWriter.EventStoreActionError m () -> m ()
+throwOnLeft action = do
+  result <- runExceptT action
+  case result of Left e   -> Control.Exception.throw e
+                 Right () -> return ()
 
 writePages :: MyAwsM ()
 writePages = do
