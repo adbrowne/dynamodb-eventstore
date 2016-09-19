@@ -586,7 +586,7 @@ start Config{configCommand = BenchMark} = do
     void . runner $ buildTable tableName
     startTime <- liftIO getCPUTime
     let threadCount = 20
-    let eventsPerThreadCount = 400
+    let eventsPerThreadCount = 1000
     let totalEvents = threadCount * eventsPerThreadCount
     insertEvents runner threadCount eventsPerThreadCount
     endTime <- liftIO getCPUTime

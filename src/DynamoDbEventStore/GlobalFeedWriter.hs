@@ -139,7 +139,7 @@ verifyPagesThread = do
   verifiedPages <- newCounter "dynamodb-eventstore.verifiedPages"
   verifyItemQ <- newQueue
   verifyDoneQ <- newQueue
-  replicateM_ 25 $ forkChild "verifyItemsThread" $ verifyItemsThread verifiedItems verifyItemQ verifyDoneQ
+  replicateM_ 10 $ forkChild "verifyItemsThread" $ verifyItemsThread verifiedItems verifyItemQ verifyDoneQ
   startVerifying verifiedPages verifyItemQ verifyDoneQ
 
 data ToBePaged =
@@ -330,7 +330,7 @@ main _pagePositionCache = do
   itemsReadyForGlobalFeed <- newQueue
   completePageCache <- newCache 1000
   let startCollectAncestorsThread = forkChild' "collectAncestorsThread" $ collectAncestorsThread itemsToPageQueue itemsReadyForGlobalFeed
-  replicateM_ 100 startCollectAncestorsThread
+  replicateM_ 10 startCollectAncestorsThread
   forkChild' "writeItemsToPageThread" $ writeItemsToPageThread completePageCache itemsReadyForGlobalFeed
-  forkChild' "verifyPagesThread" $ verifyPagesThread
+  forkChild' "verifyPagesThread" verifyPagesThread
   scanNeedsPagingIndex itemsToPageQueue
