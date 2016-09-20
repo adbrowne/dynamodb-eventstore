@@ -9,11 +9,16 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE DeriveFunctor #-}
 
 module DynamoDbEventStore.DynamoCmdInterpreter
   (TestState(..)
   ,LogEvent(..)
   ,ProgramId(..)
+  ,DynamoCmdM
+  ,scanNeedsPaging'
+  ,log'
   ,runPrograms
   ,runProgramsWithState
   ,runProgramGenerator
@@ -29,11 +34,14 @@ module DynamoDbEventStore.DynamoCmdInterpreter
   where
 
 import BasicPrelude
+import qualified Prelude
 import Control.Lens
+import           Control.Monad.Free.Church
 import Control.Monad.Reader
 import Control.Monad.State
 import Data.Functor (($>))
 import qualified Data.Map.Strict as Map
+import qualified DodgerBlue
 import DodgerBlue.Testing
 import qualified DynamoDbEventStore.InMemoryCache as MemCache
 import qualified DynamoDbEventStore.InMemoryDynamoTable as MemDb
@@ -124,6 +132,45 @@ instance RandomFailure m =>
 instance RandomFailure m =>
          RandomFailure (ReaderT r m) where
     checkFail = lift . checkFail
+
+data DynamoCmd next where
+  ReadFromDynamo' :: DynamoKey -> (Maybe DynamoReadResult -> next) -> DynamoCmd next
+  WriteToDynamo' ::  DynamoKey -> DynamoValues -> DynamoVersion -> (DynamoWriteResult -> next) -> DynamoCmd next
+  QueryTable' :: QueryDirection -> Text -> Natural -> Maybe Int64 -> ([DynamoReadResult] -> next) -> DynamoCmd next
+  UpdateItem' :: DynamoKey -> HashMap Text ValueUpdate -> (Bool -> next) -> DynamoCmd next
+  ScanNeedsPaging' :: ([DynamoKey] -> next) -> DynamoCmd next
+  NewCache' :: (Typeable k, Typeable v) => Integer -> (MemCache.Cache k v -> next) -> DynamoCmd next
+  CacheInsert' :: (Ord k, Typeable k, Typeable v) => MemCache.Cache k v -> k -> v -> next -> DynamoCmd next
+  CacheLookup' :: (Typeable k, Ord k, Typeable v) => MemCache.Cache k v -> k -> (Maybe v -> next) -> DynamoCmd next
+  Wait' :: Int -> next -> DynamoCmd next
+  Log' :: LogLevel -> Text -> next -> DynamoCmd next
+
+showResult :: String -> String -> String
+showResult myString existing = myString <> existing
+
+instance Show (DynamoCmd n) where
+  showsPrec _ (ReadFromDynamo' key _) =
+    showResult $ "ReadFromDynamo' " <> Prelude.show key
+  showsPrec _ (WriteToDynamo' key values version _) =
+    showResult $ "WriteToDynamo' " <> Prelude.show key <> " " <> Prelude.show values <> " " <> Prelude.show version
+  showsPrec _ (QueryTable' direction key maxEvents startEvent _) =
+    showResult $ "QueryTable' " <> Prelude.show direction <> " " <> Prelude.show key <> " " <> Prelude.show maxEvents <> " " <> Prelude.show startEvent
+  showsPrec _ (UpdateItem' key _values _) = 
+    showResult $ "UpdateItem' " <> Prelude.show key
+  showsPrec _ (ScanNeedsPaging' _) =
+    showResult "ScanNeedsPaging'"
+  showsPrec _ (NewCache' size _) =
+    showResult $ "NewCache' " <> Prelude.show size
+  showsPrec _ (CacheInsert' c _ _ _) =
+    showResult $ "CacheInsert' " <> Prelude.show c
+  showsPrec _ (CacheLookup' c _ _) =
+    showResult $ "CacheLookup' " <> Prelude.show c
+  showsPrec _ (Wait' milliseconds _) =
+    showResult $ "Wait' " <> Prelude.show milliseconds
+  showsPrec _ (Log' logLevel msg _) =
+    showResult $ "Log' " <> Prelude.show logLevel <> " " <> Prelude.show msg
+
+deriving instance Functor DynamoCmd
 
 getGetReadResultCmd
     :: (MonadState TestState m, MonadReader ProgramId m)
@@ -223,7 +270,7 @@ runScanNeedsPagingCmd n = do
 
 runNewCacheCmd
     :: (MonadState TestState m)
-    => Integer -> ((Cache k v) -> n) -> m n
+    => Integer -> ((MemCache.Cache k v) -> n) -> m n
 runNewCacheCmd size n = do
     (cache',caches') <- uses testStateCache (MemCache.newCache size)
     testStateCache .= caches'
@@ -231,7 +278,7 @@ runNewCacheCmd size n = do
 
 runInsertCacheCmd
     :: (MonadState TestState m, Ord k, Typeable k, Typeable v)
-    => Cache k v -> k -> v -> n -> m n
+    => MemCache.Cache k v -> k -> v -> n -> m n
 runInsertCacheCmd c k v n = do
     caches' <- uses testStateCache (MemCache.insertCache c k v)
     testStateCache .= caches'
@@ -239,7 +286,7 @@ runInsertCacheCmd c k v n = do
 
 runLookupCacheCmd
     :: (MonadState TestState m, Ord k, Typeable k, Typeable v)
-    => Cache k v -> k -> (Maybe v -> n) -> m n
+    => MemCache.Cache k v -> k -> (Maybe v -> n) -> m n
 runLookupCacheCmd c k n = do
     (result,caches') <- uses testStateCache (MemCache.lookupCache c k)
     testStateCache .= caches'
@@ -266,6 +313,65 @@ interpretDslCommand threadName cmd = runReaderT (go cmd) (ProgramId threadName)
     go (Wait' _milliseconds n) = return n
     go (Log' _logLevel msg n) = (addTextLog Debug msg >> return n)
 
+wait' :: (MonadFree (DodgerBlue.CustomDsl q DynamoCmd) m) => Int -> m ()
+wait' waitSeconds = DodgerBlue.Testing.customCmd $ Wait' waitSeconds ()
+
+log' :: LogLevel -> Text -> DynamoCmdM q ()
+log' level message = DynamoCmdM $ DodgerBlue.Testing.customCmd $ Log' level message ()
+
+scanNeedsPaging' :: DynamoCmdM q [DynamoKey]
+scanNeedsPaging' = DynamoCmdM $ DodgerBlue.Testing.customCmd $ ScanNeedsPaging' id
+
+updateItem' :: (MonadFree (DodgerBlue.CustomDsl q DynamoCmd) m) => DynamoKey -> HashMap Text ValueUpdate -> m Bool
+updateItem' key updates = DodgerBlue.Testing.customCmd $ UpdateItem' key updates id
+
+readFromDynamo' :: (MonadFree (DodgerBlue.CustomDsl q DynamoCmd) m) => DynamoKey -> m (Maybe DynamoReadResult)
+readFromDynamo' key = DodgerBlue.Testing.customCmd $ ReadFromDynamo' key id
+
+writeToDynamo' :: (MonadFree (DodgerBlue.CustomDsl q DynamoCmd) m) => DynamoKey -> DynamoValues -> DynamoVersion -> m DynamoWriteResult
+writeToDynamo' key values version = DodgerBlue.Testing.customCmd $ WriteToDynamo' key values version id
+
+queryTable' :: (MonadFree (DodgerBlue.CustomDsl q DynamoCmd) m) => QueryDirection -> Text -> Natural -> Maybe Int64 -> m [DynamoReadResult]
+queryTable' direction hashKey maxEvents startEvent = DodgerBlue.Testing.customCmd $ QueryTable' direction hashKey maxEvents startEvent id
+
+newCache' :: (MonadFree (DodgerBlue.CustomDsl q DynamoCmd) m, Typeable k, Typeable v) => Integer -> m (MemCache.Cache k v)
+newCache' size = DodgerBlue.Testing.customCmd $ NewCache' size id
+
+cacheInsert' :: (MonadFree (DodgerBlue.CustomDsl q DynamoCmd) m, Ord k, Typeable k, Typeable v) => MemCache.Cache k v -> k -> v -> m ()
+cacheInsert' c key value = DodgerBlue.Testing.customCmd $ CacheInsert' c key value ()
+
+cacheLookup' :: (MonadFree (DodgerBlue.CustomDsl q DynamoCmd) m, Typeable k, Typeable v, Ord k) => MemCache.Cache k v -> k -> m (Maybe v)
+cacheLookup' c key = DodgerBlue.Testing.customCmd $ CacheLookup' c key id
+
+newtype DynamoCmdM q m =
+  DynamoCmdM { unDynamoCmdM :: F (DodgerBlue.CustomDsl q DynamoCmd) m}
+  deriving (Monad, Applicative, Functor)
+
+instance MonadEsDsl (DynamoCmdM q) where
+  type QueueType (DynamoCmdM q) = q
+  type CacheType (DynamoCmdM q) = MemCache.Cache
+  type CounterType (DynamoCmdM q) = ()
+  newCounter _ = return ()
+  incrimentCounter _ = return ()
+  newQueue = DynamoCmdM DodgerBlue.newQueue
+  newCache = DynamoCmdM . newCache'
+  cacheInsert a b c = DynamoCmdM $ cacheInsert' a b c
+  cacheLookup a b = DynamoCmdM $ cacheLookup' a b
+  writeQueue a b = DynamoCmdM $ DodgerBlue.writeQueue a b
+  readQueue = DynamoCmdM . DodgerBlue.readQueue
+  tryReadQueue = DynamoCmdM . DodgerBlue.tryReadQueue
+  readFromDynamo = DynamoCmdM . readFromDynamo'
+  writeToDynamo a b c = DynamoCmdM $ writeToDynamo' a b c
+  updateItem a b = DynamoCmdM $ updateItem' a b
+  queryTable a b c d = DynamoCmdM $ queryTable' a b c d 
+  log a b = log' a b
+  scanNeedsPaging = scanNeedsPaging'
+  wait = DynamoCmdM . wait'
+  setPulseStatus = DynamoCmdM . DodgerBlue.setPulseStatus
+
+instance MonadEsDslWithFork (DynamoCmdM q) where
+  forkChild a b = DynamoCmdM $ DodgerBlue.forkChild a (unDynamoCmdM b)
+
 myInterpret :: Text -> DynamoCmd a -> StateT TestState Identity a
 myInterpret = interpretDslCommand
 
@@ -274,7 +380,7 @@ runStateProgram :: ProgramId
                 -> TestState
                 -> (a, TestState)
 runStateProgram (ProgramId programId) p initialTestState = 
-    runState (evalDslTest myInterpret programId p) initialTestState
+    runState (evalDslTest myInterpret programId (unDynamoCmdM p)) initialTestState
 
 evalProgram :: ProgramId -> DynamoCmdM Queue a -> TestState -> a
 evalProgram programId p initialTestState = 
@@ -316,7 +422,7 @@ runProgramsWithState
     -> QC.Gen (Map ProgramId a, TestState)
 runProgramsWithState programs startTestState = 
     let startExecutionTree = 
-            ExecutionTree $ (Map.mapKeys unProgramId $ fst <$> programs)
+            ExecutionTree $ (Map.mapKeys unProgramId $ unDynamoCmdM . fst <$> programs)
         mapResult (ExecutionTree t) = Map.foldrWithKey accInner Map.empty t
     in do over _1 mapResult <$>
               (runPrograms' startExecutionTree startTestState)
@@ -334,4 +440,4 @@ runPrograms programs = runProgramsWithState programs emptyTestState
 runProgramGenerator :: ProgramId -> DynamoCmdM Queue a -> TestState -> QC.Gen a
 runProgramGenerator (ProgramId programId) p initialTestState = 
     fst <$>
-    runStateT (evalDslTest interpretDslCommand programId p) initialTestState
+    runStateT (evalDslTest interpretDslCommand programId (unDynamoCmdM p)) initialTestState

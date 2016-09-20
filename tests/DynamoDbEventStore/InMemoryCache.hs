@@ -5,13 +5,13 @@ module DynamoDbEventStore.InMemoryCache
   ,emptyCache
   ,insertCache
   ,lookupCache
+  ,Cache(..)
   ,Caches) where
 
 import           BasicPrelude
 import qualified Data.Cache.LRU                        as LRU
 import           Data.Dynamic
 import qualified Data.Map.Strict                       as Map
-import           DynamoDbEventStore.EventStoreCommands hiding (newCache)
 import           Safe
 
 data Caches = Caches
@@ -26,6 +26,10 @@ emptyCache =
     cachesNextIndex = 0
   , cachesCacheMap = mempty
   }
+
+newtype Cache k v = Cache
+    { unCache :: Int
+    } deriving ((Show))
 
 newCache :: Integer -> Caches -> (Cache k v, Caches)
 newCache size Caches{..} =
