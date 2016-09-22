@@ -1419,7 +1419,7 @@ subsequentWriteWithSameEventIdDoesNotAppendSecondEventWhenFirstWriteHadMultipleE
         postSubsequentEvent = 
             postEvents $
             sampleEventEntry
-            { eventEntryEventId = eventId1
+            { eventEntryEventId = eventId2
             } :|
             []
         program = 

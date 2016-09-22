@@ -35,6 +35,7 @@ module DynamoDbEventStore.EventStoreActions(
   recordedEventProducerBackward) where
 
 import           BasicPrelude
+import           DynamoDbEventStore.ProjectPrelude
 import           Control.Monad.Except
 import           Data.Foldable
 import qualified Data.ByteString.Lazy                  as BL
@@ -157,7 +158,6 @@ postEventRequestProgram (PostEventRequest sId ev eventEntries) = do
     getDynamoKey :: (DynamoCmdWithErrors q m) => Text -> Maybe Int64 -> EventId -> m (Either EventWriteResult Int64)
     getDynamoKey streamId Nothing eventId = do
       lastEvent <- P.head $ recordedEventProducerBackward (StreamId streamId) Nothing 1
-      -- todo should we be getting the lastEventNumberHere
       let lastEventNumber = maybe (-1) recordedEventNumber lastEvent
       let lastEventIdIsNotTheSame = maybe True ((/= eventId) . recordedEventId) lastEvent
       if lastEventIdIsNotTheSame then

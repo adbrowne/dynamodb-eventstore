@@ -21,6 +21,7 @@ library
   exposed-modules:     DynamoDbEventStore.Webserver,
                        DynamoDbEventStore.Types,
                        DynamoDbEventStore.EventStoreCommands,
+                       DynamoDbEventStore.ProjectPrelude,
                        DynamoDbEventStore.Storage.HeadItem,
                        DynamoDbEventStore.Storage.StreamItem,
                        DynamoDbEventStore.Storage.GlobalStreamItem,
