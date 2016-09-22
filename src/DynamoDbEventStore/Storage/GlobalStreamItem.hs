@@ -3,7 +3,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 
-module DynamoDbEventStore.GlobalFeedItem
+module DynamoDbEventStore.Storage.GlobalStreamItem
   (GlobalFeedItem(..)
   ,globalFeedItemsProducer
   ,PageStatus(..)

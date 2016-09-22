@@ -32,9 +32,9 @@ import qualified Data.Text                             as T
 import qualified DynamoDbEventStore.Constants          as Constants
 import           DynamoDbEventStore.EventStoreCommands
 import           DynamoDbEventStore.EventStoreQueries (streamEntryProducer)
-import           DynamoDbEventStore.HeadEntry (getLastFullPage, getLastVerifiedPage, trySetLastVerifiedPage)
-import           DynamoDbEventStore.StreamEntry (streamEntryFirstEventNumber,StreamEntry(..), getStreamIdFromDynamoKey)
-import           DynamoDbEventStore.GlobalFeedItem (GlobalFeedItem(..), globalFeedItemsProducer,PageStatus(..),writeGlobalFeedItem, updatePageStatus, firstPageKey, readPage)
+import           DynamoDbEventStore.Storage.HeadItem (getLastFullPage, getLastVerifiedPage, trySetLastVerifiedPage)
+import           DynamoDbEventStore.Storage.StreamItem (streamEntryFirstEventNumber,StreamEntry(..), getStreamIdFromDynamoKey)
+import           DynamoDbEventStore.Storage.GlobalStreamItem (GlobalFeedItem(..), globalFeedItemsProducer,PageStatus(..),writeGlobalFeedItem, updatePageStatus, firstPageKey, readPage)
 import           Pipes ((>->),Producer,yield)
 import qualified Pipes.Prelude              as P
 import           DynamoDbEventStore.Types

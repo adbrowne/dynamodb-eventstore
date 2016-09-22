@@ -51,7 +51,7 @@ import qualified DynamoDbEventStore.EventStoreActions
 import DynamoDbEventStore.EventStoreCommands
 import qualified DynamoDbEventStore.GlobalFeedWriter
        as GlobalFeedWriter
-import qualified DynamoDbEventStore.GlobalFeedItem
+import qualified DynamoDbEventStore.Storage.GlobalStreamItem
        as GlobalFeedItem
 import DynamoDbEventStore.Types
 

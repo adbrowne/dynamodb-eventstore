@@ -42,8 +42,8 @@ import           Data.List.NonEmpty                    (NonEmpty (..))
 import qualified Data.List.NonEmpty                    as NonEmpty
 import qualified DynamoDbEventStore.Constants          as Constants
 import           DynamoDbEventStore.EventStoreQueries
-import           DynamoDbEventStore.GlobalFeedItem (readPage, GlobalFeedItem(..))
-import           DynamoDbEventStore.StreamEntry (StreamEntry(..), dynamoReadResultToStreamEntry, EventEntry(..),eventTypeToText, EventType(..),EventTime(..),streamEntryToValues,unEventTime)
+import           DynamoDbEventStore.Storage.GlobalStreamItem (readPage, GlobalFeedItem(..))
+import           DynamoDbEventStore.Storage.StreamItem (StreamEntry(..), dynamoReadResultToStreamEntry, EventEntry(..),eventTypeToText, EventType(..),EventTime(..),streamEntryToValues,unEventTime)
 import           DynamoDbEventStore.EventStoreCommands hiding (readField)
 import           DynamoDbEventStore.GlobalFeedWriter   (DynamoCmdWithErrors)
 import qualified DynamoDbEventStore.GlobalFeedWriter   as GlobalFeedWriter

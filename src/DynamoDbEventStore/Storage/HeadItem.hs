@@ -2,7 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE FlexibleContexts #-}
-module DynamoDbEventStore.HeadEntry (
+module DynamoDbEventStore.Storage.HeadItem (
   getLastFullPage
   ,trySetLastFullPage
   ,trySetLastVerifiedPage

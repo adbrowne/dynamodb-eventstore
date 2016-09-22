@@ -5,7 +5,7 @@
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE OverloadedStrings          #-}
 
-module DynamoDbEventStore.StreamEntry (
+module DynamoDbEventStore.Storage.StreamItem (
   StreamEntry(..)
   ,dynamoReadResultToStreamEntry
   , getStreamIdFromDynamoKey

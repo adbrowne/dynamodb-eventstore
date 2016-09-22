@@ -15,7 +15,7 @@ import qualified Pipes.Prelude as P
 import DynamoDbEventStore.EventStoreCommands (MonadEsDsl,queryTable)
 import DynamoDbEventStore.Types (QueryDirection,StreamId(..),DynamoReadResult(..),DynamoKey(..),EventStoreActionError)
 import qualified DynamoDbEventStore.Constants          as Constants
-import DynamoDbEventStore.StreamEntry (StreamEntry, dynamoReadResultToStreamEntry)
+import DynamoDbEventStore.Storage.StreamItem (StreamEntry, dynamoReadResultToStreamEntry)
 
 dynamoReadResultToEventNumber :: DynamoReadResult -> Int64
 dynamoReadResultToEventNumber (DynamoReadResult (DynamoKey _key eventNumber) _version _values) = eventNumber

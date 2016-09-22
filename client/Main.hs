@@ -49,7 +49,7 @@ import DynamoDbEventStore.EventStoreActions
 import DynamoDbEventStore.AmazonkaImplementation
 import qualified DynamoDbEventStore.GlobalFeedWriter
        as GlobalFeedWriter
-import qualified DynamoDbEventStore.GlobalFeedItem
+import qualified DynamoDbEventStore.Storage.GlobalStreamItem
        as GlobalFeedItem
 import Network.Wreq
 import qualified Options.Applicative as Opt
