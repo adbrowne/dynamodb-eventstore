@@ -42,7 +42,7 @@ import           Data.List.NonEmpty                    (NonEmpty (..))
 import qualified Data.List.NonEmpty                    as NonEmpty
 import qualified DynamoDbEventStore.Constants          as Constants
 import           DynamoDbEventStore.Storage.GlobalStreamItem (readPage, GlobalFeedItem(..))
-import           DynamoDbEventStore.Storage.StreamItem (StreamEntry(..), EventEntry(..),eventTypeToText, EventType(..),EventTime(..),streamEntryToValues,unEventTime,streamEntryProducer)
+import           DynamoDbEventStore.Storage.StreamItem (StreamEntry(..), EventEntry(..),eventTypeToText, EventType(..),EventTime(..),unEventTime,streamEntryProducer,writeStreamItem)
 import           DynamoDbEventStore.EventStoreCommands hiding (readField)
 import           DynamoDbEventStore.GlobalFeedWriter   (DynamoCmdWithErrors)
 import qualified DynamoDbEventStore.GlobalFeedWriter   as GlobalFeedWriter
@@ -148,14 +148,13 @@ postEventRequestProgram (PostEventRequest sId ev eventEntries) = do
                            Right dynamoKey -> writeMyEvent dynamoKey
   where
     writeMyEvent :: (DynamoCmdWithErrors q m) => DynamoKey -> m EventWriteResult
-    writeMyEvent dynamoKey@DynamoKey{..} = do
+    writeMyEvent DynamoKey{..} = do
       let streamEntry = StreamEntry {
             streamEntryStreamId = StreamId sId,
             streamEntryFirstEventNumber = dynamoKeyEventNumber,
             streamEntryEventEntries = eventEntries,
             streamEntryNeedsPaging = True }
-      let values = streamEntryToValues streamEntry
-      writeResult <- GlobalFeedWriter.dynamoWriteWithRetry dynamoKey values 0
+      writeResult <- writeStreamItem streamEntry
       return $ toEventResult writeResult
     getDynamoKey :: (DynamoCmdWithErrors q m) => Text -> Maybe Int64 -> EventId -> m (Either EventWriteResult DynamoKey)
     getDynamoKey streamId Nothing eventId = do

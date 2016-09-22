@@ -13,6 +13,7 @@ module DynamoDbEventStore.Storage.StreamItem (
   , eventTypeToText
   , unEventTime
   , streamEntryToValues
+  , writeStreamItem
   , EventType(..)
   , EventEntry(..)
   , EventTime(..)
@@ -36,7 +37,7 @@ import           Data.Time.Calendar (Day)
 import qualified Data.ByteString.Lazy                  as BL
 import           GHC.Generics
 import GHC.Natural
-import DynamoDbEventStore.EventStoreCommands (MonadEsDsl,queryTable)
+import DynamoDbEventStore.EventStoreCommands (MonadEsDsl,queryTable,dynamoWriteWithRetry)
 import           DynamoDbEventStore.AmazonkaImplementation (readFieldGeneric)
 import           Network.AWS.DynamoDB (AttributeValue,avB,avN,avS,attributeValue)
 import qualified Pipes.Prelude as P
@@ -45,7 +46,7 @@ import qualified Test.QuickCheck                       as QC
 import           Test.QuickCheck.Instances()
 import Pipes (Producer,yield,(>->))
 
-import DynamoDbEventStore.Types (StreamId(..),DynamoReadResult(..),DynamoKey(..), EventId(..),EventStoreActionError(..),DynamoValues,QueryDirection)
+import DynamoDbEventStore.Types (StreamId(..),DynamoReadResult(..),DynamoKey(..), EventId(..),EventStoreActionError(..),DynamoValues,QueryDirection,DynamoWriteResult)
 import qualified DynamoDbEventStore.Constants          as Constants
 
 newtype EventType = EventType Text deriving (Show, Eq, Ord, IsString)
@@ -176,3 +177,13 @@ streamEntryProducer :: (MonadEsDsl m, MonadError EventStoreActionError m ) => Qu
 streamEntryProducer direction streamId startEvent batchSize =
   let source = readStreamProducer direction streamId startEvent batchSize
   in source >-> P.mapM dynamoReadResultToStreamEntry
+
+streamEntryToDynamoKey :: StreamEntry -> DynamoKey
+streamEntryToDynamoKey StreamEntry { streamEntryStreamId = StreamId streamId, streamEntryFirstEventNumber = eventNumber } =
+  DynamoKey 
+    (Constants.streamDynamoKeyPrefix <> streamId) eventNumber
+
+writeStreamItem :: (MonadEsDsl m, MonadError EventStoreActionError m) => StreamEntry -> m DynamoWriteResult
+writeStreamItem streamEntry@StreamEntry{..} =
+   let values = streamEntryToValues streamEntry
+   in dynamoWriteWithRetry (streamEntryToDynamoKey streamEntry) values 0
