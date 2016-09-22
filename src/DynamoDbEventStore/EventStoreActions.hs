@@ -35,7 +35,6 @@ module DynamoDbEventStore.EventStoreActions(
   recordedEventProducerBackward) where
 
 import           BasicPrelude
-import           DynamoDbEventStore.ProjectPrelude
 import           Control.Monad.Except
 import           Data.Foldable
 import qualified Data.ByteString.Lazy                  as BL
