@@ -11,6 +11,7 @@ module DynamoDbEventStore.Storage.StreamItem (
   , dynamoReadResultToStreamEntry
   , getStreamIdFromDynamoKey
   , eventTypeToText
+  , getLastStreamItem
   , unEventTime
   , streamEntryToValues
   , writeStreamItem
@@ -46,7 +47,7 @@ import qualified Test.QuickCheck                       as QC
 import           Test.QuickCheck.Instances()
 import Pipes (Producer,yield,(>->))
 
-import DynamoDbEventStore.Types (StreamId(..),DynamoReadResult(..),DynamoKey(..), EventId(..),EventStoreActionError(..),DynamoValues,QueryDirection,DynamoWriteResult)
+import DynamoDbEventStore.Types (StreamId(..),DynamoReadResult(..),DynamoKey(..), EventId(..),EventStoreActionError(..),DynamoValues,QueryDirection(..),DynamoWriteResult)
 import qualified DynamoDbEventStore.Constants          as Constants
 
 newtype EventType = EventType Text deriving (Show, Eq, Ord, IsString)
@@ -187,3 +188,7 @@ writeStreamItem :: (MonadEsDsl m, MonadError EventStoreActionError m) => StreamE
 writeStreamItem streamEntry@StreamEntry{..} =
    let values = streamEntryToValues streamEntry
    in dynamoWriteWithRetry (streamEntryToDynamoKey streamEntry) values 0
+
+getLastStreamItem :: (MonadEsDsl m, MonadError EventStoreActionError m) => StreamId -> m (Maybe StreamEntry)
+getLastStreamItem streamId =
+  P.head $ streamEntryProducer QueryDirectionBackward streamId Nothing 1 
