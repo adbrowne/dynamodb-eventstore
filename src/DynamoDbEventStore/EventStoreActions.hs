@@ -40,11 +40,11 @@ import           Data.Foldable
 import qualified Data.ByteString.Lazy                  as BL
 import           Data.List.NonEmpty                    (NonEmpty (..))
 import qualified Data.List.NonEmpty                    as NonEmpty
+import qualified DynamoDbEventStore.Storage.HeadItem as HeadItem
 import           DynamoDbEventStore.Storage.GlobalStreamItem (readPage, GlobalFeedItem(..))
 import           DynamoDbEventStore.Storage.StreamItem (StreamEntry(..), EventEntry(..),eventTypeToText, EventType(..),EventTime(..),unEventTime,streamEntryProducer,writeStreamItem, getLastStreamItem)
 import           DynamoDbEventStore.EventStoreCommands hiding (readField)
 import           DynamoDbEventStore.GlobalFeedWriter   (DynamoCmdWithErrors)
-import qualified DynamoDbEventStore.GlobalFeedWriter   as GlobalFeedWriter
 import           DynamoDbEventStore.Types
 import           GHC.Natural
 import           Pipes                                 hiding (ListT, runListT)
@@ -341,7 +341,7 @@ getFirstPageBackward position@GlobalFeedPosition{..} = do
 
 getGlobalFeedBackward :: DynamoCmdWithErrors q m => Maybe GlobalFeedPosition -> Producer (GlobalFeedPosition, EventKey) m ()
 getGlobalFeedBackward Nothing = do
-  lastKnownPage <- lift GlobalFeedWriter.getLastFullPage
+  lastKnownPage <- lift HeadItem.getLastFullPage
   let lastKnownPage' = fromMaybe (PageKey 0) lastKnownPage
   lastItem <- lift $ P.last (getPageItemsForward lastKnownPage')
   let lastPosition = fst <$> lastItem

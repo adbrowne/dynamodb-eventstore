@@ -9,7 +9,6 @@ module DynamoDbEventStore.GlobalFeedWriter (
   main,
   dynamoWriteWithRetry,
   entryEventCount,
-  getLastFullPage,
   emptyGlobalFeedWriterState,
   GlobalFeedWriterState(..),
   PageKeyPosition(..),
@@ -31,7 +30,7 @@ import qualified Data.Set                              as Set
 import qualified Data.Text                             as T
 import qualified DynamoDbEventStore.Constants          as Constants
 import           DynamoDbEventStore.EventStoreCommands
-import           DynamoDbEventStore.Storage.HeadItem (getLastFullPage, getLastVerifiedPage, trySetLastVerifiedPage)
+import           DynamoDbEventStore.Storage.HeadItem (getLastVerifiedPage, trySetLastVerifiedPage)
 import           DynamoDbEventStore.Storage.StreamItem (streamEntryFirstEventNumber,StreamEntry(..), getStreamIdFromDynamoKey,streamEntryProducer)
 import           DynamoDbEventStore.Storage.GlobalStreamItem (GlobalFeedItem(..), globalFeedItemsProducer,PageStatus(..),writeGlobalFeedItem, updatePageStatus, firstPageKey, readPage)
 import           Pipes ((>->),Producer,yield)
