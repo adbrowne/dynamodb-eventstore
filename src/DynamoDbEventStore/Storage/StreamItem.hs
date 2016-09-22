@@ -4,17 +4,21 @@
 {-# LANGUAGE RankNTypes                 #-}
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
 
 module DynamoDbEventStore.Storage.StreamItem (
-  StreamEntry(..)
-  ,dynamoReadResultToStreamEntry
+    StreamEntry(..)
+  , dynamoReadResultToStreamEntry
   , getStreamIdFromDynamoKey
   , eventTypeToText
   , unEventTime
   , streamEntryToValues
   , EventType(..)
   , EventEntry(..)
-  , EventTime(..)) where
+  , EventTime(..)
+  , readStreamProducer
+  , dynamoReadResultToEventNumber
+  , streamEntryProducer) where
 
 import BasicPrelude
 import Control.Lens
@@ -31,13 +35,18 @@ import qualified Data.Text.Lazy.Encoding               as TL
 import           Data.Time.Calendar (Day)
 import qualified Data.ByteString.Lazy                  as BL
 import           GHC.Generics
+import GHC.Natural
+import DynamoDbEventStore.EventStoreCommands (MonadEsDsl,queryTable)
+--import DynamoDbEventStore.Types (StreamId(..),DynamoReadResult(..),DynamoKey(..),EventStoreActionError)
 import           DynamoDbEventStore.AmazonkaImplementation (readFieldGeneric)
 import           Network.AWS.DynamoDB (AttributeValue,avB,avN,avS,attributeValue)
+import qualified Pipes.Prelude as P
 import           TextShow (showt)
 import qualified Test.QuickCheck                       as QC
 import           Test.QuickCheck.Instances()
+import Pipes (Producer,yield,(>->))
 
-import DynamoDbEventStore.Types (StreamId(..),DynamoReadResult(..),DynamoKey(..), EventId(..),EventStoreActionError(..),DynamoValues)
+import DynamoDbEventStore.Types (StreamId(..),DynamoReadResult(..),DynamoKey(..), EventId(..),EventStoreActionError(..),DynamoValues,QueryDirection)
 import qualified DynamoDbEventStore.Constants          as Constants
 
 newtype EventType = EventType Text deriving (Show, Eq, Ord, IsString)
@@ -146,3 +155,25 @@ streamEntryToValues StreamEntry{..} =
     in HM.singleton streamEntryBodyKey bodyValue &
        HM.insert Constants.needsPagingKey needsPagingValue &
        HM.insert Constants.eventCountKey eventCountValue
+
+dynamoReadResultToEventNumber :: DynamoReadResult -> Int64
+dynamoReadResultToEventNumber (DynamoReadResult (DynamoKey _key eventNumber) _version _values) = eventNumber
+
+readStreamProducer :: (MonadEsDsl m) => QueryDirection -> StreamId -> Maybe Int64 -> Natural -> Producer DynamoReadResult m ()
+readStreamProducer direction (StreamId streamId) startEvent batchSize = do
+  (firstBatch :: [DynamoReadResult]) <- lift $ queryTable direction (Constants.streamDynamoKeyPrefix <> streamId) batchSize startEvent
+  yieldResultsAndLoop firstBatch
+  where
+    yieldResultsAndLoop [] = return ()
+    yieldResultsAndLoop [readResult] = do
+      yield readResult
+      let lastEventNumber = dynamoReadResultToEventNumber readResult
+      readStreamProducer direction (StreamId streamId) (Just lastEventNumber) batchSize
+    yieldResultsAndLoop (x:xs) = do
+      yield x
+      yieldResultsAndLoop xs
+
+streamEntryProducer :: (MonadEsDsl m, MonadError EventStoreActionError m ) => QueryDirection -> StreamId -> Maybe Int64 -> Natural -> Producer StreamEntry m ()
+streamEntryProducer direction streamId startEvent batchSize =
+  let source = readStreamProducer direction streamId startEvent batchSize
+  in source >-> P.mapM dynamoReadResultToStreamEntry
