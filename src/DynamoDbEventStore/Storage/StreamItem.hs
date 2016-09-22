@@ -37,7 +37,6 @@ import qualified Data.ByteString.Lazy                  as BL
 import           GHC.Generics
 import GHC.Natural
 import DynamoDbEventStore.EventStoreCommands (MonadEsDsl,queryTable)
---import DynamoDbEventStore.Types (StreamId(..),DynamoReadResult(..),DynamoKey(..),EventStoreActionError)
 import           DynamoDbEventStore.AmazonkaImplementation (readFieldGeneric)
 import           Network.AWS.DynamoDB (AttributeValue,avB,avN,avS,attributeValue)
 import qualified Pipes.Prelude as P

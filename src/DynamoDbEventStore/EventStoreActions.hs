@@ -42,7 +42,7 @@ import           Data.List.NonEmpty                    (NonEmpty (..))
 import qualified Data.List.NonEmpty                    as NonEmpty
 import qualified DynamoDbEventStore.Constants          as Constants
 import           DynamoDbEventStore.Storage.GlobalStreamItem (readPage, GlobalFeedItem(..))
-import           DynamoDbEventStore.Storage.StreamItem (StreamEntry(..), dynamoReadResultToStreamEntry, EventEntry(..),eventTypeToText, EventType(..),EventTime(..),streamEntryToValues,unEventTime,dynamoReadResultToEventNumber,readStreamProducer)
+import           DynamoDbEventStore.Storage.StreamItem (StreamEntry(..), EventEntry(..),eventTypeToText, EventType(..),EventTime(..),streamEntryToValues,unEventTime,streamEntryProducer)
 import           DynamoDbEventStore.EventStoreCommands hiding (readField)
 import           DynamoDbEventStore.GlobalFeedWriter   (DynamoCmdWithErrors)
 import qualified DynamoDbEventStore.GlobalFeedWriter   as GlobalFeedWriter
@@ -140,12 +140,6 @@ ensureExpectedVersion (DynamoKey streamId expectedEventNumber) = do
       eventCount <- GlobalFeedWriter.entryEventCount readResult
       return $ eventNumber + fromIntegral eventCount - 1 == expectedEventNumber
 
-dynamoReadResultToEventId :: DynamoCmdWithErrors q m => DynamoReadResult -> m EventId
-dynamoReadResultToEventId readResult = do
-  recordedEvents <- toRecordedEventBackward readResult
-  let lastEvent = NonEmpty.last recordedEvents
-  return (recordedEventId lastEvent)
-
 postEventRequestProgram :: (DynamoCmdWithErrors q m) => PostEventRequest -> m EventWriteResult
 postEventRequestProgram (PostEventRequest sId ev eventEntries) = do
   let eventId = (eventEntryEventId . NonEmpty.head) eventEntries
@@ -166,10 +160,10 @@ postEventRequestProgram (PostEventRequest sId ev eventEntries) = do
     getDynamoKey :: (DynamoCmdWithErrors q m) => Text -> Maybe Int64 -> EventId -> m (Either EventWriteResult DynamoKey)
     getDynamoKey streamId Nothing eventId = do
       let dynamoHashKey = Constants.streamDynamoKeyPrefix <> streamId
-      readResults <- queryTable QueryDirectionBackward dynamoHashKey 1 Nothing
-      let lastEvent = headMay readResults
-      let lastEventNumber = maybe (-1) dynamoReadResultToEventNumber lastEvent
-      lastEventIdIsNotTheSame <- maybe (return True) (\x -> (/= eventId) <$> dynamoReadResultToEventId x) lastEvent
+      lastEvent <- P.head $ recordedEventProducerBackward (StreamId streamId) Nothing 1
+      -- todo should we be getting the lastEventNumberHere
+      let lastEventNumber = maybe (-1) recordedEventNumber lastEvent
+      let lastEventIdIsNotTheSame = maybe True ((/= eventId) . recordedEventId) lastEvent
       if lastEventIdIsNotTheSame then
         let eventVersion = lastEventNumber + 1
         in return $ Right $ DynamoKey dynamoHashKey eventVersion
@@ -187,40 +181,36 @@ postEventRequestProgram (PostEventRequest sId ev eventEntries) = do
     toEventResult DynamoWriteFailure = WriteError
     toEventResult DynamoWriteWrongVersion = EventExists
 
-toRecordedEvent :: (DynamoCmdWithErrors q m) => DynamoReadResult -> m (NonEmpty RecordedEvent)
-toRecordedEvent readResult@(DynamoReadResult (DynamoKey _dynamoHashKey firstEventNumber) _version _values) = do
-  StreamEntry{..} <- dynamoReadResultToStreamEntry readResult
-  let eventEntriesWithEventNumber = NonEmpty.zip (firstEventNumber :| [firstEventNumber + 1 ..]) streamEntryEventEntries
+toRecordedEvent :: (DynamoCmdWithErrors q m) => StreamEntry -> m (NonEmpty RecordedEvent)
+toRecordedEvent StreamEntry{..} = do
+  let eventEntriesWithEventNumber = NonEmpty.zip (streamEntryFirstEventNumber :| [streamEntryFirstEventNumber + 1 ..]) streamEntryEventEntries
   let (StreamId streamId) = streamEntryStreamId
   let buildEvent (eventNumber, EventEntry{..}) = RecordedEvent streamId eventNumber (BL.toStrict eventEntryData) (eventTypeToText eventEntryType) (unEventTime eventEntryCreated) eventEntryEventId eventEntryIsJson
   let recordedEvents = buildEvent <$> eventEntriesWithEventNumber
   return recordedEvents
 
-toRecordedEventBackward :: (DynamoCmdWithErrors q m) => DynamoReadResult -> m (NonEmpty RecordedEvent)
+toRecordedEventBackward :: (DynamoCmdWithErrors q m) => StreamEntry -> m (NonEmpty RecordedEvent)
 toRecordedEventBackward readResult = NonEmpty.reverse <$> toRecordedEvent readResult
 
-dynamoReadResultProducerBackward :: DynamoCmdWithErrors q m => StreamId -> Maybe Int64 -> Natural -> Producer DynamoReadResult m ()
-dynamoReadResultProducerBackward = readStreamProducer QueryDirectionBackward
-
-dynamoReadResultProducerForward :: (DynamoCmdWithErrors q m) => StreamId -> Maybe Int64 -> Natural -> Producer DynamoReadResult m ()
-dynamoReadResultProducerForward = readStreamProducer QueryDirectionForward
-
-readResultToRecordedEventBackwardPipe :: (DynamoCmdWithErrors q m) => Pipe DynamoReadResult RecordedEvent m ()
-readResultToRecordedEventBackwardPipe = forever $ do
-  readResult <- await
-  (recordedEvents :: NonEmpty RecordedEvent) <- lift $ toRecordedEventBackward readResult
+streamItemToRecordedEventBackwardPipe :: (DynamoCmdWithErrors q m) => Pipe StreamEntry RecordedEvent m ()
+streamItemToRecordedEventBackwardPipe = forever $ do
+  streamItem <- await
+  (recordedEvents :: NonEmpty RecordedEvent) <- lift $ toRecordedEventBackward streamItem
   forM_ (NonEmpty.toList recordedEvents) yield
 
-readResultToRecordedEventPipe :: (DynamoCmdWithErrors q m) => Pipe DynamoReadResult RecordedEvent m ()
-readResultToRecordedEventPipe = forever $ do
-  readResult <- await
-  (recordedEvents :: NonEmpty RecordedEvent) <- lift $ toRecordedEvent readResult
+streamItemToRecordedEventPipe :: (DynamoCmdWithErrors q m) => Pipe StreamEntry RecordedEvent m ()
+streamItemToRecordedEventPipe = forever $ do
+  streamItem <- await
+  (recordedEvents :: NonEmpty RecordedEvent) <- lift $ toRecordedEvent streamItem
   forM_ (NonEmpty.toList recordedEvents) yield
 
 recordedEventProducerBackward :: (DynamoCmdWithErrors q m) => StreamId -> Maybe Int64 -> Natural -> Producer RecordedEvent m ()
 recordedEventProducerBackward streamId lastEvent batchSize =
-  dynamoReadResultProducerBackward streamId ((+1) <$> lastEvent) batchSize
-    >-> readResultToRecordedEventBackwardPipe
+  let
+    maxEventToRetrieve = (+1) <$> lastEvent
+  in
+    streamEntryProducer QueryDirectionBackward streamId maxEventToRetrieve batchSize
+    >-> streamItemToRecordedEventBackwardPipe
     >-> filterLastEvent lastEvent
   where
     filterLastEvent Nothing = P.filter (const True)
@@ -228,11 +218,11 @@ recordedEventProducerBackward streamId lastEvent batchSize =
 
 recordedEventProducerForward :: (DynamoCmdWithErrors q m) => StreamId -> Maybe Int64 -> Natural -> Producer RecordedEvent m ()
 recordedEventProducerForward streamId Nothing batchSize =
-  dynamoReadResultProducerForward streamId Nothing batchSize >-> readResultToRecordedEventPipe
+  streamEntryProducer QueryDirectionForward streamId Nothing batchSize >-> streamItemToRecordedEventPipe
 recordedEventProducerForward streamId firstEvent batchSize =
-  (dynamoReadResultProducerBackward streamId ((+1) <$> firstEvent) 1 >-> readResultToRecordedEventPipe -- first page backward
+  (streamEntryProducer QueryDirectionBackward streamId ((+1) <$> firstEvent) 1 >-> streamItemToRecordedEventPipe -- first page backward
      >>
-     dynamoReadResultProducerForward streamId firstEvent batchSize >-> readResultToRecordedEventPipe) -- rest of the pages
+     streamEntryProducer QueryDirectionForward streamId firstEvent batchSize >-> streamItemToRecordedEventPipe) -- rest of the pages
     >->
     filterFirstEvent firstEvent
   where
@@ -338,14 +328,6 @@ globalFeedItemToEventKeys :: GlobalFeedItem -> [(GlobalFeedPosition, EventKey)]
 globalFeedItemToEventKeys GlobalFeedItem{..} =
   let eventKeys = join $ feedEntryToEventKeys <$> toList globalFeedItemFeedEntries
   in zip (GlobalFeedPosition globalFeedItemPageKey <$> [0..]) eventKeys
-
-{-
-pageToEventKeys :: DynamoCmdWithErrors q m => PageKey -> DynamoReadResult -> m [(GlobalFeedPosition, EventKey)]
-pageToEventKeys page entries = do
-  pageKeys <- readPageKeys entries
-  let pageKeysWithPosition = zip (GlobalFeedPosition page <$> [0..]) pageKeys
-  return pageKeysWithPosition
--}
 
 getPageItemsBackward :: DynamoCmdWithErrors q m => PageKey -> Producer (GlobalFeedPosition, EventKey) m ()
 getPageItemsBackward startPage =
