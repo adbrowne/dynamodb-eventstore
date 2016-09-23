@@ -66,7 +66,7 @@ trySetLastFullPage :: (MonadEsDsl m, MonadError EventStoreActionError m) => Page
 trySetLastFullPage latestPage = do
   HeadData{..} <- readHeadData
   when (Just latestPage > headDataLastFullPage) $ do
-    let value = HM.singleton lastFullPageFieldKey  (set avN (Just . show $  latestPage) attributeValue)
+    let value = HM.singleton lastFullPageFieldKey  (set avN (Just . tshow $  latestPage) attributeValue)
     void (writeToDynamo headDynamoKey value (headDataVersion + 1))
   return ()
 
@@ -74,6 +74,6 @@ trySetLastVerifiedPage :: (MonadEsDsl m, MonadError EventStoreActionError m) => 
 trySetLastVerifiedPage latestPage = do
   HeadData{..} <- readHeadData
   when (Just latestPage > headDataLastVerifiedPage) $ do
-    let value = HM.singleton lastVerifiedPageFieldKey (set avN (Just . show $  latestPage) attributeValue)
+    let value = HM.singleton lastVerifiedPageFieldKey (set avN (Just . tshow $  latestPage) attributeValue)
     void (writeToDynamo headDynamoKey value (headDataVersion + 1))
   return ()

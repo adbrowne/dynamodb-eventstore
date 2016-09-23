@@ -59,7 +59,7 @@ setEventEntryPage key (PageKey pageNumber) = do
     let updates =
           HM.fromList [
            (Constants.needsPagingKey, ValueUpdateDelete)
-           , (Constants.eventPageNumberKey, ValueUpdateSet (set avS (Just (show pageNumber)) attributeValue))
+           , (Constants.eventPageNumberKey, ValueUpdateSet (set avS (Just (tshow pageNumber)) attributeValue))
                       ]
     updateItemWithRetry key updates
 
@@ -246,7 +246,7 @@ writeItemsToPage completePageCache ToBePaged{..} =
           globalFeedItemFeedEntries = sortedNewFeedEntries }
     _ <- writeGlobalFeedItem page -- todo don't ignore errors
     cacheInsert completePageCache pageKey (Set.fromList . toList $ sortedNewFeedEntries)
-    log Debug ("paged: " <> (show . length) sortedNewFeedEntries)
+    log Debug ("paged: " <> (tshow . length) sortedNewFeedEntries)
     return . Just $ PageUpdate {
       pageUpdatePageKey = pageKey,
       pageUpdateNewEntries = sortedNewFeedEntries,
@@ -259,7 +259,7 @@ throwOnLeft :: MonadEsDsl m => ExceptT EventStoreActionError m () -> m ()
 throwOnLeft action = do
   result <- runExceptT action
   case result of Left e   -> do
-                   log Error (show e)
+                   log Error (tshow e)
                    throw e
                  Right () -> return ()
 
@@ -309,7 +309,7 @@ scanNeedsPagingIndex itemsToPageQueue =
       (filteredScan :: [DynamoKey]) <- filterM (notInCache cache) scanResult
       let streams = toList . Set.fromList $ getStreamIdFromDynamoKey <$> filteredScan
       _ <- traverse (writeQueue itemsToPageQueue) streams
-      unless (null filteredScan) (log Debug $ "Scanned new:" <> (show . length) filteredScan)
+      unless (null filteredScan) (log Debug $ "Scanned new:" <> (tshow . length) filteredScan)
       when (null scanResult) (wait 1000)
       let isActive = not (null scanResult)
       setPulseStatus isActive

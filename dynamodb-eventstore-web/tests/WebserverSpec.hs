@@ -31,7 +31,7 @@ eventIdHeader :: H.HeaderName
 eventIdHeader = "ES-EventId"
 
 showEventResponse :: (Monad m, S.ScottyError e) => EventStoreAction -> S.ActionT e m ()
-showEventResponse eventStoreAction = S.text $ TL.fromStrict $ show eventStoreAction
+showEventResponse eventStoreAction = S.text $ TL.fromStrict $ tshow eventStoreAction
 
 app :: IO Application
 app = do
@@ -156,7 +156,7 @@ getStreamSpec = do
 getEvent :: Text -> Int64 -> Session SResponse
 getEvent streamId eventNumber =
   request $ defaultRequest {
-               pathInfo = ["streams",streamId,show eventNumber],
+               pathInfo = ["streams",streamId,tshow eventNumber],
                requestMethod = H.methodGet
             }
 

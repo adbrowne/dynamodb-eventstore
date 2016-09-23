@@ -56,7 +56,7 @@ newtype ProgramId = ProgramId
 
 data LoopState r = LoopState
     { _loopStateTestState :: TestState
-    , _loopStateDodgerState :: EvalState
+    , loopStateDodgerState :: EvalState
     } 
 
 data LogEvent
@@ -92,8 +92,6 @@ data IopsOperation
     deriving (Eq,Show,Ord)
 
 $(makeFields ''LoopState)
-
-$(makeFields ''TestState)
 
 $(makeLenses ''TestState)
 
@@ -181,7 +179,7 @@ getGetReadResultCmd key n = do
     return $ n $ MemDb.readDb key db
 
 addLogEvent
-    :: (MonadReader ProgramId m, MonadState TestState m)
+    :: (MonadState TestState m)
     => LogEvent -> m ()
 addLogEvent evt = do
     let appendMessage = flip (|>) evt
@@ -221,15 +219,15 @@ runWriteToDynamoCmd key values version next =
             MemDb.writeDb key values version <$> use testStateDynamo
         case result of
             DynamoWriteWrongVersion -> 
-                addTextLog Debug $ "Wrong version writing: " ++ show version
+                addTextLog Debug $ "Wrong version writing: " ++ tshow version
             DynamoWriteSuccess -> 
                 addTextLog Debug $
                 "Performing write: " ++
-                show key ++ " " ++ show values ++ " " ++ show version
+                tshow key ++ " " ++ tshow values ++ " " ++ tshow version
             DynamoWriteFailure -> 
                 addTextLog Debug $
                 "Write failure: " ++
-                show key ++ " " ++ show values ++ " " ++ show version
+                tshow key ++ " " ++ tshow values ++ " " ++ tshow version
         testStateDynamo .= newDb
         return $ next result
 

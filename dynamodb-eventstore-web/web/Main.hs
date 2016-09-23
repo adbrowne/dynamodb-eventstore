@@ -33,7 +33,7 @@ printEvent
     :: (MonadIO m)
     => EventStoreAction -> m EventStoreAction
 printEvent a = do
-    liftIO $ print . show $ a
+    liftIO $ print . tshow $ a
     return a
 
 buildActionRunner
@@ -134,7 +134,7 @@ forkAndSupervise processName = void . forkIO . handle onError
 printError
     :: (Show a)
     => a -> IO ()
-printError err = putStrLn $ "Error: " <> show err
+printError err = putStrLn $ "Error: " <> tshow err
 
 forkGlobalFeedWriter :: (forall a. MyAwsM a -> ExceptT InterpreterError IO a)
                      -> IO ()
@@ -161,7 +161,7 @@ startWebServer runner parsedConfig = do
     let httpPort = configPort parsedConfig
     let warpSettings = 
             setPort httpPort $ setHost (fromString httpHost) defaultSettings
-    let baseUri = "http://" <> fromString httpHost <> ":" <> show httpPort
+    let baseUri = "http://" <> fromString httpHost <> ":" <> tshow httpPort
     putStrLn $ "Server listenting on: " <> baseUri
     void $
         scottyApp

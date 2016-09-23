@@ -75,7 +75,7 @@ streamFeedXmlOutputCheck =
 
 encodeJson :: ToJSON a => a -> LByteString
 encodeJson = encodePretty' defConfig {
-  confIndent = 2
+  confIndent = Spaces 2
   , confCompare = keyOrder knownJsonKeyOrder }
 
 readEventResultJsonValue :: Text -> RecordedEvent -> Value

@@ -52,7 +52,7 @@ class Monad m => MonadEsDsl m  where
   type CounterType m :: *
   newCounter :: Text -> m (CounterType m)
   incrimentCounter :: CounterType m -> m ()
-  newCache :: forall k. (Typeable k, Ord k) => forall v. Typeable v => Integer -> m (CacheType m k v)
+  newCache :: forall v k. (Typeable v, Typeable k, Ord k) => Integer -> m (CacheType m k v)
   cacheInsert :: (Typeable k, Ord k, Typeable v) => CacheType m k v -> k -> v -> m ()
   cacheLookup :: (Typeable k, Ord k, Typeable v) => CacheType m k v -> k -> m (Maybe v)
   newQueue :: forall a. Typeable a => m (QueueType m a)

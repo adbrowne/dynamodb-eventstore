@@ -436,7 +436,7 @@ prop_CanReadAnySectionOfAStreamBackward (UploadList uploadList) =
             dropWhile (> startEvent) $
             reverse $ toList $ expectedStreamEvents ! streamId
         check (streamId,startEvent,maxItems) = 
-            QC.counterexample (T.unpack $ show $ writeState) $
+            QC.counterexample (show $ writeState) $
             readStreamEvents
                 (StreamId streamId)
                 ((fromIntegral . unpositive) <$> startEvent)
@@ -804,7 +804,7 @@ testStateItems itemCount =
                 { perStreamId = testStreamId
                 , perExpectedVersion = Nothing
                 , perEvents = sampleEventEntry
-                  { eventEntryType = (EventType . show) eventNumber
+                  { eventEntryType = (EventType . tshow) eventNumber
                   , eventEntryEventId = eventId
                   } :|
                   []

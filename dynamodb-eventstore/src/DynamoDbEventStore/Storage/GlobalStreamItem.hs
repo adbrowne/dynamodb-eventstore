@@ -130,7 +130,7 @@ writeGlobalFeedItem GlobalFeedItem{..} =
 
 pageStatusToAttribute :: PageStatus -> AttributeValue
 pageStatusToAttribute pageStatus =
-  set avS (Just (show pageStatus)) attributeValue
+  set avS (Just (tshow pageStatus)) attributeValue
 
 updatePageStatus :: (MonadError EventStoreActionError m, MonadEsDsl m) => PageKey -> PageStatus -> m ()
 updatePageStatus pageKey newStatus =

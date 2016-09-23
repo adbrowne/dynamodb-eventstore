@@ -296,7 +296,7 @@ queryTableAws direction streamId limit exclusiveStartKey = getBackward
             (HM.fromList
                  [ ("streamId", set avS (Just streamId) attributeValue)
                  , ( "eventNumber"
-                   , set avN (Just $ show startKey) attributeValue)])
+                   , set avN (Just $ tshow startKey) attributeValue)])
     scanForward = direction == QueryDirectionForward
     getBackward = do
         tn <- view runtimeEnvironmentTableName
@@ -483,7 +483,7 @@ doesTableExist tableName =
 evalProgram :: MetricLogs -> MyAwsM a -> IO (Either InterpreterError a)
 evalProgram metrics program = do
     tableNameId :: Int <- getStdRandom (randomR (1, 9999999999))
-    let tableName = "testtable-" ++ show tableNameId
+    let tableName = "testtable-" ++ tshow tableNameId
     awsEnv <- newEnv Sydney Discover
     let runtimeEnvironment = 
             RuntimeEnvironment

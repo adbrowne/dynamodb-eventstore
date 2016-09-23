@@ -48,10 +48,10 @@ data ExpectedVersion = ExpectedVersion Int
 toByteString :: LText -> ByteString
 toByteString = encodeUtf8 . TL.toStrict
 
-error400 :: (MonadIO m, ScottyError e) => LText -> ActionT e m ()
+error400 :: (MonadIO m) => LText -> ActionT e m ()
 error400 err = status $ mkStatus 400 (toByteString err)
 
-error500 :: (MonadIO m, ScottyError e) => LText -> ActionT e m ()
+error500 :: (MonadIO m) => LText -> ActionT e m ()
 error500 err = status $ mkStatus 500 (toByteString err)
 
 runParser :: Parser a -> e -> LText -> Either e a
@@ -142,8 +142,8 @@ readEventResultJsonValue :: Text -> RecordedEvent -> Value
 readEventResultJsonValue baseUri recordedEvent =
   jsonEntry $ recordedEventToFeedEntry baseUri recordedEvent
 
-eventStorePostResultToText :: (MonadIO m, ScottyError e) => ResponseEncoding -> PostEventResult -> ActionT e m ()
-eventStorePostResultToText _ (PostEventResult r) = (raw . TL.encodeUtf8 . TL.fromStrict) $ show r
+eventStorePostResultToText :: (MonadIO m) => ResponseEncoding -> PostEventResult -> ActionT e m ()
+eventStorePostResultToText _ (PostEventResult r) = (raw . TL.encodeUtf8 . TL.fromStrict) $ tshow r
 
 notFoundResponse :: (MonadIO m, ScottyError e) => ActionT e m ()
 notFoundResponse = status (mkStatus 404 (toByteString "Not Found")) >> raw "{}"
@@ -167,21 +167,21 @@ knownJsonKeyOrder = [
 
 encodeJson :: ToJSON a => a -> LByteString
 encodeJson = encodePretty' defConfig {
-  confIndent = 2
+  confIndent = Spaces 2
   , confCompare = keyOrder knownJsonKeyOrder }
 
 eventStoreReadEventResultToText :: (MonadIO m, ScottyError e) => Text -> ResponseEncoding -> ReadEventResult -> ActionT e m ()
-eventStoreReadEventResultToText _ _ (ReadEventResult (Left err)) = (error500 . TL.fromStrict . show) err
+eventStoreReadEventResultToText _ _ (ReadEventResult (Left err)) = (error500 . TL.fromStrict . tshow) err
 eventStoreReadEventResultToText baseUri AtomJsonEncoding (ReadEventResult (Right (Just r))) = (raw . encodeJson . readEventResultJsonValue baseUri) r
 eventStoreReadEventResultToText baseUri AtomXmlEncoding (ReadEventResult (Right (Just r))) = (raw . encodeJson . readEventResultJsonValue baseUri) r -- todo this isn't right
 eventStoreReadEventResultToText _ _ (ReadEventResult (Right Nothing)) = notFoundResponse
 
-encodeFeed :: (MonadIO m, ScottyError e) => ResponseEncoding -> Feed -> ActionT e m ()
+encodeFeed :: (MonadIO m) => ResponseEncoding -> Feed -> ActionT e m ()
 encodeFeed AtomJsonEncoding = raw . encodeJson . jsonFeed
 encodeFeed AtomXmlEncoding  = raw . TL.encodeUtf8 . ("<?xml version=\"1.0\" encoding=\"UTF-8\"?>" <>) . renderMarkup . xmlFeed
 
 eventStoreReadStreamResultToText :: (MonadIO m, ScottyError e) => Text -> StreamId -> ResponseEncoding -> ReadStreamResult -> ActionT e m ()
-eventStoreReadStreamResultToText _ _ _ (ReadStreamResult (Left err)) = (error500 . TL.fromStrict . show) err
+eventStoreReadStreamResultToText _ _ _ (ReadStreamResult (Left err)) = (error500 . TL.fromStrict . tshow) err
 eventStoreReadStreamResultToText _ _streamId _ (ReadStreamResult (Right Nothing)) = notFoundResponse
 eventStoreReadStreamResultToText baseUri streamId encoding (ReadStreamResult (Right (Just streamResult))) =
   let
@@ -189,8 +189,8 @@ eventStoreReadStreamResultToText baseUri streamId encoding (ReadStreamResult (Ri
     buildFeed' = streamResultsToFeed baseUri streamId sampleTime
   in encodeFeed encoding . buildFeed' $ streamResult
 
-eventStoreReadAllResultToText :: (MonadIO m, ScottyError e) => Text -> ResponseEncoding -> ReadAllResult -> ActionT e m ()
-eventStoreReadAllResultToText _ _ (ReadAllResult (Left err)) = (error500 . TL.fromStrict . show) err
+eventStoreReadAllResultToText :: (MonadIO m) => Text -> ResponseEncoding -> ReadAllResult -> ActionT e m ()
+eventStoreReadAllResultToText _ _ (ReadAllResult (Left err)) = (error500 . TL.fromStrict . tshow) err
 eventStoreReadAllResultToText baseUri encoding (ReadAllResult (Right globalStreamResult)) =
   let
     streamId = StreamId "%24all"
@@ -232,15 +232,15 @@ getEncoding = do
                  (Just "application/atom+xml")                   -> return AtomXmlEncoding
                  _                                              -> throwError UnknownAcceptValue
 
-runActionWithEncodedResponse :: (Monad m, MonadIO m, ScottyError e) => IO (Either InterpreterError r) -> (ResponseEncoding -> r -> ActionT e m ()) -> ActionT e m ()
+runActionWithEncodedResponse :: (MonadIO m, ScottyError e) => IO (Either InterpreterError r) -> (ResponseEncoding -> r -> ActionT e m ()) -> ActionT e m ()
 runActionWithEncodedResponse runAction processResponse = runExceptT (do
   encoding <- getEncoding
   result <- liftAction runAction
   return (encoding, result)) >>= \case
-    (Left err) -> (error500 . TL.fromStrict . show) err
+    (Left err) -> (error500 . TL.fromStrict . tshow) err
     (Right (encoding, a)) -> processResponse encoding a
   where
-    liftAction :: (Monad m, MonadIO m, ScottyError e) => IO (Either InterpreterError r) -> ExceptT WebError (ActionT e m) r
+    liftAction :: (MonadIO m, ScottyError e) => IO (Either InterpreterError r) -> ExceptT WebError (ActionT e m) r
     liftAction f = do
       r <- liftIO f
       case r of (Left err) -> throwError (WebErrorInterpreter err)
@@ -264,7 +264,7 @@ realRunner baseUri mainRunner (ReadAll readAllRequest) =
     (eventStoreActionRunnerReadAll mainRunner readAllRequest)
     (eventStoreReadAllResultToText baseUri)
 
-type Process = forall m. forall e. (MonadIO m, Monad m, ScottyError e) => EventStoreAction -> ActionT e m ()
+type Process = forall m. forall e. (MonadIO m, ScottyError e) => EventStoreAction -> ActionT e m ()
 
 globalFeedStartPositionParser :: Parser GlobalStartPosition
 globalFeedStartPositionParser =
@@ -300,7 +300,7 @@ parseOptionalParameter errorMsg parser parameter =
   let parseValue t = Just <$> runParser parser errorMsg (TL.fromStrict t)
   in maybe (return $ Right Nothing) (fmap parseValue) parameter
 
-toResult' :: (MonadIO m, Monad m, ScottyError e) => Process -> Either LText EventStoreAction -> ActionT e m ()
+toResult' :: (MonadIO m, ScottyError e) => Process -> Either LText EventStoreAction -> ActionT e m ()
 toResult' _ (Left err) = error400 err
 toResult' process (Right action) = process action
 

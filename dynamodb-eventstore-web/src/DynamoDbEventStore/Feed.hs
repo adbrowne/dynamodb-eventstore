@@ -80,15 +80,15 @@ buildStreamLink :: Text -> Text -> StreamOffset -> Link
 buildStreamLink streamUri rel (direction, position, maxItems)=
   let
     positionName = case position of EventStartHead -> "head"
-                                    EventStartPosition x -> show x
+                                    EventStartPosition x -> tshow x
     directionName = case direction of FeedDirectionForward -> "forward"
                                       FeedDirectionBackward -> "backward"
-    href = streamUri <> "/" <> positionName <> "/" <> directionName <> "/" <> show maxItems
+    href = streamUri <> "/" <> positionName <> "/" <> directionName <> "/" <> tshow maxItems
 
   in Link { linkHref = href, linkRel = rel }
 
 globalFeedPositionToText :: GlobalFeedPosition -> Text
-globalFeedPositionToText GlobalFeedPosition{..} = show globalFeedPositionPage <> "-" <> show globalFeedPositionOffset
+globalFeedPositionToText GlobalFeedPosition{..} = tshow globalFeedPositionPage <> "-" <> tshow globalFeedPositionOffset
 
 buildGlobalStreamLink :: Text -> Text -> GlobalStreamOffset -> Link
 buildGlobalStreamLink streamUri rel (direction, position, maxItems)=
@@ -97,7 +97,7 @@ buildGlobalStreamLink streamUri rel (direction, position, maxItems)=
                                     GlobalStartPosition x -> globalFeedPositionToText x
     directionName = case direction of FeedDirectionForward -> "forward"
                                       FeedDirectionBackward -> "backward"
-    href = streamUri <> "/" <> positionName <> "/" <> directionName <> "/" <> show maxItems
+    href = streamUri <> "/" <> positionName <> "/" <> directionName <> "/" <> tshow maxItems
 
   in Link { linkHref = href, linkRel = rel }
 
@@ -164,7 +164,7 @@ recordedEventToFeedEntry :: Text -> RecordedEvent -> Entry
 recordedEventToFeedEntry baseUri recordedEvent =
   let
     streamId = recordedEventStreamId recordedEvent
-    eventNumber = (show . recordedEventNumber) recordedEvent
+    eventNumber = (tshow . recordedEventNumber) recordedEvent
     eventCreated = recordedEventCreated recordedEvent
     eventUri = baseUri <> "/streams/" <> urlEncode' streamId <> "/" <> eventNumber
     title = eventNumber <>  "@" <> streamId

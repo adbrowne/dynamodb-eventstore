@@ -24,7 +24,7 @@ import Control.Monad.State
 import qualified Control.Monad.Trans.AWS as AWS
 import Pipes (await, Consumer, Pipe, runEffect, (>->), yield)
 import Data.Aeson
-import Data.Aeson.Diff
+import Data.Aeson.Diff hiding (Config)
 import Data.Aeson.Encode
 import Data.Aeson.Lens
 import Data.Algorithm.Diff
@@ -270,13 +270,13 @@ saveResponse directory filename response = do
 outputResponse :: Text -> Text -> (Int, ([Text], Response LByteString)) -> IO ()
 outputResponse baseDir responseType (sequenceNumber,(_editLinks,response)) = do
     let directory = baseDir <> "/" <> responseType <> "/"
-    let filename = directory <> show sequenceNumber <> ".xml"
+    let filename = directory <> tshow sequenceNumber <> ".xml"
     saveResponse directory filename response
 
 outputEntry :: Text -> Text -> (Int, Response LByteString) -> IO ()
 outputEntry baseDir responseType (sequenceNumber,response) = do
     let directory = baseDir <> "/" <> responseType <> "/entries/"
-    let filename = directory <> show sequenceNumber <> ".json"
+    let filename = directory <> tshow sequenceNumber <> ".json"
     saveResponse directory filename response
 
 data EntryData = EntryData
@@ -315,8 +315,8 @@ putEntry destinationBaseUrl expectedVersion EntryData{..}
     let opts = 
             defaults & header "ES-EventType" .~ [T.encodeUtf8 entryDataType] &
             header "ES-EventId" .~
-            [T.encodeUtf8 $ show eventId] &
-            maybe id (\ev -> header "ES-ExpectedVersion" .~ [T.encodeUtf8 $ show ev]) expectedVersion &
+            [T.encodeUtf8 $ tshow eventId] &
+            maybe id (\ev -> header "ES-ExpectedVersion" .~ [T.encodeUtf8 $ tshow ev]) expectedVersion &
             header "Content-Type" .~
             ["application/json"] &
             header "Accept" .~
@@ -457,10 +457,10 @@ compareFile CompareDownloadConfig{..} leftFilePath = do
 makeTestEntry :: Text -> Int -> EntryData
 makeTestEntry streamName n = 
     EntryData
-    { entryDataType = "MyEntryType" <> show n
+    { entryDataType = "MyEntryType" <> tshow n
     , entryDataStream = streamName
     , entryDataBody = Just . TL.encodeUtf8 . TL.fromStrict $
-      "{ \"a\":" <> show n <> "}"
+      "{ \"a\":" <> tshow n <> "}"
     }
 
 nullMetrics :: IO MetricLogs
@@ -540,7 +540,7 @@ start Config{configCommand = CopyGlobalStream CopyGlobalStreamConfig{..}} = do
 start Config{configCommand = InsertData InsertDataConfig{..}} = do
     let streamNames = 
             (\n -> 
-                  "mystream" <> show n) <$>
+                  "mystream" <> tshow n) <$>
             [(1::Int) .. 100]
     asyncs <- traverse (async . insertIntoStream) streamNames
     _ <- traverse Control.Concurrent.Async.wait asyncs
@@ -549,7 +549,7 @@ start Config{configCommand = InsertData InsertDataConfig{..}} = do
     insertIntoStream streamName = do
         let testEntries = 
                 (\n -> 
-                      makeTestEntry (streamName <> "-" <> show n) 0) <$>
+                      makeTestEntry (streamName <> "-" <> tshow n) 0) <$>
                 [(0 :: Int)..100]
         sequence_ $ putEntry insertDataConfigDestination (Just 0) <$> testEntries
 start Config{configCommand = CompareDownload compareDownloadConfig} = do
@@ -575,7 +575,7 @@ start Config{configCommand = BenchMark} = do
     metricLogs <- startMetrics
     logger <- liftIO $ AWS.newLogger AWS.Error System.IO.stdout
     awsEnv <- set AWS.envLogger logger <$> AWS.newEnv AWS.Sydney AWS.Discover
-    tableName <- show <$> (randomIO :: IO UUID.UUID)
+    tableName <- tshow <$> (randomIO :: IO UUID.UUID)
     let runtimeEnvironment = 
             RuntimeEnvironment
             { _runtimeEnvironmentMetricLogs = metricLogs
@@ -592,7 +592,7 @@ start Config{configCommand = BenchMark} = do
     endTime <- liftIO getCPUTime
     let t = fromIntegral (endTime - startTime) * 1e-12
     let (eventsPerSecond :: Double) = fromIntegral totalEvents / t
-    putStrLn $ "Inserted " <> show totalEvents <> " events. Events per second: " <> show eventsPerSecond 
+    putStrLn $ "Inserted " <> tshow totalEvents <> " events. Events per second: " <> tshow eventsPerSecond 
     _ <- async $ runGlobalFeedWriter runner
     b <- runner . runExceptT . runEffect $
       GlobalFeedItem.globalFeedItemsProducer QueryDirectionForward True Nothing
@@ -607,7 +607,7 @@ toFeedEntries = forever $ do
   let feedEntries = GlobalFeedItem.globalFeedItemFeedEntries x
   forM_ feedEntries yield
 
-takeXItems :: (MonadEsDsl m, Monad m, MonadIO m) => Int -> Consumer FeedEntry m ()
+takeXItems :: (MonadEsDsl m, MonadIO m) => Int -> Consumer FeedEntry m ()
 takeXItems total = do
   counter <- lift . newCounter $ "dynamodb-eventstore.itemsRead"
   go counter total
@@ -615,7 +615,7 @@ takeXItems total = do
     go _counter 0 = return ()
     go  counter c = do
       when (mod c 100 == 0) $ 
-        lift . putStrLn $ "read " <> show (total - c) <> " items"
+        lift . putStrLn $ "read " <> tshow (total - c) <> " items"
       void await
       lift . incrimentCounter $ counter
       go counter (c - 1)
@@ -647,7 +647,7 @@ randomEvent = do
     eventEntryCreated = EventTime currentTime,
     eventEntryIsJson  = False }
   return PostEventRequest {
-           perStreamId = show streamId,
+           perStreamId = tshow streamId,
            perExpectedVersion = Just 0,
            perEvents =  eventEntry :| [] }
 
@@ -688,7 +688,7 @@ writePages = do
         :: Int64
         -> (StateT GlobalFeedWriter.GlobalFeedWriterState (ExceptT GlobalFeedWriter.EventStoreActionError MyAwsM)) DynamoWriteResult
     go pageNumber = do
-        log Debug ("Writing page" <> show pageNumber)
+        log Debug ("Writing page" <> tshow pageNumber)
         GlobalFeedItem.writeGlobalFeedItem
             GlobalFeedItem.GlobalFeedItem
             { globalFeedItemPageKey = PageKey pageNumber

@@ -10,7 +10,7 @@ import           Test.Tasty.QuickCheck
 import           Text.Read                    (readMaybe)
 
 showText :: Show a => a -> LText
-showText = TL.fromStrict . show
+showText = TL.fromStrict . tshow
 
 spec :: Spec
 spec = do
