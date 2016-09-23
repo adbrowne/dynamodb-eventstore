@@ -8,4 +8,5 @@ packages:
     commit: d0c5c508c19f93aeb55d349fec0b37adbf8f07e9
 resolver: lts-7.0
 extra-deps:
- - aeson-diff-1.0.0.0
+ - aeson-diff-1.1.0.0
+ - edit-distance-vector-1.0.0.4

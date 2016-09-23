@@ -29,7 +29,7 @@ library
                        DynamoDbEventStore.Constants,
                        DynamoDbEventStore.AmazonkaImplementation
   default-extensions:          NoImplicitPrelude
-  build-depends:       base >=4.8 && <4.9,
+  build-depends:       base,
                        basic-prelude,
                        scotty >= 0.9,
                        safe >= 0.3,
@@ -90,7 +90,7 @@ Test-Suite tasty
   type:                exitcode-stdio-1.0
   main-is:             tastytests.hs
   hs-source-dirs:      tests
-  build-depends:       base >=4.8 && <4.9,
+  build-depends:       base,
                        basic-prelude,
                        tasty >= 0.10,
                        tasty-hspec >= 1.0,
