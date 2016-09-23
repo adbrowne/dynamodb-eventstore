@@ -6,14 +6,10 @@ import           BasicPrelude
 import qualified DynamoCmdAmazonkaTests
 import qualified DynamoDbEventStore.AmazonkaImplementation  as Ai
 import qualified DynamoDbEventStore.DynamoCmdInterpreter as TestInterpreter
-import           DynamoDbEventStore.FeedOutputSpec       as FeedOutputSpec
 import           DynamoDbEventStore.GlobalFeedWriterSpec as GlobalFeedWriterSpec
 
 import           System.Metrics hiding (Value)
 import           Test.Tasty
-import           Test.Tasty.Hspec
-import qualified WebserverInternalSpec
-import           WebserverSpec
 import           DodgerBlue.Testing
 
 
@@ -38,19 +34,10 @@ nullMetrics = do
 
 main :: IO ()
 main = do
-  postEventSpec' <- testSpec "Post Event tests" postEventSpec
-  getStreamSpec' <- testSpec "Get Stream tests" getStreamSpec
-  getEventSpec' <- testSpec "Get Event tests" getEventSpec
-  webserverInternalTests' <- testSpec "Webserver Internal Tests" WebserverInternalSpec.spec
   nullMetricsForAi <- nullMetrics
   defaultMain $
     testGroup "Tests"
       [ testGroup "DynamoCmd Tests against Dynamo - Amazonka" (DynamoCmdAmazonkaTests.tests (Ai.evalProgram nullMetricsForAi)),
         testGroup "DynamoCmd Tests against Test Interpreter" (DynamoCmdAmazonkaTests.tests testInterpreter),
-        testGroup "Global Feed Writer" GlobalFeedWriterSpec.tests,
-        testGroup "Feed Output" FeedOutputSpec.tests,
-        postEventSpec',
-        getStreamSpec',
-        getEventSpec',
-        webserverInternalTests'
+        testGroup "Global Feed Writer" GlobalFeedWriterSpec.tests
       ]

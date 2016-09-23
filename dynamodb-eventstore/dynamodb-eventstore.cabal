@@ -18,8 +18,7 @@ cabal-version:       >=1.10
 
 library
   GHC-Options: -Wall
-  exposed-modules:     DynamoDbEventStore.Webserver,
-                       DynamoDbEventStore.Types,
+  exposed-modules:     DynamoDbEventStore.Types,
                        DynamoDbEventStore.EventStoreCommands,
                        DynamoDbEventStore.ProjectPrelude,
                        DynamoDbEventStore.Storage.HeadItem,
@@ -28,7 +27,6 @@ library
                        DynamoDbEventStore.EventStoreActions,
                        DynamoDbEventStore.GlobalFeedWriter,
                        DynamoDbEventStore.Constants,
-                       DynamoDbEventStore.Feed,
                        DynamoDbEventStore.AmazonkaImplementation
   default-extensions:          NoImplicitPrelude
   build-depends:       base >=4.8 && <4.9,
@@ -86,12 +84,9 @@ Test-Suite tasty
   default-extensions:          NoImplicitPrelude
   other-modules:       DynamoCmdAmazonkaTests
                        , DynamoDbEventStore.DynamoCmdInterpreter
-                       , DynamoDbEventStore.FeedOutputSpec
                        , DynamoDbEventStore.GlobalFeedWriterSpec
                        , DynamoDbEventStore.InMemoryCache
                        , DynamoDbEventStore.InMemoryDynamoTable
-                       , WebserverInternalSpec
-                       , WebserverSpec
   type:                exitcode-stdio-1.0
   main-is:             tastytests.hs
   hs-source-dirs:      tests
