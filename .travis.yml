@@ -16,7 +16,7 @@ before_script:
 - "./scripts/run-dynamodb-local.sh &"
 script: 
   - stack $ARGS --no-terminal --install-ghc test dynamodb-eventstore-web:test:tasty --pedantic
-  - stack $ARGS --no-terminal --install-ghc test dynamodb-eventstore:test:tasty --pedantic  --test-arguments "--quickcheck-max-size 1 --quickcheck-tests 1"
+  - stack $ARGS --no-terminal --install-ghc test dynamodb-eventstore:test:tasty --pedantic  --test-arguments "--quickcheck-max-size 2 --quickcheck-tests 10"
 before_deploy:
   - mkdir release
   - cp `stack path --dist-dir`/build/web/web release/
