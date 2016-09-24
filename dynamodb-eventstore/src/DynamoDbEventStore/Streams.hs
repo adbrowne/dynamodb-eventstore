@@ -3,6 +3,7 @@
 {-# LANGUAGE RecordWildCards #-}
 module DynamoDbEventStore.Streams
   (streamEventsProducer
+  ,globalEventKeysProducer
   ,globalEventsProducer)
   where
 
@@ -88,10 +89,10 @@ globalFeedItemToEventKeys GlobalStreamItem.GlobalFeedItem{..} =
   let eventKeys = join $ feedEntryToEventKeys <$> toList globalFeedItemFeedEntries
   in zip (GlobalFeedPosition globalFeedItemPageKey <$> [0..]) eventKeys
 
-globalEventsProducer :: (MonadEsDsl m, MonadError EventStoreActionError m) => QueryDirection -> Maybe GlobalFeedPosition -> Producer (GlobalFeedPosition, EventKey) m ()
-globalEventsProducer QueryDirectionBackward startPosition =
+globalEventKeysProducer :: (MonadEsDsl m, MonadError EventStoreActionError m) => QueryDirection -> Maybe GlobalFeedPosition -> Producer (GlobalFeedPosition, EventKey) m ()
+globalEventKeysProducer QueryDirectionBackward startPosition =
   getGlobalFeedBackward startPosition
-globalEventsProducer QueryDirectionForward startPosition =
+globalEventKeysProducer QueryDirectionForward startPosition =
   let
     startPage = fromMaybe 0 (globalFeedPositionPage <$> startPosition)
   in
@@ -100,6 +101,25 @@ globalEventsProducer QueryDirectionForward startPosition =
   where
     filterFirstEvent Nothing = P.filter (const True)
     filterFirstEvent (Just position) = P.filter ((> position) . fst)
+
+lookupEvent :: (MonadEsDsl m, MonadError EventStoreActionError m) => StreamId -> Int64 -> m (Maybe RecordedEvent)
+lookupEvent streamId eventNumber =
+  P.head $
+    streamEventsProducer QueryDirectionBackward streamId (Just eventNumber) 1
+    >->
+    P.dropWhile ((/= eventNumber). recordedEventNumber)
+
+lookupEventKey :: (MonadEsDsl m, MonadError EventStoreActionError m) => Pipe (GlobalFeedPosition, EventKey) (GlobalFeedPosition, RecordedEvent) m ()
+lookupEventKey = forever $ do
+  (position, eventKey@(EventKey(streamId, eventNumber))) <- await
+  (maybeRecordedEvent :: Maybe RecordedEvent) <- lift $ lookupEvent streamId eventNumber
+  let withPosition = (\e -> (position, e)) <$> maybeRecordedEvent
+  maybe (throwError $ EventStoreActionErrorCouldNotFindEvent eventKey) yield withPosition
+
+globalEventsProducer :: (MonadEsDsl m, MonadError EventStoreActionError m) => QueryDirection -> Maybe GlobalFeedPosition -> Producer (GlobalFeedPosition, RecordedEvent) m ()
+globalEventsProducer direction startPosition =
+  globalEventKeysProducer direction startPosition
+  >-> lookupEventKey
 
 feedEntryToEventKeys :: FeedEntry -> [EventKey]
 feedEntryToEventKeys FeedEntry { feedEntryStream = streamId, feedEntryNumber = eventNumber, feedEntryCount = entryCount } =

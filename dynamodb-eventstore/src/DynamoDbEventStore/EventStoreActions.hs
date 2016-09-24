@@ -34,7 +34,6 @@ module DynamoDbEventStore.EventStoreActions(
   getReadAllRequestProgram) where
 
 import           BasicPrelude
-import           Control.Monad.Except
 import           Data.List.NonEmpty                    (NonEmpty (..))
 import qualified Data.List.NonEmpty                    as NonEmpty
 import qualified DynamoDbEventStore.Streams as Streams
@@ -254,20 +253,6 @@ getReadStreamRequestProgram (ReadStreamRequest streamId startEventNumber maxItem
     filterFirstEvent (Just v) = P.filter ((>= v) . recordedEventNumber)
 
 
-lookupEvent :: DynamoCmdWithErrors q m => StreamId -> Int64 -> m (Maybe RecordedEvent)
-lookupEvent streamId eventNumber =
-  P.head $
-    Streams.streamEventsProducer QueryDirectionBackward streamId (Just eventNumber) 1
-    >->
-    P.dropWhile ((/= eventNumber). recordedEventNumber)
-
-lookupEventKey :: DynamoCmdWithErrors q m => Pipe (GlobalFeedPosition, EventKey) (GlobalFeedPosition, RecordedEvent) m ()
-lookupEventKey = forever $ do
-  (position, eventKey@(EventKey(streamId, eventNumber))) <- await
-  (maybeRecordedEvent :: Maybe RecordedEvent) <- lift $ lookupEvent streamId eventNumber
-  let withPosition = (\e -> (position, e)) <$> maybeRecordedEvent
-  maybe (throwError $ EventStoreActionErrorCouldNotFindEvent eventKey) yield withPosition
-
 getReadAllRequestProgram :: DynamoCmdWithErrors q m => ReadAllRequest -> m GlobalStreamResult
 getReadAllRequestProgram ReadAllRequest
   {
@@ -277,13 +262,12 @@ getReadAllRequestProgram ReadAllRequest
   } = do
   events <- P.toListM $
     Streams.globalEventsProducer QueryDirectionForward readAllRequestStartPosition
-    >-> lookupEventKey
     >-> P.take (fromIntegral readAllRequestMaxItems)
   let previousEventPosition = fst <$> lastMay events
   nextEvent <- case readAllRequestStartPosition of Nothing -> return Nothing
                                                    Just startPosition -> do
                                                      nextEvents <- P.toListM $
-                                                      Streams.globalEventsProducer QueryDirectionBackward (Just startPosition)
+                                                      Streams.globalEventKeysProducer QueryDirectionBackward (Just startPosition)
                                                       >-> P.map fst
                                                       >-> P.filter (<= startPosition)
                                                       >-> P.take 1
@@ -304,7 +288,6 @@ getReadAllRequestProgram ReadAllRequest
   let maxItems = fromIntegral readAllRequestMaxItems
   eventsPlus1 <- P.toListM $
     Streams.globalEventsProducer QueryDirectionBackward readAllRequestStartPosition
-    >-> lookupEventKey
     >-> filterLastEvent readAllRequestStartPosition
     >-> P.take (maxItems + 1)
   let events = snd <$> take maxItems eventsPlus1
