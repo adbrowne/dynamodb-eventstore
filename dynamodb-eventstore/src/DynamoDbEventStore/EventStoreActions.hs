@@ -2,7 +2,6 @@
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE RankNTypes                 #-}
-{-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 
 module DynamoDbEventStore.EventStoreActions(
@@ -15,7 +14,7 @@ module DynamoDbEventStore.EventStoreActions(
   unEventTime,
   EventEntry(..),
   EventStoreAction(..),
-  EventWriteResult(..),
+  Streams.EventWriteResult(..),
   PostEventResult(..),
   ReadStreamResult(..),
   ReadAllResult(..),
@@ -35,9 +34,8 @@ module DynamoDbEventStore.EventStoreActions(
 
 import           BasicPrelude
 import           Data.List.NonEmpty                    (NonEmpty (..))
-import qualified Data.List.NonEmpty                    as NonEmpty
 import qualified DynamoDbEventStore.Streams as Streams
-import           DynamoDbEventStore.Storage.StreamItem (StreamEntry(..), EventEntry(..),EventType(..),EventTime(..),unEventTime,writeStreamItem, getLastStreamItem)
+import           DynamoDbEventStore.Storage.StreamItem (EventEntry(..),EventType(..),EventTime(..),unEventTime)
 import           DynamoDbEventStore.EventStoreCommands hiding (readField)
 import           DynamoDbEventStore.GlobalFeedWriter   (DynamoCmdWithErrors)
 import           DynamoDbEventStore.Types
@@ -79,7 +77,7 @@ data GlobalStreamResult = GlobalStreamResult {
   , globalStreamResultLast     :: Maybe GlobalStreamOffset
 } deriving Show
 
-newtype PostEventResult = PostEventResult (Either EventStoreActionError EventWriteResult) deriving Show
+newtype PostEventResult = PostEventResult (Either EventStoreActionError Streams.EventWriteResult) deriving Show
 newtype ReadStreamResult = ReadStreamResult (Either EventStoreActionError (Maybe StreamResult)) deriving Show
 newtype ReadAllResult = ReadAllResult (Either EventStoreActionError GlobalStreamResult) deriving Show
 newtype ReadEventResult = ReadEventResult (Either EventStoreActionError (Maybe RecordedEvent)) deriving Show
@@ -119,55 +117,9 @@ data ReadAllRequest = ReadAllRequest {
     , readAllRequestDirection     :: FeedDirection
 } deriving (Show)
 
-data EventWriteResult = WriteSuccess | WrongExpectedVersion | EventExists | WriteError deriving (Eq, Show)
-
-ensureExpectedVersion :: DynamoCmdWithErrors q m => StreamId -> Int64 -> m Bool
-ensureExpectedVersion _streamId (-1) = return True
-ensureExpectedVersion _streamId 0 = return True
-ensureExpectedVersion streamId expectedEventNumber =
-  checkEventNumber <$> getLastStreamItem streamId
-  where
-    checkEventNumber Nothing = False
-    checkEventNumber (Just StreamEntry {..}) =
-      let lastEventNumber = streamEntryFirstEventNumber + fromIntegral (length streamEntryEventEntries) - 1
-      in lastEventNumber == expectedEventNumber
-
-postEventRequestProgram :: (DynamoCmdWithErrors q m) => PostEventRequest -> m EventWriteResult
-postEventRequestProgram (PostEventRequest sId ev eventEntries) = do
-  let eventId = (eventEntryEventId . NonEmpty.head) eventEntries
-  dynamoKeyOrError <- getDynamoKey sId ev eventId
-  case dynamoKeyOrError of Left a -> return a
-                           Right dynamoKey -> writeMyEvent dynamoKey
-  where
-    writeMyEvent :: (DynamoCmdWithErrors q m) => Int64 -> m EventWriteResult
-    writeMyEvent eventNumber = do
-      let streamEntry = StreamEntry {
-            streamEntryStreamId = StreamId sId,
-            streamEntryFirstEventNumber = eventNumber,
-            streamEntryEventEntries = eventEntries,
-            streamEntryNeedsPaging = True }
-      writeResult <- writeStreamItem streamEntry
-      return $ toEventResult writeResult
-    getDynamoKey :: (DynamoCmdWithErrors q m) => Text -> Maybe Int64 -> EventId -> m (Either EventWriteResult Int64)
-    getDynamoKey streamId Nothing eventId = do
-      lastEvent <- P.head $ Streams.streamEventsProducer QueryDirectionBackward (StreamId streamId) Nothing 1
-      let lastEventNumber = maybe (-1) recordedEventNumber lastEvent
-      let lastEventIdIsNotTheSame = maybe True ((/= eventId) . recordedEventId) lastEvent
-      if lastEventIdIsNotTheSame then
-        let eventVersion = lastEventNumber + 1
-        in return . Right $ eventVersion
-      else return $ Left WriteSuccess
-    getDynamoKey streamId (Just expectedVersion) _eventId = do
-      expectedVersionOk <- ensureExpectedVersion (StreamId streamId) expectedVersion
-      if expectedVersionOk then do
-        let eventVersion = expectedVersion + 1
-        return . Right $ eventVersion
-      else
-        return $ Left WrongExpectedVersion
-    toEventResult :: DynamoWriteResult -> EventWriteResult
-    toEventResult DynamoWriteSuccess = WriteSuccess
-    toEventResult DynamoWriteFailure = WriteError
-    toEventResult DynamoWriteWrongVersion = EventExists
+postEventRequestProgram :: (DynamoCmdWithErrors q m) => PostEventRequest -> m Streams.EventWriteResult
+postEventRequestProgram (PostEventRequest sId ev eventEntries) =
+  Streams.writeEvent (StreamId sId) ev eventEntries
 
 getReadEventRequestProgram :: (DynamoCmdWithErrors q m) => ReadEventRequest -> m (Maybe RecordedEvent)
 getReadEventRequestProgram (ReadEventRequest sId eventNumber) =

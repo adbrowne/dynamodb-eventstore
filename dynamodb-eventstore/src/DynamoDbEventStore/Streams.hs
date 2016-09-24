@@ -4,14 +4,27 @@
 module DynamoDbEventStore.Streams
   (streamEventsProducer
   ,globalEventKeysProducer
-  ,globalEventsProducer)
+  ,globalEventsProducer
+  ,writeEvent
+  ,EventWriteResult(..))
   where
 
 import DynamoDbEventStore.ProjectPrelude
 import Safe.Exact
 import Data.Foldable
-import DynamoDbEventStore.Types (GlobalFeedPosition(..),EventKey(..),PageKey(..),EventStoreActionError(..),FeedEntry(..),QueryDirection(..),StreamId(..),RecordedEvent(..))
+import DynamoDbEventStore.Types
+    (GlobalFeedPosition(..)
+    ,EventKey(..)
+    ,PageKey(..)
+    ,EventStoreActionError(..)
+    ,FeedEntry(..)
+    ,QueryDirection(..)
+    ,EventId(..)
+    ,StreamId(..)
+    ,RecordedEvent(..)
+    ,DynamoWriteResult(..))
 import qualified DynamoDbEventStore.Storage.HeadItem as HeadItem
+import qualified DynamoDbEventStore.Storage.StreamItem as StreamItem
 import qualified DynamoDbEventStore.Storage.GlobalStreamItem as GlobalStreamItem
 import qualified Pipes.Prelude                         as P
 import qualified Data.List.NonEmpty                    as NonEmpty
@@ -19,6 +32,8 @@ import qualified Data.ByteString.Lazy                  as BL
 
 import DynamoDbEventStore.EventStoreCommands (MonadEsDsl)
 import           DynamoDbEventStore.Storage.StreamItem (StreamEntry(..), EventEntry(..),eventTypeToText, unEventTime,streamEntryProducer)
+
+data EventWriteResult = WriteSuccess | WrongExpectedVersion | EventExists | WriteError deriving (Eq, Show)
 
 toRecordedEvent :: (MonadEsDsl m) => StreamEntry -> m (NonEmpty RecordedEvent)
 toRecordedEvent StreamEntry{..} = do
@@ -153,3 +168,51 @@ getPageItemsForward startPage =
   where
     readResultToEventKeys = forever $
       await >>= mapM_ yield
+
+ensureExpectedVersion :: (MonadEsDsl m, MonadError EventStoreActionError m) => StreamId -> Int64 -> m Bool
+ensureExpectedVersion _streamId (-1) = return True
+ensureExpectedVersion _streamId 0 = return True
+ensureExpectedVersion streamId expectedEventNumber =
+  checkEventNumber <$> StreamItem.getLastStreamItem streamId
+  where
+    checkEventNumber Nothing = False
+    checkEventNumber (Just StreamEntry {..}) =
+      let lastEventNumber = streamEntryFirstEventNumber + fromIntegral (length streamEntryEventEntries) - 1
+      in lastEventNumber == expectedEventNumber
+
+writeEvent :: (MonadEsDsl m, MonadError EventStoreActionError m) => StreamId -> Maybe Int64 -> NonEmpty EventEntry -> m EventWriteResult
+writeEvent (StreamId sId) ev eventEntries = do
+  let eventId = (eventEntryEventId . NonEmpty.head) eventEntries
+  dynamoKeyOrError <- getDynamoKey sId ev eventId
+  case dynamoKeyOrError of Left a -> return a
+                           Right dynamoKey -> writeMyEvent dynamoKey
+  where
+    writeMyEvent :: (MonadEsDsl m, MonadError EventStoreActionError m) => Int64 -> m EventWriteResult
+    writeMyEvent eventNumber = do
+      let streamEntry = StreamEntry {
+            streamEntryStreamId = StreamId sId,
+            streamEntryFirstEventNumber = eventNumber,
+            streamEntryEventEntries = eventEntries,
+            streamEntryNeedsPaging = True }
+      writeResult <- StreamItem.writeStreamItem streamEntry
+      return $ toEventResult writeResult
+    getDynamoKey :: (MonadEsDsl m, MonadError EventStoreActionError m) => Text -> Maybe Int64 -> EventId -> m (Either EventWriteResult Int64)
+    getDynamoKey streamId Nothing eventId = do
+      lastEvent <- P.head $ streamEventsProducer QueryDirectionBackward (StreamId streamId) Nothing 1
+      let lastEventNumber = maybe (-1) recordedEventNumber lastEvent
+      let lastEventIdIsNotTheSame = maybe True ((/= eventId) . recordedEventId) lastEvent
+      if lastEventIdIsNotTheSame then
+        let eventVersion = lastEventNumber + 1
+        in return . Right $ eventVersion
+      else return $ Left WriteSuccess
+    getDynamoKey streamId (Just expectedVersion) _eventId = do
+      expectedVersionOk <- ensureExpectedVersion (StreamId streamId) expectedVersion
+      if expectedVersionOk then do
+        let eventVersion = expectedVersion + 1
+        return . Right $ eventVersion
+      else
+        return $ Left WrongExpectedVersion
+    toEventResult :: DynamoWriteResult -> EventWriteResult
+    toEventResult DynamoWriteSuccess = WriteSuccess
+    toEventResult DynamoWriteFailure = WriteError
+    toEventResult DynamoWriteWrongVersion = EventExists
