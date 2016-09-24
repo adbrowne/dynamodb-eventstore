@@ -39,6 +39,7 @@ import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Tasty.QuickCheck (testProperty, (===))
 import qualified Test.Tasty.QuickCheck as QC
+import qualified DynamoDbEventStore.Streams as Streams
 import DynamoDbEventStore.DynamoCmdInterpreter
 import DynamoDbEventStore.EventStoreActions
        (EventEntry(..), EventStartPosition(..), EventTime(..),
@@ -46,7 +47,7 @@ import DynamoDbEventStore.EventStoreActions
         GlobalStartPosition(..), GlobalStreamResult(..),
         PostEventRequest(..), ReadAllRequest(..), ReadEventRequest(..),
         ReadStreamRequest(..), StreamOffset, StreamResult(..),
-        recordedEventProducerBackward, unEventTime)
+        unEventTime)
 import qualified DynamoDbEventStore.EventStoreActions
 import DynamoDbEventStore.EventStoreCommands
 import qualified DynamoDbEventStore.GlobalFeedWriter
@@ -590,7 +591,7 @@ readEachStream uploadItems = foldM readStream Map.empty streams
     getEventIds streamId = do
         (recordedEvents :: [RecordedEvent]) <- 
             P.toListM $
-            recordedEventProducerBackward (StreamId streamId) Nothing 10
+            Streams.streamEventsProducer QueryDirectionBackward (StreamId streamId) Nothing 10
         return $
             Seq.fromList . reverse $ (recordedEventNumber <$> recordedEvents)
     streams :: [Text]

@@ -1,7 +1,14 @@
 module DynamoDbEventStore.ProjectPrelude
-  (traceM) where
+  (traceM
+  ,module X
+  ,NonEmpty(..)
+  ) where
 
-import BasicPrelude
+import BasicPrelude as X
+import GHC.Natural as X
+import Control.Monad.Except as X
+import Pipes as X (Producer, yield, await, (>->), Pipe)
+import Data.List.NonEmpty (NonEmpty(..))
 
 import qualified Debug.Trace
 import Data.Text as T

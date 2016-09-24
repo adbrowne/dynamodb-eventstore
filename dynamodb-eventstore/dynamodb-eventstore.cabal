@@ -25,6 +25,7 @@ library
                        DynamoDbEventStore.Storage.StreamItem,
                        DynamoDbEventStore.Storage.GlobalStreamItem,
                        DynamoDbEventStore.EventStoreActions,
+                       DynamoDbEventStore.Streams,
                        DynamoDbEventStore.GlobalFeedWriter,
                        DynamoDbEventStore.Constants,
                        DynamoDbEventStore.AmazonkaImplementation

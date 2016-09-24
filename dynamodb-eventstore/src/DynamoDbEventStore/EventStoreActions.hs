@@ -31,18 +31,17 @@ module DynamoDbEventStore.EventStoreActions(
   postEventRequestProgram,
   getReadStreamRequestProgram,
   getReadEventRequestProgram,
-  getReadAllRequestProgram,
-  recordedEventProducerBackward) where
+  getReadAllRequestProgram) where
 
 import           BasicPrelude
 import           Control.Monad.Except
 import           Data.Foldable
-import qualified Data.ByteString.Lazy                  as BL
 import           Data.List.NonEmpty                    (NonEmpty (..))
 import qualified Data.List.NonEmpty                    as NonEmpty
+import qualified DynamoDbEventStore.Streams as Streams
 import qualified DynamoDbEventStore.Storage.HeadItem as HeadItem
 import           DynamoDbEventStore.Storage.GlobalStreamItem (readPage, GlobalFeedItem(..))
-import           DynamoDbEventStore.Storage.StreamItem (StreamEntry(..), EventEntry(..),eventTypeToText, EventType(..),EventTime(..),unEventTime,streamEntryProducer,writeStreamItem, getLastStreamItem)
+import           DynamoDbEventStore.Storage.StreamItem (StreamEntry(..), EventEntry(..),EventType(..),EventTime(..),unEventTime,writeStreamItem, getLastStreamItem)
 import           DynamoDbEventStore.EventStoreCommands hiding (readField)
 import           DynamoDbEventStore.GlobalFeedWriter   (DynamoCmdWithErrors)
 import           DynamoDbEventStore.Types
@@ -156,7 +155,7 @@ postEventRequestProgram (PostEventRequest sId ev eventEntries) = do
       return $ toEventResult writeResult
     getDynamoKey :: (DynamoCmdWithErrors q m) => Text -> Maybe Int64 -> EventId -> m (Either EventWriteResult Int64)
     getDynamoKey streamId Nothing eventId = do
-      lastEvent <- P.head $ recordedEventProducerBackward (StreamId streamId) Nothing 1
+      lastEvent <- P.head $ Streams.streamEventsProducer QueryDirectionBackward (StreamId streamId) Nothing 1
       let lastEventNumber = maybe (-1) recordedEventNumber lastEvent
       let lastEventIdIsNotTheSame = maybe True ((/= eventId) . recordedEventId) lastEvent
       if lastEventIdIsNotTheSame then
@@ -175,58 +174,10 @@ postEventRequestProgram (PostEventRequest sId ev eventEntries) = do
     toEventResult DynamoWriteFailure = WriteError
     toEventResult DynamoWriteWrongVersion = EventExists
 
-toRecordedEvent :: (DynamoCmdWithErrors q m) => StreamEntry -> m (NonEmpty RecordedEvent)
-toRecordedEvent StreamEntry{..} = do
-  let eventEntriesWithEventNumber = NonEmpty.zip (streamEntryFirstEventNumber :| [streamEntryFirstEventNumber + 1 ..]) streamEntryEventEntries
-  let (StreamId streamId) = streamEntryStreamId
-  let buildEvent (eventNumber, EventEntry{..}) = RecordedEvent streamId eventNumber (BL.toStrict eventEntryData) (eventTypeToText eventEntryType) (unEventTime eventEntryCreated) eventEntryEventId eventEntryIsJson
-  let recordedEvents = buildEvent <$> eventEntriesWithEventNumber
-  return recordedEvents
-
-toRecordedEventBackward :: (DynamoCmdWithErrors q m) => StreamEntry -> m (NonEmpty RecordedEvent)
-toRecordedEventBackward readResult = NonEmpty.reverse <$> toRecordedEvent readResult
-
-streamItemToRecordedEventBackwardPipe :: (DynamoCmdWithErrors q m) => Pipe StreamEntry RecordedEvent m ()
-streamItemToRecordedEventBackwardPipe = forever $ do
-  streamItem <- await
-  (recordedEvents :: NonEmpty RecordedEvent) <- lift $ toRecordedEventBackward streamItem
-  forM_ (NonEmpty.toList recordedEvents) yield
-
-streamItemToRecordedEventPipe :: (DynamoCmdWithErrors q m) => Pipe StreamEntry RecordedEvent m ()
-streamItemToRecordedEventPipe = forever $ do
-  streamItem <- await
-  (recordedEvents :: NonEmpty RecordedEvent) <- lift $ toRecordedEvent streamItem
-  forM_ (NonEmpty.toList recordedEvents) yield
-
-recordedEventProducerBackward :: (DynamoCmdWithErrors q m) => StreamId -> Maybe Int64 -> Natural -> Producer RecordedEvent m ()
-recordedEventProducerBackward streamId lastEvent batchSize =
-  let
-    maxEventToRetrieve = (+1) <$> lastEvent
-  in
-    streamEntryProducer QueryDirectionBackward streamId maxEventToRetrieve batchSize
-    >-> streamItemToRecordedEventBackwardPipe
-    >-> filterLastEvent lastEvent
-  where
-    filterLastEvent Nothing = P.filter (const True)
-    filterLastEvent (Just v) = P.filter ((<= v) . recordedEventNumber)
-
-recordedEventProducerForward :: (DynamoCmdWithErrors q m) => StreamId -> Maybe Int64 -> Natural -> Producer RecordedEvent m ()
-recordedEventProducerForward streamId Nothing batchSize =
-  streamEntryProducer QueryDirectionForward streamId Nothing batchSize >-> streamItemToRecordedEventPipe
-recordedEventProducerForward streamId firstEvent batchSize =
-  (streamEntryProducer QueryDirectionBackward streamId ((+1) <$> firstEvent) 1 >-> streamItemToRecordedEventPipe -- first page backward
-     >>
-     streamEntryProducer QueryDirectionForward streamId firstEvent batchSize >-> streamItemToRecordedEventPipe) -- rest of the pages
-    >->
-    filterFirstEvent firstEvent
-  where
-    filterFirstEvent Nothing = P.filter (const True)
-    filterFirstEvent (Just v) = P.filter ((>= v) . recordedEventNumber)
-
 getReadEventRequestProgram :: (DynamoCmdWithErrors q m) => ReadEventRequest -> m (Maybe RecordedEvent)
 getReadEventRequestProgram (ReadEventRequest sId eventNumber) =
   P.head $
-    recordedEventProducerBackward (StreamId sId) (Just eventNumber) 1
+    Streams.streamEventsProducer QueryDirectionBackward (StreamId sId) (Just eventNumber) 1
     >-> P.dropWhile ((/= eventNumber) . recordedEventNumber)
 
 buildStreamResult :: FeedDirection -> Maybe Int64 -> [RecordedEvent] -> Maybe Int64 -> Natural -> Maybe StreamResult
@@ -271,7 +222,7 @@ buildStreamResult FeedDirectionForward (Just _lastEvent) events requestedStartEv
 
 getLastEvent :: (DynamoCmdWithErrors q m) => StreamId -> m (Maybe Int64)
 getLastEvent streamId = do
-  x <- P.head $ recordedEventProducerBackward streamId Nothing 1
+  x <- P.head $ Streams.streamEventsProducer QueryDirectionBackward streamId Nothing 1
   return $ recordedEventNumber <$> x
 
 getReadStreamRequestProgram :: (DynamoCmdWithErrors q m) => ReadStreamRequest -> m (Maybe StreamResult)
@@ -280,7 +231,7 @@ getReadStreamRequestProgram (ReadStreamRequest streamId startEventNumber maxItem
     lastEvent <- getLastEvent streamId
     events <-
       P.toListM $
-        recordedEventProducerBackward streamId startEventNumber 10
+          Streams.streamEventsProducer QueryDirectionBackward streamId startEventNumber 10
           >-> filterLastEvent startEventNumber
           >-> maxItemsFilter startEventNumber
     return $ buildStreamResult FeedDirectionBackward lastEvent events startEventNumber maxItems
@@ -295,7 +246,7 @@ getReadStreamRequestProgram (ReadStreamRequest streamId startEventNumber maxItem
     lastEvent <- getLastEvent streamId
     events <-
       P.toListM $
-        recordedEventProducerForward streamId startEventNumber 10
+        Streams.streamEventsProducer QueryDirectionForward streamId startEventNumber 10
           >-> filterFirstEvent startEventNumber
           >-> maxItemsFilter startEventNumber
     return $ buildStreamResult FeedDirectionForward lastEvent events startEventNumber maxItems
@@ -366,7 +317,7 @@ getPageItemsForward startPage =
 lookupEvent :: DynamoCmdWithErrors q m => StreamId -> Int64 -> m (Maybe RecordedEvent)
 lookupEvent streamId eventNumber =
   P.head $
-    (recordedEventProducerBackward streamId (Just eventNumber) 1)
+    Streams.streamEventsProducer QueryDirectionBackward streamId (Just eventNumber) 1
     >->
     P.dropWhile ((/= eventNumber). recordedEventNumber)
 
