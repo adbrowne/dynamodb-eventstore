@@ -2,16 +2,21 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RecordWildCards #-}
 module DynamoDbEventStore.Streams
-  (streamEventsProducer)
+  (streamEventsProducer
+  ,globalEventsProducer)
   where
 
 import DynamoDbEventStore.ProjectPrelude
+import Safe.Exact
+import Data.Foldable
+import DynamoDbEventStore.Types (GlobalFeedPosition(..),EventKey(..),PageKey(..),EventStoreActionError(..),FeedEntry(..),QueryDirection(..),StreamId(..),RecordedEvent(..))
+import qualified DynamoDbEventStore.Storage.HeadItem as HeadItem
+import qualified DynamoDbEventStore.Storage.GlobalStreamItem as GlobalStreamItem
 import qualified Pipes.Prelude                         as P
 import qualified Data.List.NonEmpty                    as NonEmpty
 import qualified Data.ByteString.Lazy                  as BL
 
 import DynamoDbEventStore.EventStoreCommands (MonadEsDsl)
-import DynamoDbEventStore.Types (QueryDirection(..),EventStoreActionError,StreamId(..),RecordedEvent(..))
 import           DynamoDbEventStore.Storage.StreamItem (StreamEntry(..), EventEntry(..),eventTypeToText, unEventTime,streamEntryProducer)
 
 toRecordedEvent :: (MonadEsDsl m) => StreamEntry -> m (NonEmpty RecordedEvent)
@@ -59,3 +64,72 @@ streamEventsProducer QueryDirectionForward streamId firstEvent batchSize =
   where
     filterFirstEvent Nothing = P.filter (const True)
     filterFirstEvent (Just v) = P.filter ((>= v) . recordedEventNumber)
+
+getGlobalFeedBackward :: (MonadEsDsl m, MonadError EventStoreActionError m) => Maybe GlobalFeedPosition -> Producer (GlobalFeedPosition, EventKey) m ()
+getGlobalFeedBackward Nothing = do
+  lastKnownPage <- lift HeadItem.getLastFullPage
+  let lastKnownPage' = fromMaybe (PageKey 0) lastKnownPage
+  lastItem <- lift $ P.last (getPageItemsForward lastKnownPage')
+  let lastPosition = fst <$> lastItem
+  maybe (return ()) (getGlobalFeedBackward . Just) lastPosition
+getGlobalFeedBackward (Just (position@GlobalFeedPosition{..})) =
+  getFirstPageBackward position >> getPageItemsBackward (globalFeedPositionPage - 1)
+
+getPagesBackward :: (MonadEsDsl m, MonadError EventStoreActionError m) => PageKey -> Producer [(GlobalFeedPosition,EventKey)] m ()
+getPagesBackward (PageKey (-1)) = return ()
+getPagesBackward page = do
+  result <- lift $ GlobalStreamItem.readPage page
+  _ <- case result of (Just entries) -> yield (globalFeedItemToEventKeys entries)
+                      Nothing        -> lift $ throwError (EventStoreActionErrorInvalidGlobalFeedPage page)
+  getPagesBackward (page - 1)
+
+globalFeedItemToEventKeys :: GlobalStreamItem.GlobalFeedItem -> [(GlobalFeedPosition, EventKey)]
+globalFeedItemToEventKeys GlobalStreamItem.GlobalFeedItem{..} =
+  let eventKeys = join $ feedEntryToEventKeys <$> toList globalFeedItemFeedEntries
+  in zip (GlobalFeedPosition globalFeedItemPageKey <$> [0..]) eventKeys
+
+globalEventsProducer :: (MonadEsDsl m, MonadError EventStoreActionError m) => QueryDirection -> Maybe GlobalFeedPosition -> Producer (GlobalFeedPosition, EventKey) m ()
+globalEventsProducer QueryDirectionBackward startPosition =
+  getGlobalFeedBackward startPosition
+globalEventsProducer QueryDirectionForward startPosition =
+  let
+    startPage = fromMaybe 0 (globalFeedPositionPage <$> startPosition)
+  in
+    getPageItemsForward startPage
+    >-> filterFirstEvent startPosition
+  where
+    filterFirstEvent Nothing = P.filter (const True)
+    filterFirstEvent (Just position) = P.filter ((> position) . fst)
+
+feedEntryToEventKeys :: FeedEntry -> [EventKey]
+feedEntryToEventKeys FeedEntry { feedEntryStream = streamId, feedEntryNumber = eventNumber, feedEntryCount = entryCount } =
+  (\number -> EventKey(streamId, number)) <$> take entryCount [eventNumber..]
+
+getPageItemsBackward :: (MonadEsDsl m, MonadError EventStoreActionError m) => PageKey -> Producer (GlobalFeedPosition, EventKey) m ()
+getPageItemsBackward startPage =
+  getPagesBackward startPage >-> readResultToEventKeys
+  where
+    readResultToEventKeys = forever $
+      (reverse <$> await) >>= mapM_ yield
+
+getFirstPageBackward :: (MonadEsDsl m, MonadError EventStoreActionError m) => GlobalFeedPosition -> Producer (GlobalFeedPosition, EventKey) m ()
+getFirstPageBackward position@GlobalFeedPosition{..} = do
+  items <- lift $ GlobalStreamItem.readPage globalFeedPositionPage
+  let itemsBeforePosition = (globalFeedItemToEventKeys <$> items) >>= takeExactMay (globalFeedPositionOffset + 1)
+  maybe notFoundError yieldItemsInReverse itemsBeforePosition
+  where
+    notFoundError = lift $ throwError (EventStoreActionErrorInvalidGlobalFeedPosition position)
+    yieldItemsInReverse = mapM_ yield . reverse
+
+getPagesForward :: (MonadEsDsl m, MonadError EventStoreActionError m) => PageKey -> Producer [(GlobalFeedPosition,EventKey)] m ()
+getPagesForward startPage = do
+  result <- lift $ GlobalStreamItem.readPage startPage
+  case result of (Just entries) -> yield (globalFeedItemToEventKeys entries) >> getPagesForward (startPage + 1)
+                 Nothing        -> return ()
+
+getPageItemsForward :: (MonadEsDsl m, MonadError EventStoreActionError m) => PageKey -> Producer (GlobalFeedPosition, EventKey) m ()
+getPageItemsForward startPage =
+  getPagesForward startPage >-> readResultToEventKeys
+  where
+    readResultToEventKeys = forever $
+      await >>= mapM_ yield

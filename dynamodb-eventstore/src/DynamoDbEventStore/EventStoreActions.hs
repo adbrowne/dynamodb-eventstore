@@ -35,12 +35,9 @@ module DynamoDbEventStore.EventStoreActions(
 
 import           BasicPrelude
 import           Control.Monad.Except
-import           Data.Foldable
 import           Data.List.NonEmpty                    (NonEmpty (..))
 import qualified Data.List.NonEmpty                    as NonEmpty
 import qualified DynamoDbEventStore.Streams as Streams
-import qualified DynamoDbEventStore.Storage.HeadItem as HeadItem
-import           DynamoDbEventStore.Storage.GlobalStreamItem (readPage, GlobalFeedItem(..))
 import           DynamoDbEventStore.Storage.StreamItem (StreamEntry(..), EventEntry(..),EventType(..),EventTime(..),unEventTime,writeStreamItem, getLastStreamItem)
 import           DynamoDbEventStore.EventStoreCommands hiding (readField)
 import           DynamoDbEventStore.GlobalFeedWriter   (DynamoCmdWithErrors)
@@ -49,7 +46,6 @@ import           GHC.Natural
 import           Pipes                                 hiding (ListT, runListT)
 import qualified Pipes.Prelude                         as P
 import           Safe
-import           Safe.Exact
 import qualified Test.QuickCheck                       as QC
 import           Test.QuickCheck.Instances             ()
 
@@ -257,62 +253,6 @@ getReadStreamRequestProgram (ReadStreamRequest streamId startEventNumber maxItem
     filterFirstEvent Nothing = P.filter (const True)
     filterFirstEvent (Just v) = P.filter ((>= v) . recordedEventNumber)
 
-getPagesBackward :: DynamoCmdWithErrors q m => PageKey -> Producer [(GlobalFeedPosition,EventKey)] m ()
-getPagesBackward (PageKey (-1)) = return ()
-getPagesBackward page = do
-  result <- lift $ readPage page
-  _ <- case result of (Just entries) -> yield (globalFeedItemToEventKeys entries)
-                      Nothing        -> lift $ throwError (EventStoreActionErrorInvalidGlobalFeedPage page)
-  getPagesBackward (page - 1)
-
-feedEntryToEventKeys :: FeedEntry -> [EventKey]
-feedEntryToEventKeys FeedEntry { feedEntryStream = streamId, feedEntryNumber = eventNumber, feedEntryCount = entryCount } =
-  (\number -> EventKey(streamId, number)) <$> take entryCount [eventNumber..]
-
-globalFeedItemToEventKeys :: GlobalFeedItem -> [(GlobalFeedPosition, EventKey)]
-globalFeedItemToEventKeys GlobalFeedItem{..} =
-  let eventKeys = join $ feedEntryToEventKeys <$> toList globalFeedItemFeedEntries
-  in zip (GlobalFeedPosition globalFeedItemPageKey <$> [0..]) eventKeys
-
-getPageItemsBackward :: DynamoCmdWithErrors q m => PageKey -> Producer (GlobalFeedPosition, EventKey) m ()
-getPageItemsBackward startPage =
-  getPagesBackward startPage >-> readResultToEventKeys
-  where
-    readResultToEventKeys = forever $
-      (reverse <$> await) >>= mapM_ yield
-
-getFirstPageBackward :: DynamoCmdWithErrors q m => GlobalFeedPosition -> Producer (GlobalFeedPosition, EventKey) m ()
-getFirstPageBackward position@GlobalFeedPosition{..} = do
-  items <- lift $ readPage globalFeedPositionPage
-  let itemsBeforePosition = (globalFeedItemToEventKeys <$> items) >>= takeExactMay (globalFeedPositionOffset + 1)
-  maybe notFoundError yieldItemsInReverse itemsBeforePosition
-  where
-    notFoundError = lift $ throwError (EventStoreActionErrorInvalidGlobalFeedPosition position)
-    yieldItemsInReverse = mapM_ yield . reverse
-
-getGlobalFeedBackward :: DynamoCmdWithErrors q m => Maybe GlobalFeedPosition -> Producer (GlobalFeedPosition, EventKey) m ()
-getGlobalFeedBackward Nothing = do
-  lastKnownPage <- lift HeadItem.getLastFullPage
-  let lastKnownPage' = fromMaybe (PageKey 0) lastKnownPage
-  lastItem <- lift $ P.last (getPageItemsForward lastKnownPage')
-  let lastPosition = fst <$> lastItem
-  maybe (return ()) (getGlobalFeedBackward . Just) lastPosition
-
-getGlobalFeedBackward (Just (position@GlobalFeedPosition{..})) =
-  getFirstPageBackward position >> getPageItemsBackward (globalFeedPositionPage - 1)
-
-getPagesForward :: (DynamoCmdWithErrors q m) => PageKey -> Producer [(GlobalFeedPosition,EventKey)] m ()
-getPagesForward startPage = do
-  result <- lift $ readPage startPage
-  case result of (Just entries) -> yield (globalFeedItemToEventKeys entries) >> getPagesForward (startPage + 1)
-                 Nothing        -> return ()
-
-getPageItemsForward :: (DynamoCmdWithErrors q m) => PageKey -> Producer (GlobalFeedPosition, EventKey) m ()
-getPageItemsForward startPage =
-  getPagesForward startPage >-> readResultToEventKeys
-  where
-    readResultToEventKeys = forever $
-      await >>= mapM_ yield
 
 lookupEvent :: DynamoCmdWithErrors q m => StreamId -> Int64 -> m (Maybe RecordedEvent)
 lookupEvent streamId eventNumber =
@@ -336,15 +276,14 @@ getReadAllRequestProgram ReadAllRequest
   , readAllRequestMaxItems = readAllRequestMaxItems
   } = do
   events <- P.toListM $
-    getPageItemsForward 0
+    Streams.globalEventsProducer QueryDirectionForward readAllRequestStartPosition
     >-> lookupEventKey
-    >-> filterFirstEvent readAllRequestStartPosition
     >-> P.take (fromIntegral readAllRequestMaxItems)
   let previousEventPosition = fst <$> lastMay events
   nextEvent <- case readAllRequestStartPosition of Nothing -> return Nothing
                                                    Just startPosition -> do
                                                      nextEvents <- P.toListM $
-                                                      getGlobalFeedBackward (Just startPosition)
+                                                      Streams.globalEventsProducer QueryDirectionBackward (Just startPosition)
                                                       >-> P.map fst
                                                       >-> P.filter (<= startPosition)
                                                       >-> P.take 1
@@ -356,9 +295,6 @@ getReadAllRequestProgram ReadAllRequest
     globalStreamResultFirst = Just (FeedDirectionBackward, GlobalStartHead, readAllRequestMaxItems),
     globalStreamResultLast = const (FeedDirectionForward, GlobalStartHead, readAllRequestMaxItems) <$> nextEvent -- only show last if there is a next
   }
-  where
-    filterFirstEvent Nothing = P.filter (const True)
-    filterFirstEvent (Just startPosition) = P.filter ((> startPosition) . fst)
 getReadAllRequestProgram ReadAllRequest
   {
     readAllRequestDirection = FeedDirectionBackward
@@ -367,7 +303,7 @@ getReadAllRequestProgram ReadAllRequest
   } = do
   let maxItems = fromIntegral readAllRequestMaxItems
   eventsPlus1 <- P.toListM $
-    getGlobalFeedBackward readAllRequestStartPosition
+    Streams.globalEventsProducer QueryDirectionBackward readAllRequestStartPosition
     >-> lookupEventKey
     >-> filterLastEvent readAllRequestStartPosition
     >-> P.take (maxItems + 1)
