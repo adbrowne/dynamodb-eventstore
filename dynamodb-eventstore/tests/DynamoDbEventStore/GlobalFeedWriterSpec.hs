@@ -17,7 +17,6 @@ import Control.Monad.State
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as BL
 import Data.Char (isAlpha)
-import Data.Either.Combinators
 import qualified Control.Foldl as Foldl
 import Data.Foldable hiding (concat)
 import Data.List.NonEmpty (NonEmpty(..))
@@ -511,37 +510,7 @@ pageThroughGlobalFeed _pageSize = runExceptT $ P.toListM $
 getStreamRecordedEvents :: Text
                         -> ExceptT EventStoreActionError (DynamoCmdM Queue) [RecordedEvent]
 getStreamRecordedEvents streamId = do
-    recordedEvents <- concat <$> unfoldrM getEventSet Nothing
-    return $ reverse recordedEvents
-  where
-    getEventSet
-        :: Maybe Int64
-        -> ExceptT EventStoreActionError (DynamoCmdM Queue) (Maybe ([RecordedEvent], Maybe Int64))
-    getEventSet startEvent = 
-        if ((< 0) <$> startEvent) == Just True
-            then return Nothing
-            else do
-                streamResult <- 
-                    lift
-                        (getReadStreamRequestProgram
-                             (ReadStreamRequest
-                                  (StreamId streamId)
-                                  startEvent
-                                  10
-                                  FeedDirectionBackward)) >>=
-                    eitherToError
-                let result = streamResultEvents <$> streamResult
-                if result == Just []
-                    then return Nothing
-                    else return $
-                         (\recordedEvents -> 
-                               ( recordedEvents
-                               , (Just .
-                                  (\x -> 
-                                        x - 1) .
-                                  recordedEventNumber . last)
-                                     recordedEvents)) <$>
-                         result
+    P.toListM $ Streams.streamEventsProducer QueryDirectionForward (StreamId streamId) Nothing 10
 
 readEachStream
     :: [UploadItem]
