@@ -9,9 +9,8 @@ module DynamoDbEventStore.GlobalFeedWriterSpec
   (tests)
   where
 
-import BasicPrelude
+import DynamoDbEventStore.ProjectPrelude
 import Control.Lens
-import Control.Monad.Except
 import Control.Monad.Loops
 import Control.Monad.Random
 import Control.Monad.State
@@ -19,6 +18,7 @@ import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as BL
 import Data.Char (isAlpha)
 import Data.Either.Combinators
+import qualified Control.Foldl as Foldl
 import Data.Foldable hiding (concat)
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NonEmpty
@@ -33,19 +33,21 @@ import qualified Data.Text.Lazy.Encoding as TL
 import Data.Time.Format
 import qualified Data.UUID as UUID
 import DodgerBlue.Testing
-import GHC.Natural
 import qualified Pipes.Prelude as P
 import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Tasty.QuickCheck (testProperty, (===))
 import qualified Test.Tasty.QuickCheck as QC
 import qualified DynamoDbEventStore.Streams as Streams
+import DynamoDbEventStore.Streams (EventWriteResult(..))
+import qualified DynamoDbEventStore.Storage.StreamItem as StreamItem
+import DynamoDbEventStore.Storage.StreamItem (EventEntry(..))
 import DynamoDbEventStore.DynamoCmdInterpreter
 import DynamoDbEventStore.EventStoreActions
-       (EventEntry(..), EventStartPosition(..), EventTime(..),
-        EventType(..), EventWriteResult(..), FeedDirection(..),
+       ( EventStartPosition(..), EventTime(..),
+        EventType(..), FeedDirection(..),
         GlobalStartPosition(..), GlobalStreamResult(..),
-        PostEventRequest(..), ReadAllRequest(..), ReadEventRequest(..),
+        ReadAllRequest(..), ReadEventRequest(..),
         ReadStreamRequest(..), StreamOffset, StreamResult(..),
         unEventTime)
 import qualified DynamoDbEventStore.EventStoreActions
@@ -56,11 +58,26 @@ import qualified DynamoDbEventStore.Storage.GlobalStreamItem
        as GlobalFeedItem
 import DynamoDbEventStore.Types
 
+data WriteEventData = WriteEventData {
+   writeEventDataStreamId        :: StreamId,
+   writeEventDataExpectedVersion :: Maybe Int64,
+   writeEventDataEvents          :: NonEmpty EventEntry }
+  deriving (Show)
+
+instance QC.Arbitrary WriteEventData where
+  arbitrary = WriteEventData <$> (StreamId . fromString <$> QC.arbitrary)
+                               <*> QC.arbitrary
+                               <*> ((:|) <$> QC.arbitrary <*> QC.arbitrary)
+
 postEventRequestProgram
     :: MonadEsDsl m
-    => PostEventRequest -> m (Either EventStoreActionError EventWriteResult)
-postEventRequestProgram = 
-    runExceptT . DynamoDbEventStore.EventStoreActions.postEventRequestProgram
+    => WriteEventData -> m (Either EventStoreActionError Streams.EventWriteResult)
+postEventRequestProgram WriteEventData {..} = 
+    runExceptT $
+      Streams.writeEvent
+        writeEventDataStreamId
+        writeEventDataExpectedVersion
+        writeEventDataEvents
 
 getReadAllRequestProgram
     :: MonadEsDsl m
@@ -102,7 +119,7 @@ newtype UploadList =
     UploadList [UploadItem]
     deriving ((Show))
 
-sampleTime :: EventTime
+sampleTime :: StreamItem.EventTime
 sampleTime = 
     EventTime $
     parseTimeOrError
@@ -267,11 +284,11 @@ instance QC.Arbitrary UploadList where
 
 writeEvent
     :: (Text, Int64, NonEmpty EventEntry)
-    -> DynamoCmdM Queue (Either EventStoreActionError EventWriteResult)
+    -> DynamoCmdM Queue (Either EventStoreActionError Streams.EventWriteResult)
 writeEvent (stream,eventNumber,eventEntries) = do
     log' Debug "Writing Item"
     postEventRequestProgram
-        (PostEventRequest stream (Just eventNumber) eventEntries)
+        (WriteEventData (StreamId stream) (Just eventNumber) eventEntries)
 
 publisher
     :: [(Text, Int64, NonEmpty EventEntry)]
@@ -292,6 +309,25 @@ globalFeedFromUploadList = foldl' acc Map.empty
                 Map.lookup stream s
         in Map.insert stream newValue s
 
+globalStreamToMapFold :: Foldl.Fold (GlobalFeedPosition, EventKey) (Map.Map Text (Seq.Seq Int64))
+globalStreamToMapFold = Foldl.Fold acc mempty id
+  where
+    acc
+        :: Map.Map Text (Seq.Seq Int64)
+        -> (GlobalFeedPosition, EventKey)
+        -> Map.Map Text (Seq.Seq Int64)
+    acc s (_, EventKey (StreamId streamId, eventNumber)) = 
+        let newValue =
+                maybe
+                    (Seq.singleton eventNumber)
+                    (Seq.|> eventNumber) $
+                Map.lookup streamId s
+        in Map.insert streamId newValue s
+
+buildEventMap :: MonadEsDsl m => m (Either EventStoreActionError (Map.Map Text (Seq.Seq Int64)))
+buildEventMap =
+  runExceptT $ Foldl.purely P.fold globalStreamToMapFold (Streams.globalEventKeysProducer QueryDirectionForward Nothing)
+{-
 globalStreamResultToMap :: GlobalStreamResult -> Map.Map Text (Seq.Seq Int64)
 globalStreamResultToMap GlobalStreamResult{..} = 
     foldl' acc Map.empty globalStreamResultEvents
@@ -307,6 +343,7 @@ globalStreamResultToMap GlobalStreamResult{..} =
                     (Seq.|> recordedEventNumber) $
                 Map.lookup recordedEventStreamId s
         in Map.insert recordedEventStreamId newValue s
+-}
 
 prop_EventShouldAppearInGlobalFeedInStreamOrder :: NewUploadList -> QC.Property
 prop_EventShouldAppearInGlobalFeedInStreamOrder newUploadList = 
@@ -322,18 +359,13 @@ prop_EventShouldAppearInGlobalFeedInStreamOrder newUploadList =
     check uploadList (_,testRunState) = 
         QC.forAll
             (runReadAllProgram testRunState)
-            (\feedItems -> 
-                  (globalStreamResultToMap <$> feedItems) ===
+            (\eventMap -> 
+                  eventMap ===
                   (Right $ globalFeedFromUploadList uploadList))
     runReadAllProgram = 
         runProgramGenerator
             "readAllRequestProgram"
-            (getReadAllRequestProgram
-                 ReadAllRequest
-                 { readAllRequestStartPosition = Nothing
-                 , readAllRequestMaxItems = 10000
-                 , readAllRequestDirection = FeedDirectionForward
-                 })
+            buildEventMap
 
 prop_SingleEventIsIndexedCorrectly :: QC.Property
 prop_SingleEventIsIndexedCorrectly = 
@@ -348,18 +380,13 @@ prop_SingleEventIsIndexedCorrectly =
     check uploadList (_,testRunState) = 
         QC.forAll
             (runReadAllProgram testRunState)
-            (\feedItems -> 
-                  (globalStreamResultToMap <$> feedItems) ===
+            (\eventMap -> 
+                  eventMap ===
                   (Right $ globalFeedFromUploadList uploadList))
     runReadAllProgram = 
         runProgramGenerator
             "readAllRequestProgram"
-            (getReadAllRequestProgram
-                 ReadAllRequest
-                 { readAllRequestStartPosition = Nothing
-                 , readAllRequestMaxItems = 2000
-                 , readAllRequestDirection = FeedDirectionForward
-                 })
+            buildEventMap
 
 unpositive :: QC.Positive Int -> Int
 unpositive (QC.Positive x) = x
@@ -457,7 +484,7 @@ prop_CanReadAnySectionOfAStreamBackward (UploadList uploadList) =
 expectedEventsFromUploadList :: UploadList -> [RecordedEvent]
 expectedEventsFromUploadList (UploadList uploadItems) = do
     (streamId,firstEventNumber,eventEntries) <- uploadItems
-    (eventNumber,EventEntry eventData (EventType eventType) eventId (EventTime eventTime) isJson) <- 
+    (eventNumber,EventEntry eventData (StreamItem.EventType eventType) eventId (StreamItem.EventTime eventTime) isJson) <- 
         zip [firstEventNumber + 1 ..] (NonEmpty.toList eventEntries)
     return
         RecordedEvent
@@ -515,29 +542,10 @@ prop_ConflictingWritesWillNotSucceed =
 
 pageThroughGlobalFeed :: Natural
                       -> DynamoCmdM Queue (Either EventStoreActionError [RecordedEvent])
-pageThroughGlobalFeed pageSize = go [] Nothing
-  where
-    go acc nextPosition = do
-        result <- 
-            getReadAllRequestProgram
-                ReadAllRequest
-                { readAllRequestDirection = FeedDirectionBackward
-                , readAllRequestStartPosition = nextPosition
-                , readAllRequestMaxItems = pageSize
-                }
-        either (return . Left) (processResult acc) result
-    processResult
-        :: [RecordedEvent]
-        -> GlobalStreamResult
-        -> DynamoCmdM Queue (Either EventStoreActionError [RecordedEvent])
-    processResult acc GlobalStreamResult{globalStreamResultNext = Nothing} = 
-        (return . Right) acc
-    processResult acc GlobalStreamResult{globalStreamResultNext = Just (_,nextPosition,_),..} = 
-        go
-            (globalStreamResultEvents ++ acc)
-            (convertGlobalStartPosition nextPosition)
-    convertGlobalStartPosition GlobalStartHead = Nothing
-    convertGlobalStartPosition (GlobalStartPosition x) = Just x
+pageThroughGlobalFeed _pageSize = runExceptT $ P.toListM $
+    Streams.globalEventsProducer QueryDirectionForward Nothing
+    >->
+    P.map snd
 
 getStreamRecordedEvents :: Text
                         -> ExceptT EventStoreActionError (DynamoCmdM Queue) [RecordedEvent]
@@ -641,8 +649,8 @@ writeEventsWithExplicitExpectedVersions (StreamId streamId) events =
         result <- 
             lift $
             postEventRequestProgram
-                (PostEventRequest
-                     streamId
+                (WriteEventData
+                     (StreamId streamId)
                      (Just eventNumber)
                      (EventEntry ed (EventType et) eventId sampleTime False :|
                       []))
@@ -656,8 +664,8 @@ writeEventsWithNoExpectedVersions (StreamId streamId) events =
     writeSingleEvent (et,eventId,ed) = do
         result <- 
             postEventRequestProgram
-                (PostEventRequest
-                     streamId
+                (WriteEventData
+                     (StreamId streamId)
                      Nothing
                      (EventEntry ed (EventType et) eventId sampleTime False :|
                       []))
@@ -710,7 +718,7 @@ writtenEventsAppearInReadStream writer =
            expectedResult
            result
 
-prop_NoWriteRequestCanCausesAFatalErrorInGlobalFeedWriter :: [PostEventRequest]
+prop_NoWriteRequestCanCausesAFatalErrorInGlobalFeedWriter :: [WriteEventData]
                                                           -> QC.Property
 prop_NoWriteRequestCanCausesAFatalErrorInGlobalFeedWriter events = 
     let programs = 
@@ -727,10 +735,10 @@ prop_NoWriteRequestCanCausesAFatalErrorInGlobalFeedWriter events =
 cannotWriteEventsOutOfOrder :: Assertion
 cannotWriteEventsOutOfOrder = 
     let postEventRequest = 
-            PostEventRequest
-            { perStreamId = "MyStream"
-            , perExpectedVersion = Just 1
-            , perEvents = sampleEventEntry :| []
+            WriteEventData
+            { writeEventDataStreamId = StreamId "MyStream"
+            , writeEventDataExpectedVersion = Just 1
+            , writeEventDataEvents = sampleEventEntry :| []
             }
         result = 
             evalProgram
@@ -742,10 +750,10 @@ cannotWriteEventsOutOfOrder =
 canWriteFirstEvent :: Assertion
 canWriteFirstEvent = 
     let postEventRequest = 
-            PostEventRequest
-            { perStreamId = "MyStream"
-            , perExpectedVersion = Just (-1)
-            , perEvents = sampleEventEntry :| []
+            WriteEventData
+            { writeEventDataStreamId = StreamId "MyStream"
+            , writeEventDataExpectedVersion = Just (-1)
+            , writeEventDataEvents = sampleEventEntry :| []
             }
         result = 
             evalProgram
@@ -764,24 +772,24 @@ secondSampleEventEntry =
 eventNumbersCorrectForMultipleEvents :: Assertion
 eventNumbersCorrectForMultipleEvents = 
     let streamId = "MyStream"
-        multiPostEventRequest = 
-            PostEventRequest
-            { perStreamId = streamId
-            , perExpectedVersion = Just (-1)
-            , perEvents = sampleEventEntry :| [secondSampleEventEntry]
+        multiWriteEventData = 
+            WriteEventData
+            { writeEventDataStreamId = StreamId streamId
+            , writeEventDataExpectedVersion = Just (-1)
+            , writeEventDataEvents = sampleEventEntry :| [secondSampleEventEntry]
             }
-        subsequentPostEventRequest = 
-            PostEventRequest
-            { perStreamId = streamId
-            , perExpectedVersion = Just 1
-            , perEvents = sampleEventEntry :| []
+        subsequentWriteEventData = 
+            WriteEventData
+            { writeEventDataStreamId = StreamId streamId
+            , writeEventDataExpectedVersion = Just 1
+            , writeEventDataEvents = sampleEventEntry :| []
             }
         result = 
             evalProgram
                 "writeEvent"
                 (runExceptT $
-                 lift (postEventRequestProgram multiPostEventRequest) >>
-                 lift (postEventRequestProgram subsequentPostEventRequest) >>
+                 lift (postEventRequestProgram multiWriteEventData) >>
+                 lift (postEventRequestProgram subsequentWriteEventData) >>
                  getStreamRecordedEvents streamId)
                 emptyTestState
         eventNumbers = (recordedEventNumber <$>) <$> result
@@ -801,10 +809,10 @@ testStateItems :: Int -> TestState
 testStateItems itemCount =
     let postProgram (eventId,eventNumber) = 
             postEventRequestProgram
-                PostEventRequest
-                { perStreamId = testStreamId
-                , perExpectedVersion = Nothing
-                , perEvents = sampleEventEntry
+                WriteEventData
+                { writeEventDataStreamId = StreamId testStreamId
+                , writeEventDataExpectedVersion = Nothing
+                , writeEventDataEvents = sampleEventEntry
                   { eventEntryType = (EventType . tshow) eventNumber
                   , eventEntryEventId = eventId
                   } :|
@@ -1335,11 +1343,11 @@ whenIndexing1000ItemsIopsIsMinimal =
         expectedWriteState = Map.fromList [
            ((UnpagedRead,IopsScanUnpaged,"indexer"),138)
           ,((TableRead,IopsGetItem,"collectAncestorsThread"),1)
-          ,((TableRead,IopsGetItem,"globalFeedReader"),13)
+          ,((TableRead,IopsGetItem,"globalFeedReader"),2)
           ,((TableRead,IopsGetItem,"verifyPagesThread"),583)
           ,((TableRead,IopsGetItem,"writeItemsToPageThread"),1)
           ,((TableRead,IopsQuery,"collectAncestorsThread"),100)
-          ,((TableRead,IopsQuery,"globalFeedReader"),109)
+          ,((TableRead,IopsQuery,"globalFeedReader"),100)
           ,((TableRead,IopsQuery,"writeEvents"),99)
           ,((TableWrite,IopsWrite,"verifyItemsThread"),100)
           ,((TableWrite,IopsWrite,"verifyPagesThread"),2)
@@ -1353,33 +1361,33 @@ whenIndexing1000ItemsIopsIsMinimal =
 errorThrownIfTryingToWriteAnEventInAMultipleGap :: Assertion
 errorThrownIfTryingToWriteAnEventInAMultipleGap = 
     let streamId = "MyStream"
-        multiPostEventRequest = 
-            PostEventRequest
-            { perStreamId = streamId
-            , perExpectedVersion = Just (-1)
-            , perEvents = sampleEventEntry :| [secondSampleEventEntry]
+        multiWriteEventData = 
+            WriteEventData
+            { writeEventDataStreamId = StreamId streamId
+            , writeEventDataExpectedVersion = Just (-1)
+            , writeEventDataEvents = sampleEventEntry :| [secondSampleEventEntry]
             }
-        subsequentPostEventRequest = 
-            PostEventRequest
-            { perStreamId = streamId
-            , perExpectedVersion = Just (-1)
-            , perEvents = sampleEventEntry :| []
+        subsequentWriteEventData = 
+            WriteEventData
+            { writeEventDataStreamId = StreamId streamId
+            , writeEventDataExpectedVersion = Just (-1)
+            , writeEventDataEvents = sampleEventEntry :| []
             }
         result = 
             evalProgram
                 "writeEvents"
-                (postEventRequestProgram multiPostEventRequest >>
-                 postEventRequestProgram subsequentPostEventRequest)
+                (postEventRequestProgram multiWriteEventData >>
+                 postEventRequestProgram subsequentWriteEventData)
                 emptyTestState
     in assertEqual "Should return failure" (Right EventExists) result
 
 postTwoEventWithTheSameEventId :: DynamoCmdM Queue (Either EventStoreActionError EventWriteResult)
 postTwoEventWithTheSameEventId = 
     let postEventRequest = 
-            PostEventRequest
-            { perStreamId = "MyStream"
-            , perExpectedVersion = Nothing
-            , perEvents = sampleEventEntry :| []
+            WriteEventData
+            { writeEventDataStreamId = StreamId "MyStream"
+            , writeEventDataExpectedVersion = Nothing
+            , writeEventDataEvents = sampleEventEntry :| []
             }
     in postEventRequestProgram postEventRequest >>
        postEventRequestProgram postEventRequest
@@ -1404,10 +1412,10 @@ subsequentWriteWithSameEventIdDoesNotAppendSecondEventWhenFirstWriteHadMultipleE
         (eventId1:eventId2:_) = sampleEventIds
         postEvents events = 
             postEventRequestProgram
-                PostEventRequest
-                { perStreamId = streamId
-                , perExpectedVersion = Nothing
-                , perEvents = events
+                WriteEventData
+                { writeEventDataStreamId = StreamId streamId
+                , writeEventDataExpectedVersion = Nothing
+                , writeEventDataEvents = events
                 }
         postDoubleEvents = 
             postEvents $
@@ -1436,14 +1444,14 @@ subsequentWriteWithSameEventIdAcceptedIfExpectedVersionIsCorrect :: Assertion
 subsequentWriteWithSameEventIdAcceptedIfExpectedVersionIsCorrect = 
     let streamId = "MyStream"
         postEventRequest = 
-            PostEventRequest
-            { perStreamId = streamId
-            , perExpectedVersion = Nothing
-            , perEvents = sampleEventEntry :| []
+            WriteEventData
+            { writeEventDataStreamId = StreamId streamId
+            , writeEventDataExpectedVersion = Nothing
+            , writeEventDataEvents = sampleEventEntry :| []
             }
         secondPost = 
             postEventRequest
-            { perExpectedVersion = Just 0
+            { writeEventDataExpectedVersion = Just 0
             }
         program = 
             postEventRequestProgram postEventRequest >>
