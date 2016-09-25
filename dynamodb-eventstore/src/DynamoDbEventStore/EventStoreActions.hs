@@ -124,9 +124,7 @@ postEventRequestProgram (PostEventRequest sId ev eventEntries) =
 
 getReadEventRequestProgram :: (DynamoCmdWithErrors q m) => ReadEventRequest -> m (Maybe RecordedEvent)
 getReadEventRequestProgram (ReadEventRequest sId eventNumber) =
-  P.head $
-    Streams.streamEventsProducer QueryDirectionBackward (StreamId sId) (Just eventNumber) 1
-    >-> P.dropWhile ((/= eventNumber) . recordedEventNumber)
+  Streams.readEvent (StreamId sId) eventNumber 
 
 buildStreamResult :: FeedDirection -> Maybe Int64 -> [RecordedEvent] -> Maybe Int64 -> Natural -> Maybe StreamResult
 buildStreamResult _ Nothing _ _ _ = Nothing

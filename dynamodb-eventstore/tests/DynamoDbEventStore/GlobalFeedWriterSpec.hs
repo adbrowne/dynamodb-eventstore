@@ -41,15 +41,14 @@ import qualified Test.Tasty.QuickCheck as QC
 import qualified DynamoDbEventStore.Streams as Streams
 import DynamoDbEventStore.Streams (EventWriteResult(..))
 import qualified DynamoDbEventStore.Storage.StreamItem as StreamItem
-import DynamoDbEventStore.Storage.StreamItem (EventEntry(..))
+import DynamoDbEventStore.Storage.StreamItem (EventEntry(..),EventTime(..),EventType(..),unEventTime)
 import DynamoDbEventStore.DynamoCmdInterpreter
 import DynamoDbEventStore.EventStoreActions
-       ( EventStartPosition(..), EventTime(..),
-        EventType(..), FeedDirection(..),
+       ( EventStartPosition(..),
+        FeedDirection(..),
         GlobalStartPosition(..), GlobalStreamResult(..),
-        ReadAllRequest(..), ReadEventRequest(..),
-        ReadStreamRequest(..), StreamOffset, StreamResult(..),
-        unEventTime)
+        ReadAllRequest(..),
+        ReadStreamRequest(..), StreamOffset, StreamResult(..))
 import qualified DynamoDbEventStore.EventStoreActions
 import DynamoDbEventStore.EventStoreCommands
 import qualified DynamoDbEventStore.GlobalFeedWriter
@@ -84,14 +83,6 @@ getReadAllRequestProgram
     => ReadAllRequest -> m (Either EventStoreActionError GlobalStreamResult)
 getReadAllRequestProgram = 
     runExceptT . DynamoDbEventStore.EventStoreActions.getReadAllRequestProgram
-
-getReadEventRequestProgram
-    :: MonadEsDsl m
-    => ReadEventRequest
-    -> m (Either EventStoreActionError (Maybe RecordedEvent))
-getReadEventRequestProgram = 
-    runExceptT .
-    DynamoDbEventStore.EventStoreActions.getReadEventRequestProgram
 
 getReadStreamRequestProgram
     :: MonadEsDsl m
@@ -516,8 +507,7 @@ prop_AllEventsCanBeReadIndividually newUploadList =
             (id <$>) <$>
             evalProgram
                 "LookupEvent"
-                (getReadEventRequestProgram $
-                 ReadEventRequest streamId eventNumber)
+                (runExceptT $ Streams.readEvent (StreamId streamId) eventNumber)
                 testRunState
     in QC.forAll (runPrograms programs) check
 

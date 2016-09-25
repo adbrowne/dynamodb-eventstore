@@ -6,6 +6,7 @@ module DynamoDbEventStore.Streams
   ,globalEventKeysProducer
   ,globalEventsProducer
   ,writeEvent
+  ,readEvent
   ,EventWriteResult(..))
   where
 
@@ -179,6 +180,11 @@ ensureExpectedVersion streamId expectedEventNumber =
     checkEventNumber (Just StreamEntry {..}) =
       let lastEventNumber = streamEntryFirstEventNumber + fromIntegral (length streamEntryEventEntries) - 1
       in lastEventNumber == expectedEventNumber
+
+readEvent :: (MonadEsDsl m, MonadError EventStoreActionError m) => StreamId -> Int64 -> m (Maybe RecordedEvent)
+readEvent streamId eventNumber = do
+  P.head $
+    streamEventsProducer QueryDirectionBackward streamId (Just eventNumber) 1
 
 writeEvent :: (MonadEsDsl m, MonadError EventStoreActionError m) => StreamId -> Maybe Int64 -> NonEmpty EventEntry -> m EventWriteResult
 writeEvent (StreamId sId) ev eventEntries = do
