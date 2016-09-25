@@ -318,23 +318,6 @@ globalStreamToMapFold = Foldl.Fold acc mempty id
 buildEventMap :: MonadEsDsl m => m (Either EventStoreActionError (Map.Map Text (Seq.Seq Int64)))
 buildEventMap =
   runExceptT $ Foldl.purely P.fold globalStreamToMapFold (Streams.globalEventKeysProducer QueryDirectionForward Nothing)
-{-
-globalStreamResultToMap :: GlobalStreamResult -> Map.Map Text (Seq.Seq Int64)
-globalStreamResultToMap GlobalStreamResult{..} = 
-    foldl' acc Map.empty globalStreamResultEvents
-  where
-    acc
-        :: Map.Map Text (Seq.Seq Int64)
-        -> RecordedEvent
-        -> Map.Map Text (Seq.Seq Int64)
-    acc s RecordedEvent{..} = 
-        let newValue = 
-                maybe
-                    (Seq.singleton recordedEventNumber)
-                    (Seq.|> recordedEventNumber) $
-                Map.lookup recordedEventStreamId s
-        in Map.insert recordedEventStreamId newValue s
--}
 
 prop_EventShouldAppearInGlobalFeedInStreamOrder :: NewUploadList -> QC.Property
 prop_EventShouldAppearInGlobalFeedInStreamOrder newUploadList = 
