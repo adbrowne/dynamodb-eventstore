@@ -370,28 +370,29 @@ fmap2
     => (a -> b) -> f (f1 a) -> f (f1 b)
 fmap2 = fmap . fmap
 
-fmap3
-    :: (Functor f, Functor f1, Functor f2)
-    => (a -> b) -> f (f1 (f2 a)) -> f (f1 (f2 b))
-fmap3 = fmap . fmap . fmap
+readPartStream
+  :: QueryDirection
+     -> TestState
+     -> StreamId
+     -> Maybe Int64
+     -> Natural
+     -> Either EventStoreActionError [Int64]
+readPartStream direction startState streamId startEvent maxItems =
+  evalProgram
+      "ReadStream"
+      (runExceptT $
+          P.toListM $
+          Streams.streamEventsProducer direction streamId startEvent 10
+          >-> P.take (fromIntegral maxItems)
+          >-> P.map recordedEventNumber)
+      startState
 
 prop_CanReadAnySectionOfAStreamForward :: UploadList -> QC.Property
 prop_CanReadAnySectionOfAStreamForward (UploadList uploadList) = 
     let writeState = 
             execProgram "publisher" (publisher uploadList) emptyTestState
         expectedStreamEvents = globalFeedFromUploadList uploadList
-        readStreamEvents streamId startEvent maxItems = 
-            fmap3 recordedEventNumber $
-            fmap2 streamResultEvents $
-            evalProgram
-                "ReadStream"
-                (getReadStreamRequestProgram
-                     (ReadStreamRequest
-                          streamId
-                          startEvent
-                          maxItems
-                          FeedDirectionForward))
-                writeState
+        readStreamEvents = readPartStream QueryDirectionForward writeState
         expectedEvents streamId startEvent maxItems = 
             take (fromIntegral maxItems) $
             drop (fromMaybe 0 startEvent) $
@@ -402,11 +403,10 @@ prop_CanReadAnySectionOfAStreamForward (UploadList uploadList) =
                 ((fromIntegral . unpositive) <$> startEvent)
                 maxItems ===
             Right
-                (Just
-                     (expectedEvents
-                          streamId
-                          (unpositive <$> startEvent)
-                          maxItems))
+                (expectedEvents
+                    streamId
+                    (unpositive <$> startEvent)
+                    maxItems)
     in QC.forAll
            ((,,) <$> (QC.elements . Map.keys) expectedStreamEvents <*>
             QC.arbitrary <*>
@@ -418,37 +418,25 @@ prop_CanReadAnySectionOfAStreamBackward (UploadList uploadList) =
     let writeState = 
             execProgram "publisher" (publisher uploadList) emptyTestState
         expectedStreamEvents = globalFeedFromUploadList uploadList
-        readStreamEvents streamId startEvent maxItems = 
-            fmap3 recordedEventNumber $
-            fmap2 streamResultEvents $
-            evalProgram
-                "ReadStream"
-                (getReadStreamRequestProgram
-                     (ReadStreamRequest
-                          streamId
-                          startEvent
-                          maxItems
-                          FeedDirectionBackward))
-                writeState
+        readStreamEvents = readPartStream QueryDirectionBackward writeState
         expectedEvents streamId Nothing maxItems = 
             take (fromIntegral maxItems) $
             reverse $ toList $ expectedStreamEvents ! streamId
         expectedEvents streamId (Just startEvent) maxItems = 
-            takeWhile (> startEvent - fromIntegral maxItems) $
+            take (fromIntegral maxItems) $
             dropWhile (> startEvent) $
             reverse $ toList $ expectedStreamEvents ! streamId
         check (streamId,startEvent,maxItems) = 
-            QC.counterexample (show $ writeState) $
+            QC.counterexample (show writeState) $
             readStreamEvents
                 (StreamId streamId)
                 ((fromIntegral . unpositive) <$> startEvent)
                 maxItems ===
             Right
-                (Just
-                     (expectedEvents
+                (expectedEvents
                           streamId
                           (fromIntegral . unpositive <$> startEvent)
-                          maxItems))
+                          maxItems)
     in QC.forAll
            ((,,) <$> (QC.elements . Map.keys) expectedStreamEvents <*>
             QC.arbitrary <*>
