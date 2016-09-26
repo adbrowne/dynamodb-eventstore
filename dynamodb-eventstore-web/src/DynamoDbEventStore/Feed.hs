@@ -22,6 +22,7 @@ import           Data.Time.Format
 import qualified Data.UUID
 import qualified Data.Vector                           as V
 import           DynamoDbEventStore.EventStoreActions
+import           DynamoDbEventStore.Paging
 import           DynamoDbEventStore.EventStoreCommands
 import           DynamoDbEventStore.Types
 import           Network.HTTP.Base

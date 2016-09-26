@@ -9,6 +9,7 @@ import           Data.Maybe                            (fromJust)
 import           Data.Time.Format
 import qualified Data.UUID                             as UUID
 import           DynamoDbEventStore.EventStoreActions
+import           DynamoDbEventStore.Paging
 import           DynamoDbEventStore.EventStoreCommands
 import           DynamoDbEventStore.Types
 import           DynamoDbEventStore.Feed
