@@ -7,7 +7,6 @@ import DynamoDbEventStore.ProjectPrelude
 import Data.Maybe (fromJust)
 import DynamoDbEventStore.Paging
 import DynamoDbEventStore.Types (EventStoreActionError,RecordedEvent(..),EventId,StreamId(..),EventId(..),QueryDirection(..))
-import Safe
 import Test.Tasty
 import qualified Data.Text.Encoding as T
 import Test.Tasty.HUnit
@@ -51,7 +50,7 @@ sampleItems count direction startEvent =
                 , recordedEventIsJson = False }
 
 streamEventsProducer :: (Monad m) => QueryDirection -> StreamId -> Maybe Int64 -> Natural -> Producer RecordedEvent m ()
-streamEventsProducer direction _streamId startEvent batchSize =
+streamEventsProducer direction _streamId startEvent _batchSize =
   sampleItems 29 direction startEvent
 
 getSampleItems
