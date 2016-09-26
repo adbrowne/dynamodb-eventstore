@@ -20,7 +20,6 @@ module DynamoDbEventStore.EventStoreActions(
   ReadStreamResult(..),
   ReadAllResult(..),
   ReadEventResult(..),
-  FeedDirection(..),
   StreamResult(..),
   StreamOffset,
   GlobalStreamResult(..),
@@ -35,6 +34,7 @@ module DynamoDbEventStore.EventStoreActions(
 
 import           BasicPrelude
 import           Data.List.NonEmpty                    (NonEmpty (..))
+import           DynamoDbEventStore.Paging
 import qualified DynamoDbEventStore.Streams as Streams
 import           DynamoDbEventStore.Storage.StreamItem (EventEntry(..),EventType(..),EventTime(..),unEventTime)
 import           DynamoDbEventStore.EventStoreCommands hiding (readField)
@@ -55,18 +55,7 @@ data EventStoreAction =
   ReadEvent ReadEventRequest |
   ReadAll ReadAllRequest deriving (Show)
 
-data EventStartPosition = EventStartHead | EventStartPosition Int64 deriving (Show, Eq)
 data GlobalStartPosition = GlobalStartHead | GlobalStartPosition GlobalFeedPosition deriving (Show, Eq)
-
-type StreamOffset = (FeedDirection, EventStartPosition, Natural)
-
-data StreamResult = StreamResult {
-    streamResultEvents   :: [RecordedEvent]
-  , streamResultFirst    :: Maybe StreamOffset
-  , streamResultNext     :: Maybe StreamOffset
-  , streamResultPrevious :: Maybe StreamOffset
-  , streamResultLast     :: Maybe StreamOffset
-} deriving Show
 
 type GlobalStreamOffset = (FeedDirection, GlobalStartPosition, Natural)
 
@@ -93,19 +82,6 @@ instance QC.Arbitrary PostEventRequest where
   arbitrary = PostEventRequest <$> (fromString <$> QC.arbitrary)
                                <*> QC.arbitrary
                                <*> ((:|) <$> QC.arbitrary <*> QC.arbitrary)
-
-data FeedDirection = FeedDirectionForward | FeedDirectionBackward
-  deriving (Eq, Show)
-
-instance QC.Arbitrary FeedDirection where
-  arbitrary = QC.elements [FeedDirectionForward, FeedDirectionBackward]
-
-data ReadStreamRequest = ReadStreamRequest {
-   rsrStreamId         :: StreamId,
-   rsrStartEventNumber :: Maybe Int64,
-   rsrMaxItems         :: Natural,
-   rsrDirection        :: FeedDirection
-} deriving (Show)
 
 data ReadEventRequest = ReadEventRequest {
    rerStreamId    :: Text,

@@ -42,9 +42,9 @@ import DynamoDbEventStore.Streams (EventWriteResult(..))
 import qualified DynamoDbEventStore.Storage.StreamItem as StreamItem
 import DynamoDbEventStore.Storage.StreamItem (EventEntry(..),EventTime(..),EventType(..),unEventTime)
 import DynamoDbEventStore.DynamoCmdInterpreter
+import DynamoDbEventStore.Paging ( FeedDirection(..) )
 import DynamoDbEventStore.EventStoreActions
        ( EventStartPosition(..),
-        FeedDirection(..),
         GlobalStartPosition(..), GlobalStreamResult(..),
         ReadAllRequest(..),
         ReadStreamRequest(..), StreamOffset, StreamResult(..))
@@ -363,11 +363,6 @@ prop_SingleEventIsIndexedCorrectly =
 
 unpositive :: QC.Positive Int -> Int
 unpositive (QC.Positive x) = x
-
-fmap2
-    :: (Functor f, Functor f1)
-    => (a -> b) -> f (f1 a) -> f (f1 b)
-fmap2 = fmap . fmap
 
 readPartStream
   :: QueryDirection
