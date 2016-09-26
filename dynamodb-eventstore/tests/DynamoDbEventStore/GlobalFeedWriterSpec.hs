@@ -773,22 +773,6 @@ pagedTestStateItems itemCount =
             execProgram "writeGlobalFeed" writePagesProgram writeState
     in globalFeedCreatedState
 
-getSampleItems
-    :: Maybe Int64
-    -> Natural
-    -> FeedDirection
-    -> Either EventStoreActionError (Maybe StreamResult)
-getSampleItems startEvent maxItems direction = 
-    evalProgram
-        "ReadStream"
-        (getReadStreamRequestProgram
-             (ReadStreamRequest
-                  (StreamId "MyStream")
-                  startEvent
-                  maxItems
-                  direction))
-        (pagedTestStateItems 29)
-
 getSampleGlobalItems
     :: Maybe GlobalFeedPosition
     -> Natural
@@ -1091,157 +1075,6 @@ globalStreamLinkTests =
              (Just (FeedDirectionBackward, toStartPosition 6 8, 20))
        , linkAssert endOfFeedForward streamResultPrevious' Nothing]
 
-streamLinkTests :: [TestTree]
-streamLinkTests = 
-    let endOfFeedBackward = 
-            ( "End of feed backward"
-            , getSampleItems Nothing 20 FeedDirectionBackward)
-        middleOfFeedBackward = 
-            ( "Middle of feed backward"
-            , getSampleItems (Just 26) 20 FeedDirectionBackward)
-        startOfFeedBackward = 
-            ( "Start of feed backward"
-            , getSampleItems (Just 1) 20 FeedDirectionBackward)
-        pastEndOfFeedBackward = 
-            ( "Past end of feed backward"
-            , getSampleItems (Just 100) 20 FeedDirectionBackward)
-        startOfFeedForward = 
-            ( "Start of feed forward"
-            , getSampleItems Nothing 20 FeedDirectionForward)
-        middleOfFeedForward = 
-            ( "Middle of feed forward"
-            , getSampleItems (Just 3) 20 FeedDirectionForward)
-        endOfFeedForward = 
-            ( "End of feed forward"
-            , getSampleItems (Just 20) 20 FeedDirectionForward)
-        pastEndOfFeedForward = 
-            ( "Past end of feed forward"
-            , getSampleItems (Just 100) 20 FeedDirectionForward)
-        streamResultLast' = ("last", streamResultLast)
-        streamResultFirst' = ("first", streamResultFirst)
-        streamResultNext' = ("next", streamResultNext)
-        streamResultPrevious' = ("previous", streamResultPrevious)
-        linkAssert (feedResultName,feedResult) (linkName,streamLink) expectedResult = 
-            testCase
-                ("Unit - " <> feedResultName <> " - " <> linkName <> " link") $
-            assertEqual
-                ("Should have " <> linkName <> " link")
-                (Right (Just expectedResult))
-                (fmap2 streamLink feedResult)
-    in [ linkAssert
-             endOfFeedBackward
-             streamResultFirst'
-             (Just (FeedDirectionBackward, EventStartHead, 20))
-       , linkAssert
-             endOfFeedBackward
-             streamResultLast'
-             (Just (FeedDirectionForward, EventStartPosition 0, 20))
-       , linkAssert
-             endOfFeedBackward
-             streamResultNext'
-             (Just (FeedDirectionBackward, EventStartPosition 8, 20))
-       , linkAssert
-             endOfFeedBackward
-             streamResultPrevious'
-             (Just (FeedDirectionForward, EventStartPosition 29, 20))
-       , linkAssert
-             middleOfFeedBackward
-             streamResultFirst'
-             (Just (FeedDirectionBackward, EventStartHead, 20))
-       , linkAssert
-             middleOfFeedBackward
-             streamResultLast'
-             (Just (FeedDirectionForward, EventStartPosition 0, 20))
-       , linkAssert
-             middleOfFeedBackward
-             streamResultNext'
-             (Just (FeedDirectionBackward, EventStartPosition 6, 20))
-       , linkAssert
-             middleOfFeedBackward
-             streamResultPrevious'
-             (Just (FeedDirectionForward, EventStartPosition 27, 20))
-       , linkAssert
-             startOfFeedBackward
-             streamResultFirst'
-             (Just (FeedDirectionBackward, EventStartHead, 20))
-       , linkAssert startOfFeedBackward streamResultLast' Nothing
-       , linkAssert startOfFeedBackward streamResultNext' Nothing
-       , linkAssert
-             startOfFeedBackward
-             streamResultPrevious'
-             (Just (FeedDirectionForward, EventStartPosition 2, 20))
-       , linkAssert
-             pastEndOfFeedBackward
-             streamResultFirst'
-             (Just (FeedDirectionBackward, EventStartHead, 20))
-       , linkAssert
-             pastEndOfFeedBackward
-             streamResultLast'
-             (Just (FeedDirectionForward, EventStartPosition 0, 20))
-       , linkAssert
-             pastEndOfFeedBackward
-             streamResultNext'
-             (Just (FeedDirectionBackward, EventStartPosition 80, 20))
-       , linkAssert
-             pastEndOfFeedBackward
-             streamResultPrevious'
-             (Just (FeedDirectionForward, EventStartPosition 29, 20))
-       , linkAssert
-             startOfFeedForward
-             streamResultFirst'
-             (Just (FeedDirectionBackward, EventStartHead, 20))
-       , linkAssert startOfFeedForward streamResultLast' Nothing
-       , linkAssert startOfFeedForward streamResultNext' Nothing
-       , linkAssert
-             startOfFeedForward
-             streamResultPrevious'
-             (Just (FeedDirectionForward, EventStartPosition 20, 20))
-       , linkAssert
-             middleOfFeedForward
-             streamResultFirst'
-             (Just (FeedDirectionBackward, EventStartHead, 20))
-       , linkAssert
-             middleOfFeedForward
-             streamResultLast'
-             (Just (FeedDirectionForward, EventStartPosition 0, 20))
-       , linkAssert
-             middleOfFeedForward
-             streamResultNext'
-             (Just (FeedDirectionBackward, EventStartPosition 2, 20))
-       , linkAssert
-             middleOfFeedForward
-             streamResultPrevious'
-             (Just (FeedDirectionForward, EventStartPosition 23, 20))
-       , linkAssert
-             endOfFeedForward
-             streamResultFirst'
-             (Just (FeedDirectionBackward, EventStartHead, 20))
-       , linkAssert
-             endOfFeedForward
-             streamResultLast'
-             (Just (FeedDirectionForward, EventStartPosition 0, 20))
-       , linkAssert
-             endOfFeedForward
-             streamResultNext'
-             (Just (FeedDirectionBackward, EventStartPosition 19, 20))
-       , linkAssert
-             endOfFeedForward
-             streamResultPrevious'
-             (Just (FeedDirectionForward, EventStartPosition 29, 20))
-       , linkAssert
-             pastEndOfFeedForward
-             streamResultFirst'
-             (Just (FeedDirectionBackward, EventStartHead, 20))
-       , linkAssert
-             pastEndOfFeedForward
-             streamResultLast'
-             (Just (FeedDirectionForward, EventStartPosition 0, 20))
-       , linkAssert
-             pastEndOfFeedForward
-             streamResultNext'
-             (Just (FeedDirectionBackward, EventStartPosition 99, 20))
-       , linkAssert pastEndOfFeedForward streamResultPrevious' Nothing]
-
 addUpIops :: Seq LogEvent -> Map (IopsCategory, IopsOperation, Text) Int
 addUpIops = foldr' acc Map.empty
   where
@@ -1453,6 +1286,5 @@ tests =
     , testCase
           "Unit - EventNumbers are calculated when there are multiple events"
           eventNumbersCorrectForMultipleEvents
-    , testGroup "Single Stream Link Tests" streamLinkTests
     , testGroup "Global Stream Link Tests" globalStreamLinkTests
     , testGroup "Global Stream Paging Tests" globalStreamPagingTests]

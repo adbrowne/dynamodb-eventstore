@@ -102,83 +102,9 @@ getReadEventRequestProgram :: (DynamoCmdWithErrors q m) => ReadEventRequest -> m
 getReadEventRequestProgram (ReadEventRequest sId eventNumber) =
   Streams.readEvent (StreamId sId) eventNumber 
 
-buildStreamResult :: FeedDirection -> Maybe Int64 -> [RecordedEvent] -> Maybe Int64 -> Natural -> Maybe StreamResult
-buildStreamResult _ Nothing _ _ _ = Nothing
-buildStreamResult FeedDirectionBackward (Just lastEvent) events requestedStartEventNumber maxItems =
-  let
-    maxEventNumber = maximum $ recordedEventNumber <$> events
-    startEventNumber = fromMaybe maxEventNumber requestedStartEventNumber
-    nextEventNumber = startEventNumber - fromIntegral maxItems
-  in Just StreamResult {
-    streamResultEvents = events,
-    streamResultFirst = Just (FeedDirectionBackward, EventStartHead, maxItems),
-    streamResultNext =
-      if nextEventNumber >= 0 then
-        Just (FeedDirectionBackward, EventStartPosition nextEventNumber, maxItems)
-      else Nothing,
-    streamResultPrevious = Just (FeedDirectionForward, EventStartPosition (min (startEventNumber + 1) (lastEvent + 1)), maxItems),
-    streamResultLast =
-      if nextEventNumber >= 0 then
-        Just (FeedDirectionForward, EventStartPosition 0, maxItems)
-      else Nothing
-  }
-buildStreamResult FeedDirectionForward (Just _lastEvent) events requestedStartEventNumber maxItems =
-  let
-    maxEventNumber = maximumMay $ recordedEventNumber <$> events
-    minEventNumber = minimumMay $ recordedEventNumber <$> events
-    nextEventNumber = fromMaybe (fromMaybe 0 ((\x -> x - 1) <$> requestedStartEventNumber)) ((\x -> x - 1) <$> minEventNumber)
-    previousEventNumber = (+1) <$> maxEventNumber
-  in Just StreamResult {
-    streamResultEvents = events,
-    streamResultFirst = Just (FeedDirectionBackward, EventStartHead, maxItems),
-    streamResultNext =
-        if nextEventNumber >= 0 then
-        Just (FeedDirectionBackward, EventStartPosition nextEventNumber, maxItems)
-      else Nothing,
-    streamResultPrevious = (\eventNumber -> (FeedDirectionForward, EventStartPosition eventNumber, maxItems)) <$> previousEventNumber,
-    streamResultLast =
-      if maybe True (> 0) minEventNumber then
-        Just (FeedDirectionForward, EventStartPosition 0, maxItems)
-      else Nothing
-  }
-
-getLastEvent :: (DynamoCmdWithErrors q m) => StreamId -> m (Maybe Int64)
-getLastEvent streamId = do
-  x <- P.head $ Streams.streamEventsProducer QueryDirectionBackward streamId Nothing 1
-  return $ recordedEventNumber <$> x
-
 getReadStreamRequestProgram :: (DynamoCmdWithErrors q m) => ReadStreamRequest -> m (Maybe StreamResult)
-getReadStreamRequestProgram (ReadStreamRequest streamId startEventNumber maxItems FeedDirectionBackward) =
-  do
-    lastEvent <- getLastEvent streamId
-    events <-
-      P.toListM $
-          Streams.streamEventsProducer QueryDirectionBackward streamId startEventNumber 10
-          >-> filterLastEvent startEventNumber
-          >-> maxItemsFilter startEventNumber
-    return $ buildStreamResult FeedDirectionBackward lastEvent events startEventNumber maxItems
-  where
-    maxItemsFilter Nothing = P.take (fromIntegral maxItems)
-    maxItemsFilter (Just v) = P.takeWhile (\r -> recordedEventNumber r > minimumEventNumber v)
-    minimumEventNumber start = fromIntegral start - fromIntegral maxItems
-    filterLastEvent Nothing = P.filter (const True)
-    filterLastEvent (Just v) = P.filter ((<= v) . recordedEventNumber)
-getReadStreamRequestProgram (ReadStreamRequest streamId startEventNumber maxItems FeedDirectionForward) =
-  do
-    lastEvent <- getLastEvent streamId
-    events <-
-      P.toListM $
-        Streams.streamEventsProducer QueryDirectionForward streamId startEventNumber 10
-          >-> filterFirstEvent startEventNumber
-          >-> maxItemsFilter startEventNumber
-    return $ buildStreamResult FeedDirectionForward lastEvent events startEventNumber maxItems
-  where
-    maxItemsFilter Nothing = P.take (fromIntegral maxItems)
-    maxItemsFilter (Just v) = P.takeWhile (\r -> recordedEventNumber r <= maximumEventNumber v)
-    maximumEventNumber start = fromIntegral start + fromIntegral maxItems - 1
-    filterFirstEvent Nothing = P.filter (const True)
-    filterFirstEvent (Just v) = P.filter ((>= v) . recordedEventNumber)
-
+getReadStreamRequestProgram request =
+  runStreamRequest Streams.streamEventsProducer request
 
 getReadAllRequestProgram :: DynamoCmdWithErrors q m => ReadAllRequest -> m GlobalStreamResult
 getReadAllRequestProgram ReadAllRequest
