@@ -11,7 +11,6 @@ module DynamoDbEventStore.GlobalFeedWriterSpec
 
 import DynamoDbEventStore.ProjectPrelude
 import Control.Lens
-import Control.Monad.Loops
 import Control.Monad.Random
 import Control.Monad.State
 import qualified Data.Aeson as Aeson
@@ -44,10 +43,8 @@ import DynamoDbEventStore.Storage.StreamItem (EventEntry(..),EventTime(..),Event
 import DynamoDbEventStore.DynamoCmdInterpreter
 import DynamoDbEventStore.Paging ( FeedDirection(..) )
 import DynamoDbEventStore.EventStoreActions
-       ( EventStartPosition(..),
-        GlobalStartPosition(..), GlobalStreamResult(..),
-        ReadAllRequest(..),
-        ReadStreamRequest(..), StreamOffset, StreamResult(..))
+       (GlobalStartPosition(..), GlobalStreamResult(..),
+        ReadAllRequest(..))
 import qualified DynamoDbEventStore.EventStoreActions
 import DynamoDbEventStore.EventStoreCommands
 import qualified DynamoDbEventStore.GlobalFeedWriter
@@ -82,14 +79,6 @@ getReadAllRequestProgram
     => ReadAllRequest -> m (Either EventStoreActionError GlobalStreamResult)
 getReadAllRequestProgram = 
     runExceptT . DynamoDbEventStore.EventStoreActions.getReadAllRequestProgram
-
-getReadStreamRequestProgram
-    :: MonadEsDsl m
-    => ReadStreamRequest
-    -> m (Either EventStoreActionError (Maybe StreamResult))
-getReadStreamRequestProgram = 
-    runExceptT .
-    DynamoDbEventStore.EventStoreActions.getReadStreamRequestProgram
 
 globalFeedWriterProgram
     :: MonadEsDslWithFork m
@@ -798,55 +787,6 @@ groupByFibs as =
         acc (x:xs,ys) = Just (take x ys, (xs, drop x ys))
     in unfoldr acc (fibs, as)
 
-readStreamProgram :: Text
-                  -> Natural
-                  -> FeedDirection
-                  -> DynamoCmdM Queue [Int64]
-readStreamProgram streamId pageSize direction = 
-    let streamResultLink = 
-            case direction of
-                FeedDirectionBackward -> streamResultNext
-                FeedDirectionForward -> streamResultPrevious
-        request startEventNumber = 
-            ReadStreamRequest
-            { rsrStreamId = StreamId streamId
-            , rsrMaxItems = pageSize
-            , rsrStartEventNumber = startEventNumber
-            , rsrDirection = direction
-            }
-        positionToRequest EventStartHead = request Nothing
-        positionToRequest (EventStartPosition p) = request $ Just p
-        getResultEventNumbers :: StreamResult -> ([Int64], Maybe StreamOffset)
-        getResultEventNumbers streamResult@StreamResult{..} = 
-            ( recordedEventNumber <$> streamResultEvents
-            , streamResultLink streamResult)
-        start :: Maybe StreamOffset
-        start = Just $ (FeedDirectionBackward, EventStartHead, pageSize)
-        acc
-            :: Maybe StreamOffset
-            -> DynamoCmdM Queue (Maybe ([Int64], Maybe StreamOffset))
-        acc Nothing = return Nothing
-        acc (Just (_,position,_)) = 
-            either (const Nothing) (fmap getResultEventNumbers) <$>
-            getReadStreamRequestProgram (positionToRequest position)
-    in join <$> unfoldrM acc start
-
-prop_all_items_are_in_stream_when_paged_through :: QC.Positive Natural
-                                                -> QC.Positive Int
-                                                -> FeedDirection
-                                                -> QC.Property
-prop_all_items_are_in_stream_when_paged_through (QC.Positive pageSize) (QC.Positive streamLength) direction = 
-    let startState = pagedTestStateItems streamLength
-        program = readStreamProgram "MyStream" pageSize direction
-        programResult = evalProgram "readStream" program startState
-        maxEventNumber = fromIntegral $ streamLength - 1
-        expectedResult = 
-            case direction of
-                FeedDirectionForward -> [0 .. maxEventNumber]
-                FeedDirectionBackward -> 
-                    [maxEventNumber,maxEventNumber - 1 .. 0]
-    in programResult === expectedResult
-
 {-
 globalStreamPages:
 0: 0 (1)
@@ -1249,9 +1189,6 @@ tests =
     , testProperty
           "Can read any section of a stream backward"
           prop_CanReadAnySectionOfAStreamBackward
-    , testProperty
-          "All items are in the stream when paged through"
-          prop_all_items_are_in_stream_when_paged_through
     , 
       --testProperty "Moving next then previous returns the initial page in reverse order" todo,
       --testProperty "Moving previous then next returns the initial page in reverse order" todo,

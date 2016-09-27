@@ -218,7 +218,61 @@ streamLinkTests =
              (Just (FeedDirectionBackward, EventStartPosition 99, 20))
        , linkAssert pastEndOfFeedForward streamResultPrevious' Nothing]
 
+{-
+readStreamProgram :: Text
+                  -> Natural
+                  -> FeedDirection
+                  -> DynamoCmdM Queue [Int64]
+readStreamProgram streamId pageSize direction = 
+    let streamResultLink = 
+            case direction of
+                FeedDirectionBackward -> streamResultNext
+                FeedDirectionForward -> streamResultPrevious
+        request startEventNumber = 
+            ReadStreamRequest
+            { rsrStreamId = StreamId streamId
+            , rsrMaxItems = pageSize
+            , rsrStartEventNumber = startEventNumber
+            , rsrDirection = direction
+            }
+        positionToRequest EventStartHead = request Nothing
+        positionToRequest (EventStartPosition p) = request $ Just p
+        getResultEventNumbers :: StreamResult -> ([Int64], Maybe StreamOffset)
+        getResultEventNumbers streamResult@StreamResult{..} = 
+            ( recordedEventNumber <$> streamResultEvents
+            , streamResultLink streamResult)
+        start :: Maybe StreamOffset
+        start = Just $ (FeedDirectionBackward, EventStartHead, pageSize)
+        acc
+            :: Maybe StreamOffset
+            -> DynamoCmdM Queue (Maybe ([Int64], Maybe StreamOffset))
+        acc Nothing = return Nothing
+        acc (Just (_,position,_)) = 
+            either (const Nothing) (fmap getResultEventNumbers) <$>
+            getReadStreamRequestProgram (positionToRequest position)
+    in join <$> unfoldrM acc start
+
+prop_all_items_are_in_stream_when_paged_through :: QC.Positive Natural
+                                                -> QC.Positive Int
+                                                -> FeedDirection
+                                                -> QC.Property
+prop_all_items_are_in_stream_when_paged_through (QC.Positive pageSize) (QC.Positive streamLength) direction = 
+    let startState = pagedTestStateItems streamLength
+        program = readStreamProgram "MyStream" pageSize direction
+        programResult = evalProgram "readStream" program startState
+        maxEventNumber = fromIntegral $ streamLength - 1
+        expectedResult = 
+            case direction of
+                FeedDirectionForward -> [0 .. maxEventNumber]
+                FeedDirectionBackward -> 
+                    [maxEventNumber,maxEventNumber - 1 .. 0]
+    in programResult === expectedResult
+-}
+
 tests :: [TestTree]
 tests = [
     testGroup "Single Stream Link Tests" streamLinkTests
+    --, testProperty
+    --      "All items are in the stream when paged through"
+    --      prop_all_items_are_in_stream_when_paged_through
     ]
