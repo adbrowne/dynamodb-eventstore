@@ -41,11 +41,6 @@ import DynamoDbEventStore.Streams (EventWriteResult(..))
 import qualified DynamoDbEventStore.Storage.StreamItem as StreamItem
 import DynamoDbEventStore.Storage.StreamItem (EventEntry(..),EventTime(..),EventType(..),unEventTime)
 import DynamoDbEventStore.DynamoCmdInterpreter
-import DynamoDbEventStore.Paging ( FeedDirection(..) )
-import DynamoDbEventStore.EventStoreActions
-       (GlobalStartPosition(..), GlobalStreamResult(..),
-        ReadAllRequest(..))
-import qualified DynamoDbEventStore.EventStoreActions
 import DynamoDbEventStore.EventStoreCommands
 import qualified DynamoDbEventStore.GlobalFeedWriter
        as GlobalFeedWriter
@@ -73,12 +68,6 @@ postEventRequestProgram WriteEventData {..} =
         writeEventDataStreamId
         writeEventDataExpectedVersion
         writeEventDataEvents
-
-getReadAllRequestProgram
-    :: MonadEsDsl m
-    => ReadAllRequest -> m (Either EventStoreActionError GlobalStreamResult)
-getReadAllRequestProgram = 
-    runExceptT . DynamoDbEventStore.EventStoreActions.getReadAllRequestProgram
 
 globalFeedWriterProgram
     :: MonadEsDslWithFork m
@@ -762,19 +751,6 @@ pagedTestStateItems itemCount =
             execProgram "writeGlobalFeed" writePagesProgram writeState
     in globalFeedCreatedState
 
-getSampleGlobalItems
-    :: Maybe GlobalFeedPosition
-    -> Natural
-    -> FeedDirection
-    -> Either EventStoreActionError GlobalStreamResult
-getSampleGlobalItems startPosition maxItems direction = 
-    let readAllRequest = ReadAllRequest startPosition maxItems direction
-        programState = pagedTestStateItems 29
-    in evalProgram
-           "ReadAllStream"
-           (getReadAllRequestProgram readAllRequest)
-           programState
-
 fibs :: [Int]
 fibs = 
     let acc (a,b) = Just (a + b, (b, a + b))
@@ -800,9 +776,9 @@ globalStreamPages:
 8: 54..87 (34)
 9: 88,89,90,91,92,93,94,95,96,97,98,99,100.. (55)
 -}
-globalStreamPagingTests
+globalStreamTests
     :: [TestTree]
-globalStreamPagingTests = 
+globalStreamTests = 
     let getEventTypes start maxItems direction =
           evalProgram "ReadAllStream" (runExceptT $ P.toListM $ Streams.globalEventsProducer direction start >-> P.take maxItems) programState
         programState = pagedTestStateItems 29
@@ -820,133 +796,6 @@ globalStreamPagingTests =
                   3
                   QueryDirectionBackward)
        ]
-
-globalStreamLinkTests :: [TestTree]
-globalStreamLinkTests = 
-    let toFeedPosition page offset = 
-            Just
-                GlobalFeedPosition
-                { globalFeedPositionPage = page
-                , globalFeedPositionOffset = offset
-                }
-        endOfFeedBackward = 
-            ( "End of feed backward"
-            , getSampleGlobalItems Nothing 20 FeedDirectionBackward)
-        middleOfFeedBackward = 
-            ( "Middle of feed backward"
-            , getSampleGlobalItems
-                  (toFeedPosition 6 5)
-                  20
-                  FeedDirectionBackward)
-        startOfFeedBackward = 
-            ( "Start of feed backward"
-            , getSampleGlobalItems
-                  (toFeedPosition 1 0)
-                  20
-                  FeedDirectionBackward)
-        startOfFeedForward = 
-            ( "Start of feed forward"
-            , getSampleGlobalItems Nothing 20 FeedDirectionForward)
-        middleOfFeedForward = 
-            ( "Middle of feed forward"
-            , getSampleGlobalItems (toFeedPosition 2 1) 20 FeedDirectionForward)
-        endOfFeedForward = 
-            ( "End of feed forward"
-            , getSampleGlobalItems (toFeedPosition 6 8) 20 FeedDirectionForward)
-        streamResultLast' = ("last", globalStreamResultLast)
-        streamResultFirst' = ("first", globalStreamResultFirst)
-        streamResultNext' = ("next", globalStreamResultNext)
-        streamResultPrevious' = ("previous", globalStreamResultPrevious)
-        toStartPosition page offset = 
-            GlobalStartPosition $ GlobalFeedPosition page offset
-        linkAssert (feedResultName,feedResult) (linkName,streamLink) expectedResult = 
-            testCase
-                ("Unit - " <> feedResultName <> " - " <> linkName <> " link") $
-            assertEqual
-                ("Should have " <> linkName <> " link")
-                (Right expectedResult)
-                (fmap streamLink feedResult)
-    in [ linkAssert
-             endOfFeedBackward
-             streamResultFirst'
-             (Just (FeedDirectionBackward, GlobalStartHead, 20))
-       , linkAssert
-             endOfFeedBackward
-             streamResultLast'
-             (Just (FeedDirectionForward, GlobalStartHead, 20))
-       , linkAssert
-             endOfFeedBackward
-             streamResultNext'
-             (Just (FeedDirectionBackward, toStartPosition 4 1, 20))
-       , linkAssert
-             endOfFeedBackward
-             streamResultPrevious'
-             (Just (FeedDirectionForward, toStartPosition 6 8, 20))
-       , linkAssert
-             middleOfFeedBackward
-             streamResultFirst'
-             (Just (FeedDirectionBackward, GlobalStartHead, 20))
-       , linkAssert
-             middleOfFeedBackward
-             streamResultLast'
-             (Just (FeedDirectionForward, GlobalStartHead, 20))
-       , linkAssert
-             middleOfFeedBackward
-             streamResultNext'
-             (Just (FeedDirectionBackward, toStartPosition 3 1, 20))
-       , linkAssert
-             middleOfFeedBackward
-             streamResultPrevious'
-             (Just (FeedDirectionForward, toStartPosition 6 5, 20))
-       , linkAssert
-             startOfFeedBackward
-             streamResultFirst'
-             (Just (FeedDirectionBackward, GlobalStartHead, 20))
-       , linkAssert startOfFeedBackward streamResultLast' Nothing
-       , linkAssert startOfFeedBackward streamResultNext' Nothing
-       , linkAssert
-             startOfFeedBackward
-             streamResultPrevious'
-             (Just (FeedDirectionForward, toStartPosition 1 0, 20))
-       , linkAssert
-             startOfFeedForward
-             streamResultFirst'
-             (Just (FeedDirectionBackward, GlobalStartHead, 20))
-       , linkAssert startOfFeedForward streamResultLast' Nothing
-       , linkAssert startOfFeedForward streamResultNext' Nothing
-       , linkAssert
-             startOfFeedForward
-             streamResultPrevious'
-             (Just (FeedDirectionForward, toStartPosition 5 7, 20))
-       , linkAssert
-             middleOfFeedForward
-             streamResultFirst'
-             (Just (FeedDirectionBackward, GlobalStartHead, 20))
-       , linkAssert
-             middleOfFeedForward
-             streamResultLast'
-             (Just (FeedDirectionForward, GlobalStartHead, 20))
-       , linkAssert
-             middleOfFeedForward
-             streamResultNext'
-             (Just (FeedDirectionBackward, toStartPosition 2 1, 20))
-       , linkAssert
-             middleOfFeedForward
-             streamResultPrevious'
-             (Just (FeedDirectionForward, toStartPosition 6 3, 20))
-       , linkAssert
-             endOfFeedForward
-             streamResultFirst'
-             (Just (FeedDirectionBackward, GlobalStartHead, 20))
-       , linkAssert
-             endOfFeedForward
-             streamResultLast'
-             (Just (FeedDirectionForward, GlobalStartHead, 20))
-       , linkAssert
-             endOfFeedForward
-             streamResultNext'
-             (Just (FeedDirectionBackward, toStartPosition 6 8, 20))
-       , linkAssert endOfFeedForward streamResultPrevious' Nothing]
 
 addUpIops :: Seq LogEvent -> Map (IopsCategory, IopsOperation, Text) Int
 addUpIops = foldr' acc Map.empty
@@ -1156,5 +1005,4 @@ tests =
     , testCase
           "Unit - EventNumbers are calculated when there are multiple events"
           eventNumbersCorrectForMultipleEvents
-    , testGroup "Global Stream Link Tests" globalStreamLinkTests
-    , testGroup "Global Stream Paging Tests" globalStreamPagingTests]
+    , testGroup "Global Stream Tests" globalStreamTests]
