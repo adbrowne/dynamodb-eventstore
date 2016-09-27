@@ -35,12 +35,12 @@ module DynamoDbEventStore.EventStoreActions(
 import           BasicPrelude
 import           Data.List.NonEmpty                    (NonEmpty (..))
 import           DynamoDbEventStore.Paging
+import           DynamoDbEventStore.GlobalPaging
 import qualified DynamoDbEventStore.Streams as Streams
 import           DynamoDbEventStore.Storage.StreamItem (EventEntry(..),EventType(..),EventTime(..),unEventTime)
 import           DynamoDbEventStore.EventStoreCommands hiding (readField)
 import           DynamoDbEventStore.GlobalFeedWriter   (DynamoCmdWithErrors)
 import           DynamoDbEventStore.Types
-import           GHC.Natural
 import           Pipes                                 hiding (ListT, runListT)
 import qualified Pipes.Prelude                         as P
 import           Safe
@@ -54,18 +54,6 @@ data EventStoreAction =
   ReadStream ReadStreamRequest |
   ReadEvent ReadEventRequest |
   ReadAll ReadAllRequest deriving (Show)
-
-data GlobalStartPosition = GlobalStartHead | GlobalStartPosition GlobalFeedPosition deriving (Show, Eq)
-
-type GlobalStreamOffset = (FeedDirection, GlobalStartPosition, Natural)
-
-data GlobalStreamResult = GlobalStreamResult {
-    globalStreamResultEvents   :: [RecordedEvent]
-  , globalStreamResultFirst    :: Maybe GlobalStreamOffset
-  , globalStreamResultNext     :: Maybe GlobalStreamOffset
-  , globalStreamResultPrevious :: Maybe GlobalStreamOffset
-  , globalStreamResultLast     :: Maybe GlobalStreamOffset
-} deriving Show
 
 newtype PostEventResult = PostEventResult (Either EventStoreActionError Streams.EventWriteResult) deriving Show
 newtype ReadStreamResult = ReadStreamResult (Either EventStoreActionError (Maybe StreamResult)) deriving Show
@@ -86,12 +74,6 @@ instance QC.Arbitrary PostEventRequest where
 data ReadEventRequest = ReadEventRequest {
    rerStreamId    :: Text,
    rerEventNumber :: Int64
-} deriving (Show)
-
-data ReadAllRequest = ReadAllRequest {
-      readAllRequestStartPosition :: Maybe GlobalFeedPosition
-    , readAllRequestMaxItems      :: Natural
-    , readAllRequestDirection     :: FeedDirection
 } deriving (Show)
 
 postEventRequestProgram :: (DynamoCmdWithErrors q m) => PostEventRequest -> m Streams.EventWriteResult

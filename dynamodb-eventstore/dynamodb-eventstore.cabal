@@ -26,6 +26,7 @@ library
                        DynamoDbEventStore.Storage.GlobalStreamItem,
                        DynamoDbEventStore.EventStoreActions,
                        DynamoDbEventStore.Paging,
+                       DynamoDbEventStore.GlobalPaging,
                        DynamoDbEventStore.Streams,
                        DynamoDbEventStore.GlobalFeedWriter,
                        DynamoDbEventStore.Constants,
@@ -87,6 +88,7 @@ Test-Suite tasty
                        , DynamoDbEventStore.DynamoCmdInterpreter
                        , DynamoDbEventStore.GlobalFeedWriterSpec
                        , DynamoDbEventStore.PagingSpec
+                       , DynamoDbEventStore.GlobalPagingSpec
                        , DynamoDbEventStore.InMemoryCache
                        , DynamoDbEventStore.InMemoryDynamoTable
   type:                exitcode-stdio-1.0

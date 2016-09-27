@@ -8,6 +8,7 @@ import qualified DynamoDbEventStore.AmazonkaImplementation  as Ai
 import qualified DynamoDbEventStore.DynamoCmdInterpreter as TestInterpreter
 import           DynamoDbEventStore.GlobalFeedWriterSpec as GlobalFeedWriterSpec
 import qualified DynamoDbEventStore.PagingSpec as PagingSpec
+import qualified DynamoDbEventStore.GlobalPagingSpec as GlobalPagingSpec
 
 import           System.Metrics hiding (Value)
 import           Test.Tasty
@@ -41,5 +42,6 @@ main = do
       [ testGroup "DynamoCmd Tests against Dynamo - Amazonka" (DynamoCmdAmazonkaTests.tests (Ai.evalProgram nullMetricsForAi)),
         testGroup "DynamoCmd Tests against Test Interpreter" (DynamoCmdAmazonkaTests.tests testInterpreter),
         testGroup "Global Feed Writer" GlobalFeedWriterSpec.tests,
-        testGroup "Paging tests" PagingSpec.tests
+        testGroup "Paging tests" PagingSpec.tests,
+        testGroup "Global Paging tests" GlobalPagingSpec.tests
       ]

@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 module DynamoDbEventStore.PagingSpec
-  (tests)
+  (tests,buildRecordedEvent)
   where
 
 import DynamoDbEventStore.ProjectPrelude
@@ -30,6 +30,16 @@ eventIdFromString = EventId . fromJust . UUID.fromString
 sampleEventId :: EventId
 sampleEventId = eventIdFromString "c2cc10e1-57d6-4b6f-9899-38d972112d8c"
 
+buildRecordedEvent :: Int64 -> RecordedEvent
+buildRecordedEvent index =
+  RecordedEvent {
+      recordedEventStreamId = testStreamId
+      , recordedEventNumber = index
+      , recordedEventType = tshow index
+      , recordedEventData = T.encodeUtf8 "Some data"
+      , recordedEventCreated = sampleTime
+      , recordedEventId = sampleEventId
+      , recordedEventIsJson = False }
 sampleItems :: Monad m => Int64 -> QueryDirection -> Maybe Int64 -> Producer RecordedEvent m ()
 sampleItems count direction startEvent =
     let
@@ -39,15 +49,6 @@ sampleItems count direction startEvent =
       eventNumbers QueryDirectionBackward Nothing = [maxEventNumber,(maxEventNumber-1)..0]
       eventNumbers QueryDirectionBackward (Just s) = [s,(s - 1)..0]
     in traverse_ (yield . buildRecordedEvent) (eventNumbers direction startEvent)
-    where buildRecordedEvent index =
-            RecordedEvent {
-                recordedEventStreamId = testStreamId
-                , recordedEventNumber = index
-                , recordedEventType = tshow index
-                , recordedEventData = T.encodeUtf8 "Some data"
-                , recordedEventCreated = sampleTime
-                , recordedEventId = sampleEventId
-                , recordedEventIsJson = False }
 
 streamEventsProducer :: (Monad m) => QueryDirection -> StreamId -> Maybe Int64 -> Natural -> Producer RecordedEvent m ()
 streamEventsProducer direction _streamId startEvent _batchSize =
