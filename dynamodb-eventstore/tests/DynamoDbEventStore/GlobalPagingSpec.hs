@@ -134,32 +134,6 @@ globalStreamPagingTests =
              3
              FeedDirectionForward
              ["28"]
-       , testCase "Past End of the feed forward" $
-         assertEqual
-             "Should return error"
-             (Left
-                  (EventStoreActionErrorInvalidGlobalFeedPosition
-                       (GlobalFeedPosition
-                        { globalFeedPositionPage = 6
-                        , globalFeedPositionOffset = 9
-                        })))
-             (getEventTypes
-                  (Just $ GlobalFeedPosition 6 9)
-                  3
-                  FeedDirectionBackward)
-       , testCase "Before the end of feed backward" $
-         assertEqual
-             "Should return error"
-             (Left
-                  (EventStoreActionErrorInvalidGlobalFeedPosition
-                       (GlobalFeedPosition
-                        { globalFeedPositionPage = 9
-                        , globalFeedPositionOffset = 0
-                        })))
-             (getEventTypes
-                  (Just $ GlobalFeedPosition 9 0)
-                  3
-                  FeedDirectionBackward)
        , resultAssert
              "End of feed backward - start = Nothing"
              Nothing

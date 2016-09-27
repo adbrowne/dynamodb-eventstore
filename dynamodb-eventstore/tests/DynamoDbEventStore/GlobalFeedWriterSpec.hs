@@ -803,41 +803,10 @@ globalStreamPages:
 globalStreamPagingTests
     :: [TestTree]
 globalStreamPagingTests = 
-    let getEventTypes start maxItems direction = 
-            fmap2 recordedEventType $
-            globalStreamResultEvents <$>
-            getSampleGlobalItems start maxItems direction
-        resultAssert testName start maxItems direction expectedBodies = 
-            testCase testName $
-            assertEqual
-                "Should return events"
-                (Right expectedBodies)
-                (getEventTypes start maxItems direction)
-    in [ resultAssert
-             "Start of feed forward - start = Nothing"
-             Nothing
-             1
-             FeedDirectionForward
-             ["0"]
-       , resultAssert
-             "0 0 of feed forward"
-             (Just $ GlobalFeedPosition 0 0)
-             1
-             FeedDirectionForward
-             ["1"]
-       , resultAssert
-             "Middle of the feed forward"
-             (Just $ GlobalFeedPosition 1 0)
-             3
-             FeedDirectionForward
-             ["2", "3", "4"]
-       , resultAssert
-             "End of the feed forward"
-             (Just $ GlobalFeedPosition 6 7)
-             3
-             FeedDirectionForward
-             ["28"]
-       , testCase "Past End of the feed forward" $
+    let getEventTypes start maxItems direction =
+          evalProgram "ReadAllStream" (runExceptT $ P.toListM $ Streams.globalEventsProducer direction start >-> P.take maxItems) programState
+        programState = pagedTestStateItems 29
+    in [ testCase "Past End of the feed backward" $
          assertEqual
              "Should return error"
              (Left
@@ -849,44 +818,8 @@ globalStreamPagingTests =
              (getEventTypes
                   (Just $ GlobalFeedPosition 6 9)
                   3
-                  FeedDirectionBackward)
-       , testCase "Before the end of feed backward" $
-         assertEqual
-             "Should return error"
-             (Left
-                  (EventStoreActionErrorInvalidGlobalFeedPosition
-                       (GlobalFeedPosition
-                        { globalFeedPositionPage = 9
-                        , globalFeedPositionOffset = 0
-                        })))
-             (getEventTypes
-                  (Just $ GlobalFeedPosition 9 0)
-                  3
-                  FeedDirectionBackward)
-       , resultAssert
-             "End of feed backward - start = Nothing"
-             Nothing
-             3
-             FeedDirectionBackward
-             ["28", "27", "26"]
-       , resultAssert
-             "End of the feed backward"
-             (Just $ GlobalFeedPosition 6 8)
-             3
-             FeedDirectionBackward
-             ["28", "27", "26"]
-       , resultAssert
-             "Middle of the feed backward"
-             (Just $ GlobalFeedPosition 5 7)
-             3
-             FeedDirectionBackward
-             ["19", "18", "17"]
-       , resultAssert
-             "End of feed backward"
-             (Just $ GlobalFeedPosition 0 0)
-             1
-             FeedDirectionBackward
-             ["0"]]
+                  QueryDirectionBackward)
+       ]
 
 globalStreamLinkTests :: [TestTree]
 globalStreamLinkTests = 

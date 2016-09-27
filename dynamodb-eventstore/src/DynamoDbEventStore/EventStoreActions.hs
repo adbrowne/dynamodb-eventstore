@@ -41,9 +41,6 @@ import           DynamoDbEventStore.Storage.StreamItem (EventEntry(..),EventType
 import           DynamoDbEventStore.EventStoreCommands hiding (readField)
 import           DynamoDbEventStore.GlobalFeedWriter   (DynamoCmdWithErrors)
 import           DynamoDbEventStore.Types
-import           Pipes                                 hiding (ListT, runListT)
-import qualified Pipes.Prelude                         as P
-import           Safe
 import qualified Test.QuickCheck                       as QC
 import           Test.QuickCheck.Instances             ()
 
@@ -89,52 +86,5 @@ getReadStreamRequestProgram request =
   runStreamRequest Streams.streamEventsProducer request
 
 getReadAllRequestProgram :: DynamoCmdWithErrors q m => ReadAllRequest -> m GlobalStreamResult
-getReadAllRequestProgram ReadAllRequest
-  {
-    readAllRequestDirection = FeedDirectionForward
-  , readAllRequestStartPosition = readAllRequestStartPosition
-  , readAllRequestMaxItems = readAllRequestMaxItems
-  } = do
-  events <- P.toListM $
-    Streams.globalEventsProducer QueryDirectionForward readAllRequestStartPosition
-    >-> P.take (fromIntegral readAllRequestMaxItems)
-  let previousEventPosition = fst <$> lastMay events
-  nextEvent <- case readAllRequestStartPosition of Nothing -> return Nothing
-                                                   Just startPosition -> do
-                                                     nextEvents <- P.toListM $
-                                                      Streams.globalEventKeysProducer QueryDirectionBackward (Just startPosition)
-                                                      >-> P.map fst
-                                                      >-> P.filter (<= startPosition)
-                                                      >-> P.take 1
-                                                     return $ listToMaybe nextEvents
-  return GlobalStreamResult {
-    globalStreamResultEvents = snd <$> events,
-    globalStreamResultNext = (\pos -> (FeedDirectionBackward, GlobalStartPosition pos, readAllRequestMaxItems)) <$> nextEvent,
-    globalStreamResultPrevious = (\pos -> (FeedDirectionForward, GlobalStartPosition pos, readAllRequestMaxItems)) <$> previousEventPosition,
-    globalStreamResultFirst = Just (FeedDirectionBackward, GlobalStartHead, readAllRequestMaxItems),
-    globalStreamResultLast = const (FeedDirectionForward, GlobalStartHead, readAllRequestMaxItems) <$> nextEvent -- only show last if there is a next
-  }
-getReadAllRequestProgram ReadAllRequest
-  {
-    readAllRequestDirection = FeedDirectionBackward
-  , readAllRequestStartPosition = readAllRequestStartPosition
-  , readAllRequestMaxItems = readAllRequestMaxItems
-  } = do
-  let maxItems = fromIntegral readAllRequestMaxItems
-  eventsPlus1 <- P.toListM $
-    Streams.globalEventsProducer QueryDirectionBackward readAllRequestStartPosition
-    >-> filterLastEvent readAllRequestStartPosition
-    >-> P.take (maxItems + 1)
-  let events = snd <$> take maxItems eventsPlus1
-  let previousEventPosition = fst <$> headMay eventsPlus1
-  let nextEventBackwardPosition = fst <$> listToMaybe (drop maxItems eventsPlus1)
-  return GlobalStreamResult {
-    globalStreamResultEvents = events,
-    globalStreamResultNext = (\pos -> (FeedDirectionBackward, GlobalStartPosition pos, readAllRequestMaxItems)) <$> nextEventBackwardPosition,
-    globalStreamResultPrevious = (\pos -> (FeedDirectionForward, GlobalStartPosition pos, readAllRequestMaxItems)) <$> previousEventPosition,
-    globalStreamResultFirst = Just (FeedDirectionBackward, GlobalStartHead, readAllRequestMaxItems),
-    globalStreamResultLast = const (FeedDirectionForward, GlobalStartHead, readAllRequestMaxItems) <$> nextEventBackwardPosition -- only show last if there is a next
-  }
-  where
-    filterLastEvent Nothing = P.filter (const True)
-    filterLastEvent (Just startPosition) = P.filter ((<= startPosition) . fst)
+getReadAllRequestProgram request =
+  runGlobalStreamRequest Streams.globalEventsProducer Streams.globalEventKeysProducer request
