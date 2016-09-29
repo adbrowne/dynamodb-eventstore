@@ -18,7 +18,8 @@ cabal-version:       >=1.10
 
 library
   GHC-Options: -Wall
-  exposed-modules:     DynamoDbEventStore.Types,
+  exposed-modules:     DynamoDbEventStore,
+                       DynamoDbEventStore.Types,
                        DynamoDbEventStore.EventStoreCommands,
                        DynamoDbEventStore.ProjectPrelude,
                        DynamoDbEventStore.Storage.HeadItem,
@@ -37,6 +38,7 @@ library
                        scotty >= 0.9,
                        safe >= 0.3,
                        text >= 1.0,
+                       mmorph,
                        cereal,
                        async,
                        stm,
