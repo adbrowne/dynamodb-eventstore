@@ -9,6 +9,7 @@ module Main where
 import BasicPrelude hiding (log)
 import System.CPUTime
 import Data.Foldable
+import DynamoDbEventStore
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Control.Exception
 import Control.Concurrent.Async
@@ -651,7 +652,7 @@ randomEvent = do
            perExpectedVersion = Just 0,
            perEvents =  eventEntry :| [] }
 
-insertEvents :: (forall a. MyAwsM a -> IO (Either InterpreterError a)) -> Int -> Int -> IO ()
+insertEvents :: (forall a. EventStore a -> IO (Either EventStoreError a)) -> Int -> Int -> IO ()
 insertEvents runIO threadCount eventsPerThreadCount = do
   threads <- replicateM threadCount (async insertThread) 
   traverse_ Control.Concurrent.Async.wait threads

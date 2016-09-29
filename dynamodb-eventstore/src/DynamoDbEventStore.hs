@@ -1,15 +1,23 @@
 module DynamoDbEventStore
   (streamEventsProducer
   ,globalEventsProducer
-  ,EventStore)
+  ,globalEventKeysProducer
+  ,writeEvent
+  ,readEvent
+  ,EventStoreError(..)
+  ,EventStore
+  ,Streams.EventWriteResult(..)
+  ,EventEntry(..)
+  ,EventType(..)
+  ,EventTime(..))
 where
 
 import DynamoDbEventStore.ProjectPrelude
 import qualified DynamoDbEventStore.Streams as Streams
 import DynamoDbEventStore.Types
-    (RecordedEvent(..),QueryDirection,StreamId,EventStoreActionError,GlobalFeedPosition)
+    (RecordedEvent(..),QueryDirection,StreamId,EventStoreActionError,GlobalFeedPosition,EventKey)
 import DynamoDbEventStore.AmazonkaImplementation (RuntimeEnvironment, InterpreterError, MyAwsM(..))
-import           DynamoDbEventStore.Storage.StreamItem (EventEntry(..))
+import           DynamoDbEventStore.Storage.StreamItem (EventEntry(..),EventType(..),EventTime(..))
 import Control.Monad.Trans.AWS
 import Control.Monad.Trans.Resource
 import Control.Monad.Morph
@@ -17,6 +25,7 @@ import Control.Monad.Morph
 data EventStoreError =
   EventStoreErrorInterpreter InterpreterError
   | EventStoreErrorAction EventStoreActionError
+  deriving (Show, Eq)
 
 type EventStore = ExceptT EventStoreError (AWST' RuntimeEnvironment (ResourceT IO))
 
@@ -31,6 +40,10 @@ streamEventsProducer direction streamId lastEvent batchSize =
 globalEventsProducer :: QueryDirection -> Maybe GlobalFeedPosition -> Producer (GlobalFeedPosition, RecordedEvent) EventStore ()
 globalEventsProducer direction startPosition =
   hoist hoistDsl $ Streams.globalEventsProducer direction startPosition
+
+globalEventKeysProducer :: QueryDirection -> Maybe GlobalFeedPosition -> Producer (GlobalFeedPosition, EventKey) EventStore ()
+globalEventKeysProducer direction startPosition =
+  hoist hoistDsl $ Streams.globalEventKeysProducer direction startPosition
 
 readEvent :: StreamId -> Int64 -> EventStore (Maybe RecordedEvent)
 readEvent streamId eventNumber =

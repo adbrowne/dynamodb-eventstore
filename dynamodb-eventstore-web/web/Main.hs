@@ -11,6 +11,7 @@ import Control.Monad.Except
 import Control.Monad.State
 import Control.Monad.Trans.AWS
 import qualified Data.Text as T
+import DynamoDbEventStore
 import DynamoDbEventStore.AmazonkaImplementation
 import DynamoDbEventStore.EventStoreActions
 import DynamoDbEventStore.EventStoreCommands
@@ -27,6 +28,7 @@ import System.Metrics hiding (Value)
 import qualified System.Metrics.Counter as Counter
 import qualified System.Metrics.Distribution as Distribution
 import System.Remote.Monitoring
+import Network.AWS.DynamoDB
 import Web.Scotty
 
 printEvent
@@ -36,43 +38,20 @@ printEvent a = do
     liftIO $ print . tshow $ a
     return a
 
-buildActionRunner
-    :: MonadEsDsl m
-    => (forall a. m a -> ExceptT InterpreterError IO a)
+buildActionRunner ::
+    (forall a. EventStore a -> IO (Either EventStoreError a))
     -> EventStoreActionRunner
 buildActionRunner runner = 
     EventStoreActionRunner
     { eventStoreActionRunnerPostEvent = (\req -> 
-                                              liftIO $
-                                              runExceptT $
-                                              (PostEventResult <$>
-                                               runWithState
-                                                   (postEventRequestProgram req)))
+                                              PostEventResult <$> (runner $ postEventRequestProgram req))
     , eventStoreActionRunnerReadEvent = (\req -> 
-                                              liftIO $
-                                              runExceptT $
-                                              (ReadEventResult <$>
-                                               runWithState
-                                                   (getReadEventRequestProgram
-                                                        req)))
+                                              ReadEventResult <$> (runner $ getReadEventRequestProgram req))
     , eventStoreActionRunnerReadStream = (\req -> 
-                                               liftIO $
-                                               runExceptT $
-                                               (ReadStreamResult <$>
-                                                runWithState
-                                                    (getReadStreamRequestProgram
-                                                         req)))
+                                              ReadStreamResult <$> (runner $ getReadStreamRequestProgram req))
     , eventStoreActionRunnerReadAll = (\req -> 
-                                            liftIO $
-                                            runExceptT $
-                                            (ReadAllResult <$>
-                                             runWithState
-                                                 (getReadAllRequestProgram req)))
+                                              ReadAllResult <$> (runner $ getReadAllRequestProgram req))
     }
-  where
-    runWithState p = 
-        runner $
-        runExceptT $ evalStateT p GlobalFeedWriter.emptyGlobalFeedWriterState
 
 data Config = Config
     { configTableName :: String
@@ -154,9 +133,10 @@ forkGlobalFeedWriter runner =
                printError (ApplicationErrorGlobalFeedWriter err)
            _ -> return ()
 
-startWebServer
-    :: MonadEsDsl m
-    => (forall a. m a -> ExceptT InterpreterError IO a) -> Config -> IO ()
+startWebServer ::
+    (forall a. EventStore a -> IO (Either EventStoreError a))
+    -> Config
+    -> IO ()
 startWebServer runner parsedConfig = do
     let httpPort = configPort parsedConfig
     let warpSettings = 
@@ -196,6 +176,19 @@ startMetrics = do
                 (Counter.inc theCounter)
                 (Distribution.add theDistribution)
 
+runDynamoCloud' :: RuntimeEnvironment
+               -> EventStore a
+               -> IO (Either EventStoreError a)
+runDynamoCloud' runtimeEnvironment x = 
+    runResourceT $ runAWST runtimeEnvironment $ runExceptT $ x
+
+runDynamoLocal' :: RuntimeEnvironment
+               -> EventStore a
+               -> IO (Either EventStoreError a)
+runDynamoLocal' env x = do
+    let dynamo = setEndpoint False "localhost" 8000 dynamoDB
+    runResourceT $ runAWST env $ reconfigure dynamo $ runExceptT (x)
+
 start :: Config -> ExceptT ApplicationError IO ()
 start parsedConfig = do
     let tableName = (T.pack . configTableName) parsedConfig
@@ -207,6 +200,10 @@ start parsedConfig = do
             (if configLocalDynamoDB parsedConfig
                  then runDynamoLocal
                  else runDynamoCloud)
+    let interperter2 = 
+            (if configLocalDynamoDB parsedConfig
+                 then runDynamoLocal'
+                 else runDynamoCloud')
     let runtimeEnvironment = 
             RuntimeEnvironment
             { _runtimeEnvironmentMetricLogs = metrics
@@ -214,6 +211,7 @@ start parsedConfig = do
             , _runtimeEnvironmentTableName = tableName
             }
     let runner p = toExceptT' $ interperter runtimeEnvironment p
+    let runner2 p = interperter2 runtimeEnvironment p
     tableAlreadyExists <- 
         toApplicationError (interperter runtimeEnvironment) $
         doesTableExist tableName
@@ -226,18 +224,19 @@ start parsedConfig = do
              (buildTable tableName) >>
          putStrLn "Table created")
     if tableAlreadyExists || shouldCreateTable
-        then runApp runner tableName
+        then runApp runner runner2 tableName
         else failNoTable
   where
     runApp
         :: (forall a. MyAwsM a -> ExceptT InterpreterError IO a)
+        -> (forall a. EventStore a -> IO (Either EventStoreError a))
         -> Text
         -> ExceptT ApplicationError IO ()
-    runApp runner _tableName
+    runApp runner runner2 _tableName
     --let runner' = runMyAws runner tableName
      = do
         liftIO $ forkGlobalFeedWriter runner
-        liftIO $ startWebServer runner parsedConfig
+        liftIO $ startWebServer runner2 parsedConfig
     failNoTable = putStrLn "Table does not exist"
 
 checkForFailureOnExit :: ExceptT ApplicationError IO () -> IO ()

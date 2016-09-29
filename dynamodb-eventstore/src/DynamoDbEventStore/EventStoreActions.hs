@@ -12,10 +12,9 @@ module DynamoDbEventStore.EventStoreActions(
   PostEventRequest(..),
   EventType(..),
   EventTime(..),
-  unEventTime,
   EventEntry(..),
   EventStoreAction(..),
-  Streams.EventWriteResult(..),
+  EventWriteResult(..),
   PostEventResult(..),
   ReadStreamResult(..),
   ReadAllResult(..),
@@ -34,12 +33,9 @@ module DynamoDbEventStore.EventStoreActions(
 
 import           BasicPrelude
 import           Data.List.NonEmpty                    (NonEmpty (..))
-import           DynamoDbEventStore.Paging
+import           DynamoDbEventStore
 import           DynamoDbEventStore.GlobalPaging
-import qualified DynamoDbEventStore.Streams as Streams
-import           DynamoDbEventStore.Storage.StreamItem (EventEntry(..),EventType(..),EventTime(..),unEventTime)
-import           DynamoDbEventStore.EventStoreCommands hiding (readField)
-import           DynamoDbEventStore.GlobalFeedWriter   (DynamoCmdWithErrors)
+import           DynamoDbEventStore.Paging
 import           DynamoDbEventStore.Types
 import qualified Test.QuickCheck                       as QC
 import           Test.QuickCheck.Instances             ()
@@ -52,10 +48,10 @@ data EventStoreAction =
   ReadEvent ReadEventRequest |
   ReadAll ReadAllRequest deriving (Show)
 
-newtype PostEventResult = PostEventResult (Either EventStoreActionError Streams.EventWriteResult) deriving Show
-newtype ReadStreamResult = ReadStreamResult (Either EventStoreActionError (Maybe StreamResult)) deriving Show
-newtype ReadAllResult = ReadAllResult (Either EventStoreActionError GlobalStreamResult) deriving Show
-newtype ReadEventResult = ReadEventResult (Either EventStoreActionError (Maybe RecordedEvent)) deriving Show
+newtype PostEventResult = PostEventResult (Either EventStoreError EventWriteResult) deriving Show
+newtype ReadStreamResult = ReadStreamResult (Either EventStoreError (Maybe StreamResult)) deriving Show
+newtype ReadAllResult = ReadAllResult (Either EventStoreError GlobalStreamResult) deriving Show
+newtype ReadEventResult = ReadEventResult (Either EventStoreError (Maybe RecordedEvent)) deriving Show
 
 data PostEventRequest = PostEventRequest {
    perStreamId        :: Text,
@@ -73,18 +69,18 @@ data ReadEventRequest = ReadEventRequest {
    rerEventNumber :: Int64
 } deriving (Show)
 
-postEventRequestProgram :: (DynamoCmdWithErrors q m) => PostEventRequest -> m Streams.EventWriteResult
+postEventRequestProgram :: PostEventRequest -> EventStore EventWriteResult
 postEventRequestProgram (PostEventRequest sId ev eventEntries) =
-  Streams.writeEvent (StreamId sId) ev eventEntries
+  writeEvent (StreamId sId) ev eventEntries
 
-getReadEventRequestProgram :: (DynamoCmdWithErrors q m) => ReadEventRequest -> m (Maybe RecordedEvent)
+getReadEventRequestProgram :: ReadEventRequest -> EventStore (Maybe RecordedEvent)
 getReadEventRequestProgram (ReadEventRequest sId eventNumber) =
-  Streams.readEvent (StreamId sId) eventNumber 
+  readEvent (StreamId sId) eventNumber 
 
-getReadStreamRequestProgram :: (DynamoCmdWithErrors q m) => ReadStreamRequest -> m (Maybe StreamResult)
-getReadStreamRequestProgram request =
-  runStreamRequest Streams.streamEventsProducer request
+getReadStreamRequestProgram :: ReadStreamRequest -> EventStore (Maybe StreamResult)
+getReadStreamRequestProgram =
+  runStreamRequest streamEventsProducer
 
-getReadAllRequestProgram :: DynamoCmdWithErrors q m => ReadAllRequest -> m GlobalStreamResult
-getReadAllRequestProgram request =
-  runGlobalStreamRequest Streams.globalEventsProducer Streams.globalEventKeysProducer request
+getReadAllRequestProgram :: ReadAllRequest -> EventStore GlobalStreamResult
+getReadAllRequestProgram =
+  runGlobalStreamRequest globalEventsProducer globalEventKeysProducer

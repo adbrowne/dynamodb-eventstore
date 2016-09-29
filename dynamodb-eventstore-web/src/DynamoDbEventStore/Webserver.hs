@@ -34,7 +34,7 @@ import           Data.Time.Clock                        (UTCTime)
 import qualified Data.Time.Clock                        as Time
 import           Data.Time.Format
 import qualified Data.UUID                              as UUID
-import           DynamoDbEventStore.AmazonkaImplementation
+import           DynamoDbEventStore
 import           DynamoDbEventStore.EventStoreActions
 import           DynamoDbEventStore.Paging
 import           DynamoDbEventStore.EventStoreCommands
@@ -216,14 +216,14 @@ instance (Monad m) => MonadHasTime (ReaderT UTCTime m) where
 
 data WebError =
   UnknownAcceptValue
-  | WebErrorInterpreter InterpreterError
+  | WebErrorInterpreter EventStoreError
   deriving Show
 
 data EventStoreActionRunner = EventStoreActionRunner {
-    eventStoreActionRunnerPostEvent  :: PostEventRequest -> IO (Either InterpreterError PostEventResult)
-  , eventStoreActionRunnerReadStream :: ReadStreamRequest -> IO (Either InterpreterError ReadStreamResult)
-  , eventStoreActionRunnerReadAll    :: ReadAllRequest -> IO (Either InterpreterError ReadAllResult)
-  , eventStoreActionRunnerReadEvent  :: ReadEventRequest -> IO (Either InterpreterError ReadEventResult)
+    eventStoreActionRunnerPostEvent  :: PostEventRequest -> IO PostEventResult
+  , eventStoreActionRunnerReadStream :: ReadStreamRequest -> IO ReadStreamResult
+  , eventStoreActionRunnerReadAll    :: ReadAllRequest -> IO ReadAllResult
+  , eventStoreActionRunnerReadEvent  :: ReadEventRequest -> IO ReadEventResult
 }
 
 getEncoding :: forall m. forall e. (Monad m, ScottyError e) => ExceptT WebError (ActionT e m) ResponseEncoding
@@ -233,7 +233,7 @@ getEncoding = do
                  (Just "application/atom+xml")                   -> return AtomXmlEncoding
                  _                                              -> throwError UnknownAcceptValue
 
-runActionWithEncodedResponse :: (MonadIO m, ScottyError e) => IO (Either InterpreterError r) -> (ResponseEncoding -> r -> ActionT e m ()) -> ActionT e m ()
+runActionWithEncodedResponse :: (MonadIO m, ScottyError e) => IO r -> (ResponseEncoding -> r -> ActionT e m ()) -> ActionT e m ()
 runActionWithEncodedResponse runAction processResponse = runExceptT (do
   encoding <- getEncoding
   result <- liftAction runAction
@@ -241,11 +241,10 @@ runActionWithEncodedResponse runAction processResponse = runExceptT (do
     (Left err) -> (error500 . TL.fromStrict . tshow) err
     (Right (encoding, a)) -> processResponse encoding a
   where
-    liftAction :: (MonadIO m, ScottyError e) => IO (Either InterpreterError r) -> ExceptT WebError (ActionT e m) r
+    liftAction :: (MonadIO m, ScottyError e) => IO r -> ExceptT WebError (ActionT e m) r
     liftAction f = do
       r <- liftIO f
-      case r of (Left err) -> throwError (WebErrorInterpreter err)
-                (Right x) -> return x
+      return r
 
 realRunner :: Text -> EventStoreActionRunner -> Process
 realRunner _baseUri mainRunner (PostEvent postEventRequest) =
