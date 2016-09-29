@@ -8,6 +8,7 @@ module DynamoDbEventStore
   ,doesTableExist
   ,runGlobalFeedWriter
   ,EventStoreError(..)
+  ,EventStoreActionError(..)
   ,EventStore
   ,Streams.EventWriteResult(..)
   ,EventEntry(..)

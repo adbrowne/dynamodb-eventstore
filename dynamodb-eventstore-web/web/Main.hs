@@ -13,8 +13,6 @@ import qualified Data.Text as T
 import DynamoDbEventStore
 import DynamoDbEventStore.AmazonkaImplementation hiding (buildTable, doesTableExist)
 import DynamoDbEventStore.EventStoreActions
-import DynamoDbEventStore.GlobalFeedWriter
-       (EventStoreActionError(..))
 import DynamoDbEventStore.Webserver
        (EventStoreActionRunner(..), app, realRunner)
 import Network.Wai.Handler.Warp
