@@ -11,10 +11,9 @@ import Control.Monad.Except
 import Control.Monad.State
 import Control.Monad.Trans.AWS
 import qualified Data.Text as T
-import DynamoDbEventStore
+import DynamoDbEventStore hiding (buildTable)
 import DynamoDbEventStore.AmazonkaImplementation
 import DynamoDbEventStore.EventStoreActions
-import DynamoDbEventStore.EventStoreCommands
 import DynamoDbEventStore.GlobalFeedWriter
        (EventStoreActionError(..))
 import qualified DynamoDbEventStore.GlobalFeedWriter

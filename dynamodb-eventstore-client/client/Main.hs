@@ -709,9 +709,9 @@ runDynamoCloud' runtimeEnvironment x =
 runDynamoLocal' :: RuntimeEnvironment
                -> EventStore a
                -> IO (Either EventStoreError a)
-runDynamoLocal' env x = do
+runDynamoLocal' e x = do
     let dynamo = AWS.setEndpoint False "localhost" 8000 AWS.dynamoDB
-    AWS.runResourceT $ AWS.runAWST env $ AWS.reconfigure dynamo $ runExceptT (x)
+    AWS.runResourceT $ AWS.runAWST e $ AWS.reconfigure dynamo $ runExceptT (x)
 
 main :: IO ()
 main = Opt.execParser opts >>= start
