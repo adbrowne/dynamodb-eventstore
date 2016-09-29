@@ -8,16 +8,13 @@ module Main where
 import BasicPrelude
 import Control.Concurrent
 import Control.Monad.Except
-import Control.Monad.State
 import Control.Monad.Trans.AWS
 import qualified Data.Text as T
-import DynamoDbEventStore hiding (buildTable)
-import DynamoDbEventStore.AmazonkaImplementation
+import DynamoDbEventStore
+import DynamoDbEventStore.AmazonkaImplementation hiding (buildTable, doesTableExist)
 import DynamoDbEventStore.EventStoreActions
 import DynamoDbEventStore.GlobalFeedWriter
        (EventStoreActionError(..))
-import qualified DynamoDbEventStore.GlobalFeedWriter
-       as GlobalFeedWriter
 import DynamoDbEventStore.Webserver
        (EventStoreActionRunner(..), app, realRunner)
 import Network.Wai.Handler.Warp
@@ -87,12 +84,12 @@ toExceptT' p = do
 
 toApplicationError
     :: forall a. 
-       (MyAwsM a -> IO (Either InterpreterError a))
-    -> (MyAwsM a -> ExceptT ApplicationError IO a)
+       (EventStore a -> IO (Either EventStoreError a))
+    -> (EventStore a -> ExceptT EventStoreError IO a)
 toApplicationError runner a = do
     result <- liftIO $ runner a
     case result of
-        Left s -> throwError . ApplicationErrorInterpreter $ s
+        Left s -> throwError s
         Right r -> return r
 
 data ApplicationError
@@ -114,23 +111,14 @@ printError
     => a -> IO ()
 printError err = putStrLn $ "Error: " <> tshow err
 
-forkGlobalFeedWriter :: (forall a. MyAwsM a -> ExceptT InterpreterError IO a)
+forkGlobalFeedWriter :: (forall a. EventStore a -> IO (Either EventStoreError a))
                      -> IO ()
 forkGlobalFeedWriter runner = 
-    forkAndSupervise "GlobalFeedWriter" $
-    do pageKeyPositionCache <- newCacheAws 10
-       result <- 
-           runExceptT $
-           runner $
-           runExceptT $
-           evalStateT
-               (GlobalFeedWriter.main pageKeyPositionCache)
-               GlobalFeedWriter.emptyGlobalFeedWriterState
+    forkAndSupervise "GlobalFeedWriter" $ do
+       result <- runner runGlobalFeedWriter
        case result of
-           (Left err) -> printError (ApplicationErrorInterpreter err)
-           (Right (Left err)) -> 
-               printError (ApplicationErrorGlobalFeedWriter err)
-           _ -> return ()
+           (Left err) -> printError err
+           (Right _)  -> return ()
 
 startWebServer ::
     (forall a. EventStore a -> IO (Either EventStoreError a))
@@ -188,7 +176,7 @@ runDynamoLocal' env x = do
     let dynamo = setEndpoint False "localhost" 8000 dynamoDB
     runResourceT $ runAWST env $ reconfigure dynamo $ runExceptT (x)
 
-start :: Config -> ExceptT ApplicationError IO ()
+start :: Config -> ExceptT EventStoreError IO ()
 start parsedConfig = do
     let tableName = (T.pack . configTableName) parsedConfig
     metrics <- liftIO startMetrics
@@ -212,14 +200,14 @@ start parsedConfig = do
     let runner p = toExceptT' $ interperter runtimeEnvironment p
     let runner2 p = interperter2 runtimeEnvironment p
     tableAlreadyExists <- 
-        toApplicationError (interperter runtimeEnvironment) $
+        toApplicationError (interperter2 runtimeEnvironment) $
         doesTableExist tableName
     let shouldCreateTable = configCreateTable parsedConfig
     when
         (not tableAlreadyExists && shouldCreateTable)
         (putStrLn "Creating table..." >>
          toApplicationError
-             (interperter runtimeEnvironment)
+             (interperter2 runtimeEnvironment)
              (buildTable tableName) >>
          putStrLn "Table created")
     if tableAlreadyExists || shouldCreateTable
@@ -230,15 +218,15 @@ start parsedConfig = do
         :: (forall a. MyAwsM a -> ExceptT InterpreterError IO a)
         -> (forall a. EventStore a -> IO (Either EventStoreError a))
         -> Text
-        -> ExceptT ApplicationError IO ()
-    runApp runner runner2 _tableName
+        -> ExceptT EventStoreError IO ()
+    runApp _runner runner2 _tableName
     --let runner' = runMyAws runner tableName
      = do
-        liftIO $ forkGlobalFeedWriter runner
+        liftIO $ forkGlobalFeedWriter runner2
         liftIO $ startWebServer runner2 parsedConfig
     failNoTable = putStrLn "Table does not exist"
 
-checkForFailureOnExit :: ExceptT ApplicationError IO () -> IO ()
+checkForFailureOnExit :: ExceptT EventStoreError IO () -> IO ()
 checkForFailureOnExit a = do
     result <- runExceptT a
     case result of

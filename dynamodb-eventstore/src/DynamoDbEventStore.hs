@@ -5,6 +5,8 @@ module DynamoDbEventStore
   ,writeEvent
   ,readEvent
   ,buildTable
+  ,doesTableExist
+  ,runGlobalFeedWriter
   ,EventStoreError(..)
   ,EventStore
   ,Streams.EventWriteResult(..)
@@ -14,12 +16,14 @@ module DynamoDbEventStore
 where
 
 import DynamoDbEventStore.ProjectPrelude
+import Control.Monad.State
 import qualified DynamoDbEventStore.Streams as Streams
 import DynamoDbEventStore.Types
     (RecordedEvent(..),QueryDirection,StreamId,EventStoreActionError,GlobalFeedPosition,EventKey)
 import DynamoDbEventStore.AmazonkaImplementation (RuntimeEnvironment, InterpreterError, MyAwsM(..))
 import qualified  DynamoDbEventStore.AmazonkaImplementation as AWS
 import           DynamoDbEventStore.Storage.StreamItem (EventEntry(..),EventType(..),EventTime(..))
+import qualified DynamoDbEventStore.GlobalFeedWriter as GlobalFeedWriter
 import Control.Monad.Trans.AWS
 import Control.Monad.Trans.Resource
 import Control.Monad.Morph
@@ -37,6 +41,9 @@ hoistDsl = combineErrors . hoist unMyAwsM
 
 buildTable :: Text -> EventStore ()
 buildTable tableName = hoistDsl $ lift $ AWS.buildTable tableName
+
+doesTableExist :: Text -> EventStore Bool
+doesTableExist tableName = hoistDsl $ lift $ AWS.doesTableExist tableName
 
 streamEventsProducer :: QueryDirection -> StreamId -> Maybe Int64 -> Natural -> Producer RecordedEvent EventStore ()
 streamEventsProducer direction streamId lastEvent batchSize =
@@ -68,3 +75,7 @@ combineErrors a = do
   case r of (Left e) -> throwError $  EventStoreErrorInterpreter e
             (Right (Left e)) -> throwError $  EventStoreErrorAction e
             (Right (Right result)) -> return result
+
+runGlobalFeedWriter :: EventStore ()
+runGlobalFeedWriter =
+  evalStateT (hoist hoistDsl GlobalFeedWriter.main) GlobalFeedWriter.emptyGlobalFeedWriterState

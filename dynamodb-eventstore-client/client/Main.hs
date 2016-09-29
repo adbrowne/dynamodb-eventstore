@@ -596,7 +596,7 @@ start Config{configCommand = BenchMark} = do
     let t = fromIntegral (endTime - startTime) * 1e-12
     let (eventsPerSecond :: Double) = fromIntegral totalEvents / t
     putStrLn $ "Inserted " <> tshow totalEvents <> " events. Events per second: " <> tshow eventsPerSecond 
-    _ <- async $ runGlobalFeedWriter runner
+    _ <- async $ Main.runGlobalFeedWriter runner
     b <- runner . runExceptT . runEffect $
       GlobalFeedItem.globalFeedItemsProducer QueryDirectionForward True Nothing
       >-> toFeedEntries
@@ -626,12 +626,11 @@ takeXItems total = do
 runGlobalFeedWriter :: (forall a. MyAwsM a -> IO (Either InterpreterError a))
                      -> IO ()
 runGlobalFeedWriter runner = do
-      pageKeyPositionCache <- newCacheAws 10
       result <-
           runner $
           runExceptT $
           evalStateT
-              (GlobalFeedWriter.main pageKeyPositionCache)
+              GlobalFeedWriter.main
               GlobalFeedWriter.emptyGlobalFeedWriterState
       case result of
           (Left e) -> print e

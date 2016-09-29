@@ -322,8 +322,8 @@ scanNeedsPagingIndex itemsToPageQueue =
     cache <- newCache 100000
     go cache
 
-main :: MonadEsDslWithFork m => CacheType m PageKeyPosition PageKey -> StateT GlobalFeedWriterState (ExceptT EventStoreActionError m) ()
-main _pagePositionCache = do
+main :: MonadEsDslWithFork m => StateT GlobalFeedWriterState (ExceptT EventStoreActionError m) ()
+main = do
   itemsToPageQueue <- newQueue
   itemsReadyForGlobalFeed <- newQueue
   completePageCache <- newCache 1000

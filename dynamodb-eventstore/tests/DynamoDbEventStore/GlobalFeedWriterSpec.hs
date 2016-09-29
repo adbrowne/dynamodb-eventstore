@@ -75,7 +75,7 @@ globalFeedWriterProgram
 globalFeedWriterProgram = 
     runExceptT
         (evalStateT
-             (newCache 10 >>= GlobalFeedWriter.main)
+             GlobalFeedWriter.main
              GlobalFeedWriter.emptyGlobalFeedWriterState)
 
 testStreamId :: Text
