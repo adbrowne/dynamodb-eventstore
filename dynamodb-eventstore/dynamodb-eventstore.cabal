@@ -25,9 +25,6 @@ library
                        DynamoDbEventStore.Storage.HeadItem,
                        DynamoDbEventStore.Storage.StreamItem,
                        DynamoDbEventStore.Storage.GlobalStreamItem,
-                       DynamoDbEventStore.EventStoreActions,
-                       DynamoDbEventStore.Paging,
-                       DynamoDbEventStore.GlobalPaging,
                        DynamoDbEventStore.Streams,
                        DynamoDbEventStore.GlobalFeedWriter,
                        DynamoDbEventStore.Constants,
@@ -89,8 +86,6 @@ Test-Suite tasty
   other-modules:       DynamoCmdAmazonkaTests
                        , DynamoDbEventStore.DynamoCmdInterpreter
                        , DynamoDbEventStore.GlobalFeedWriterSpec
-                       , DynamoDbEventStore.PagingSpec
-                       , DynamoDbEventStore.GlobalPagingSpec
                        , DynamoDbEventStore.InMemoryCache
                        , DynamoDbEventStore.InMemoryDynamoTable
   type:                exitcode-stdio-1.0

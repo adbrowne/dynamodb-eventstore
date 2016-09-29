@@ -47,7 +47,7 @@ import Data.Text.Lazy.Encoding as TL
 import qualified Data.UUID (UUID)
 import DynamoDbEventStore.EventStoreCommands
 import DynamoDbEventStore.Types
-import DynamoDbEventStore.EventStoreActions
+--import DynamoDbEventStore.EventStoreActions
 import DynamoDbEventStore.AmazonkaImplementation hiding (buildTable)
 import qualified DynamoDbEventStore.GlobalFeedWriter
        as GlobalFeedWriter
@@ -637,7 +637,7 @@ runGlobalFeedWriter runner = do
           (Right (Left e)) -> print e
           _ -> return ()
 
-randomEvent :: IO PostEventRequest
+randomEvent :: EventStore EventWriteResult
 randomEvent = do
   currentTime <- liftIO Time.getCurrentTime
   (eventId :: Data.UUID.UUID) <- liftIO randomIO
@@ -648,10 +648,7 @@ randomEvent = do
     eventEntryEventId = EventId eventId,
     eventEntryCreated = EventTime currentTime,
     eventEntryIsJson  = False }
-  return PostEventRequest {
-           perStreamId = tshow streamId,
-           perExpectedVersion = Just 0,
-           perEvents =  eventEntry :| [] }
+  writeEvent (StreamId $ tshow streamId) (Just 0) (eventEntry :| [])
 
 insertEvents :: (forall a. EventStore a -> IO (Either EventStoreError a)) -> Int -> Int -> IO ()
 insertEvents runIO threadCount eventsPerThreadCount = do
@@ -660,8 +657,7 @@ insertEvents runIO threadCount eventsPerThreadCount = do
   where
     insertThread = replicateM_ eventsPerThreadCount insertEvent
     insertEvent = runIO $ do
-      evt <- liftIO randomEvent
-      _ <- postEventRequestProgram evt
+      _ <- liftIO . runIO $ randomEvent
       return ()
 
 throwOnLeft :: MonadEsDsl m => ExceptT GlobalFeedWriter.EventStoreActionError m () -> m ()

@@ -9,6 +9,8 @@ import           Test.Tasty
 import           Test.Tasty.Hspec
 import qualified WebserverInternalSpec
 import           WebserverSpec
+import qualified DynamoDbEventStore.PagingSpec as PagingSpec
+import qualified DynamoDbEventStore.GlobalPagingSpec as GlobalPagingSpec
 
 
 main :: IO ()
@@ -23,5 +25,7 @@ main = do
         postEventSpec',
         getStreamSpec',
         getEventSpec',
-        webserverInternalTests'
+        webserverInternalTests',
+        testGroup "Paging tests" PagingSpec.tests,
+        testGroup "Global Paging tests" GlobalPagingSpec.tests
       ]
