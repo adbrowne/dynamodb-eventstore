@@ -36,7 +36,6 @@ import           Data.List.NonEmpty                    (NonEmpty (..))
 import           DynamoDbEventStore
 import           DynamoDbEventStore.GlobalPaging
 import           DynamoDbEventStore.Paging
-import           DynamoDbEventStore.Types
 import qualified Test.QuickCheck                       as QC
 import           Test.QuickCheck.Instances             ()
 

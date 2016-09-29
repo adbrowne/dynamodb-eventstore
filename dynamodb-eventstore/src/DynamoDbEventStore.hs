@@ -8,6 +8,9 @@ module DynamoDbEventStore
   ,doesTableExist
   ,runGlobalFeedWriter
   ,RuntimeEnvironment(..)
+  ,GlobalFeedPosition(..)
+  ,RecordedEvent(..)
+  ,StreamId(..)
   ,EventStoreError(..)
   ,EventStoreActionError(..)
   ,EventStore
@@ -24,7 +27,7 @@ import DynamoDbEventStore.ProjectPrelude
 import Control.Monad.State
 import qualified DynamoDbEventStore.Streams as Streams
 import DynamoDbEventStore.Types
-    (RecordedEvent(..),QueryDirection,StreamId,EventStoreActionError,GlobalFeedPosition,EventKey)
+    (RecordedEvent(..),QueryDirection,StreamId(..),EventStoreActionError,GlobalFeedPosition(..),EventKey)
 import DynamoDbEventStore.AmazonkaImplementation (RuntimeEnvironment(..), InterpreterError(..), MyAwsM(..),MetricLogs(..),MetricLogsPair(..))
 import qualified  DynamoDbEventStore.AmazonkaImplementation as AWS
 import           DynamoDbEventStore.Storage.StreamItem (EventEntry(..),EventType(..),EventTime(..))
