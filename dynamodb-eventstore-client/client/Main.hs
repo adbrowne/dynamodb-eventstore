@@ -23,6 +23,7 @@ import qualified System.Metrics.Distribution as Distribution
 import Control.Monad.Except
 import Control.Monad.State
 import qualified Control.Monad.Trans.AWS as AWS
+import qualified Network.AWS.DynamoDB as AWS
 import Pipes (await, Consumer, Pipe, runEffect, (>->), yield)
 import Data.Aeson
 import Data.Aeson.Diff hiding (Config)
@@ -47,7 +48,7 @@ import qualified Data.UUID (UUID)
 import DynamoDbEventStore.EventStoreCommands
 import DynamoDbEventStore.Types
 import DynamoDbEventStore.EventStoreActions
-import DynamoDbEventStore.AmazonkaImplementation
+import DynamoDbEventStore.AmazonkaImplementation hiding (buildTable)
 import qualified DynamoDbEventStore.GlobalFeedWriter
        as GlobalFeedWriter
 import qualified DynamoDbEventStore.Storage.GlobalStreamItem
@@ -583,13 +584,14 @@ start Config{configCommand = BenchMark} = do
             , _runtimeEnvironmentAmazonkaEnv = awsEnv
             , _runtimeEnvironmentTableName = tableName
             }
-    let runner = runDynamoLocal runtimeEnvironment 
-    void . runner $ buildTable tableName
+    let runner = runDynamoLocal runtimeEnvironment
+    let runner2 = runDynamoLocal' runtimeEnvironment
+    void . runner2 $ buildTable tableName
     startTime <- liftIO getCPUTime
     let threadCount = 20
     let eventsPerThreadCount = 1000
     let totalEvents = threadCount * eventsPerThreadCount
-    insertEvents runner threadCount eventsPerThreadCount
+    insertEvents runner2 threadCount eventsPerThreadCount
     endTime <- liftIO getCPUTime
     let t = fromIntegral (endTime - startTime) * 1e-12
     let (eventsPerSecond :: Double) = fromIntegral totalEvents / t
@@ -658,7 +660,7 @@ insertEvents runIO threadCount eventsPerThreadCount = do
   traverse_ Control.Concurrent.Async.wait threads
   where
     insertThread = replicateM_ eventsPerThreadCount insertEvent
-    insertEvent = runIO $ throwOnLeft $ do
+    insertEvent = runIO $ do
       evt <- liftIO randomEvent
       _ <- postEventRequestProgram evt
       return ()
@@ -697,6 +699,19 @@ writePages = do
             , globalFeedItemPageStatus = GlobalFeedItem.PageStatusComplete
             , globalFeedItemVersion = 0
             }
+
+runDynamoCloud' :: RuntimeEnvironment
+               -> EventStore a
+               -> IO (Either EventStoreError a)
+runDynamoCloud' runtimeEnvironment x = 
+    AWS.runResourceT $ AWS.runAWST runtimeEnvironment $ runExceptT $ x
+
+runDynamoLocal' :: RuntimeEnvironment
+               -> EventStore a
+               -> IO (Either EventStoreError a)
+runDynamoLocal' env x = do
+    let dynamo = AWS.setEndpoint False "localhost" 8000 AWS.dynamoDB
+    AWS.runResourceT $ AWS.runAWST env $ AWS.reconfigure dynamo $ runExceptT (x)
 
 main :: IO ()
 main = Opt.execParser opts >>= start

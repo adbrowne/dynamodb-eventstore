@@ -4,6 +4,7 @@ module DynamoDbEventStore
   ,globalEventKeysProducer
   ,writeEvent
   ,readEvent
+  ,buildTable
   ,EventStoreError(..)
   ,EventStore
   ,Streams.EventWriteResult(..)
@@ -17,6 +18,7 @@ import qualified DynamoDbEventStore.Streams as Streams
 import DynamoDbEventStore.Types
     (RecordedEvent(..),QueryDirection,StreamId,EventStoreActionError,GlobalFeedPosition,EventKey)
 import DynamoDbEventStore.AmazonkaImplementation (RuntimeEnvironment, InterpreterError, MyAwsM(..))
+import qualified  DynamoDbEventStore.AmazonkaImplementation as AWS
 import           DynamoDbEventStore.Storage.StreamItem (EventEntry(..),EventType(..),EventTime(..))
 import Control.Monad.Trans.AWS
 import Control.Monad.Trans.Resource
@@ -31,7 +33,10 @@ type EventStore = ExceptT EventStoreError (AWST' RuntimeEnvironment (ResourceT I
 
 hoistDsl
   :: (ExceptT EventStoreActionError MyAwsM) a -> (ExceptT EventStoreError (AWST' RuntimeEnvironment (ResourceT IO))) a
-hoistDsl = (combineErrors . hoist unMyAwsM) 
+hoistDsl = combineErrors . hoist unMyAwsM 
+
+buildTable :: Text -> EventStore ()
+buildTable tableName = hoistDsl $ lift $ AWS.buildTable tableName
 
 streamEventsProducer :: QueryDirection -> StreamId -> Maybe Int64 -> Natural -> Producer RecordedEvent EventStore ()
 streamEventsProducer direction streamId lastEvent batchSize =

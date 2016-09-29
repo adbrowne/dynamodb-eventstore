@@ -41,6 +41,7 @@ executable client
                        lens-aeson,
                        mtl,
                        amazonka,
+                       amazonka-dynamodb,
                        dynamodb-eventstore,
                        containers,
                        aeson,
