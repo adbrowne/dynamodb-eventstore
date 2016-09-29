@@ -7,13 +7,17 @@ module DynamoDbEventStore
   ,buildTable
   ,doesTableExist
   ,runGlobalFeedWriter
+  ,RuntimeEnvironment(..)
   ,EventStoreError(..)
   ,EventStoreActionError(..)
   ,EventStore
   ,Streams.EventWriteResult(..)
   ,EventEntry(..)
   ,EventType(..)
-  ,EventTime(..))
+  ,EventTime(..)
+  ,MetricLogs(..)
+  ,MetricLogsPair(..)
+  ,InterpreterError(..))
 where
 
 import DynamoDbEventStore.ProjectPrelude
@@ -21,7 +25,7 @@ import Control.Monad.State
 import qualified DynamoDbEventStore.Streams as Streams
 import DynamoDbEventStore.Types
     (RecordedEvent(..),QueryDirection,StreamId,EventStoreActionError,GlobalFeedPosition,EventKey)
-import DynamoDbEventStore.AmazonkaImplementation (RuntimeEnvironment, InterpreterError, MyAwsM(..))
+import DynamoDbEventStore.AmazonkaImplementation (RuntimeEnvironment(..), InterpreterError(..), MyAwsM(..),MetricLogs(..),MetricLogsPair(..))
 import qualified  DynamoDbEventStore.AmazonkaImplementation as AWS
 import           DynamoDbEventStore.Storage.StreamItem (EventEntry(..),EventType(..),EventTime(..))
 import qualified DynamoDbEventStore.GlobalFeedWriter as GlobalFeedWriter

@@ -11,7 +11,6 @@ import Control.Monad.Except
 import Control.Monad.Trans.AWS
 import qualified Data.Text as T
 import DynamoDbEventStore
-import DynamoDbEventStore.AmazonkaImplementation hiding (buildTable, doesTableExist)
 import DynamoDbEventStore.EventStoreActions
 import DynamoDbEventStore.Webserver
        (EventStoreActionRunner(..), app, realRunner)
@@ -181,10 +180,6 @@ start parsedConfig = do
     --logger <- liftIO $ newLogger AWS.Error stdout
     ---awsEnv <- set envLogger logger <$> newEnv Sydney Discover
     awsEnv <- newEnv Sydney Discover
-    let interperter = 
-            (if configLocalDynamoDB parsedConfig
-                 then runDynamoLocal
-                 else runDynamoCloud)
     let interperter2 = 
             (if configLocalDynamoDB parsedConfig
                  then runDynamoLocal'
@@ -195,7 +190,6 @@ start parsedConfig = do
             , _runtimeEnvironmentAmazonkaEnv = awsEnv
             , _runtimeEnvironmentTableName = tableName
             }
-    let runner p = toExceptT' $ interperter runtimeEnvironment p
     let runner2 p = interperter2 runtimeEnvironment p
     tableAlreadyExists <- 
         toApplicationError (interperter2 runtimeEnvironment) $
@@ -209,19 +203,17 @@ start parsedConfig = do
              (buildTable tableName) >>
          putStrLn "Table created")
     if tableAlreadyExists || shouldCreateTable
-        then runApp runner runner2 tableName
+        then runApp runner2 tableName
         else failNoTable
   where
     runApp
-        :: (forall a. MyAwsM a -> ExceptT InterpreterError IO a)
-        -> (forall a. EventStore a -> IO (Either EventStoreError a))
+        :: (forall a. EventStore a -> IO (Either EventStoreError a))
         -> Text
         -> ExceptT EventStoreError IO ()
-    runApp _runner runner2 _tableName
-    --let runner' = runMyAws runner tableName
+    runApp runner _tableName
      = do
-        liftIO $ forkGlobalFeedWriter runner2
-        liftIO $ startWebServer runner2 parsedConfig
+        liftIO $ forkGlobalFeedWriter runner
+        liftIO $ startWebServer runner parsedConfig
     failNoTable = putStrLn "Table does not exist"
 
 checkForFailureOnExit :: ExceptT EventStoreError IO () -> IO ()
