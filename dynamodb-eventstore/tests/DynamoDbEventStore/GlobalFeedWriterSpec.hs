@@ -138,17 +138,6 @@ instance QC.Arbitrary NewUploadList where
               NewUploadList xs uploadListGenSeed) <$>
         QC.shrink uploadListEvents
 
-instance QC.Arbitrary a =>
-         QC.Arbitrary (NonEmpty a) where
-    arbitrary = do
-        headEntry <- QC.arbitrary
-        tailEntries <- QC.arbitrary
-        return $ headEntry :| tailEntries
-    shrink (x :| xs) = 
-        let shrunkHeads = (:| xs) <$> QC.shrink x
-            shrunkTails = (x :|) <$> QC.shrink xs
-        in shrunkTails ++ shrunkHeads -- do this in reverse as shrinking the tails is a bigger change
-
 getRandomMapEntry
     :: MonadRandom m
     => Map a b -> m (a, b)
