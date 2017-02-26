@@ -484,7 +484,7 @@ evalProgram :: MetricLogs -> MyAwsM a -> IO (Either InterpreterError a)
 evalProgram metrics program = do
     tableNameId :: Int <- getStdRandom (randomR (1, 9999999999))
     let tableName = "testtable-" ++ tshow tableNameId
-    awsEnv <- newEnv Sydney Discover
+    awsEnv <- newEnv Discover
     let runtimeEnvironment = 
             RuntimeEnvironment
             { _runtimeEnvironmentMetricLogs = metrics
@@ -501,8 +501,7 @@ runLocalDynamo runtimeEnvironment x = do
     let dynamo = setEndpoint False "localhost" 8000 dynamoDB
     env <- 
         newEnv
-            Sydney
-            (FromEnv "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" Nothing)
+            (FromEnv "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" Nothing Nothing)
     let runtimeEnvironment' = 
             runtimeEnvironment
             { _runtimeEnvironmentAmazonkaEnv = env

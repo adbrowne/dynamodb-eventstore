@@ -26,8 +26,8 @@ import qualified Control.Monad.Trans.AWS as AWS
 import qualified Network.AWS.DynamoDB as AWS
 import Pipes (await, Consumer, Pipe, runEffect, (>->), yield)
 import Data.Aeson
-import Data.Aeson.Diff hiding (Config)
-import Data.Aeson.Encode
+import Data.Aeson.Text
+-- import Data.Aeson.Diff hiding (Config)
 import Data.Aeson.Lens
 import Data.Algorithm.Diff
 import Data.Algorithm.DiffOutput
@@ -65,7 +65,7 @@ import Text.Blaze.Renderer.Pretty
 import Text.Taggy.DOM
 import Text.Taggy.Lens
 import Text.Taggy.Renderer
-import Turtle.Prelude
+import Turtle.Prelude hiding (header)
 
 getFeedPage :: Text -> IO (Response LByteString)
 getFeedPage url = do
@@ -297,7 +297,7 @@ toEntryData r =
           let dataBody = 
                   preview
                       (key "content" .
-                       key "data" . to (toLazyByteString . encodeToBuilder))
+                       key "data" . to encode)
                       jsonValue
           return
               EntryData
@@ -420,7 +420,7 @@ compareEntryFile leftFilePath rightFilePath = do
            putStrLn ("Right DOM:" :: Text)
            print domRight
            putStrLn "Diff:"
-           print $ diff domLeft domRight
+           --print $ diff domLeft domRight
     return areEqual
 
 listDirectoryTree :: FilePath -> IO [FilePath]
@@ -561,7 +561,7 @@ start Config{configCommand = CompareDownload compareDownloadConfig} = do
     sequence_ $ compareFile compareDownloadConfig <$> files
 start Config{configCommand = SpeedTest} = do
     logger <- liftIO $ AWS.newLogger AWS.Error System.IO.stdout
-    awsEnv <- set AWS.envLogger logger <$> AWS.newEnv AWS.Sydney AWS.Discover
+    awsEnv <- set AWS.envLogger logger <$> AWS.newEnv AWS.Discover
     let tableName = "estest2"
     metrics <- nullMetrics
     let runtimeEnvironment = 
@@ -576,7 +576,7 @@ start Config{configCommand = SpeedTest} = do
 start Config{configCommand = BenchMark} = do
     metricLogs <- startMetrics
     logger <- liftIO $ AWS.newLogger AWS.Error System.IO.stdout
-    awsEnv <- set AWS.envLogger logger <$> AWS.newEnv AWS.Sydney AWS.Discover
+    awsEnv <- set AWS.envLogger logger <$> AWS.newEnv AWS.Discover
     tableName <- tshow <$> (randomIO :: IO UUID.UUID)
     let runtimeEnvironment = 
             RuntimeEnvironment

@@ -179,7 +179,7 @@ start parsedConfig = do
     metrics <- liftIO startMetrics
     --logger <- liftIO $ newLogger AWS.Error stdout
     ---awsEnv <- set envLogger logger <$> newEnv Sydney Discover
-    awsEnv <- newEnv Sydney Discover
+    awsEnv <- newEnv Discover
     let interperter2 = 
             (if configLocalDynamoDB parsedConfig
                  then runDynamoLocal'
